@@ -1,0 +1,3 @@
+{"timestamp": "2026-02-05T21:11:14.531314", "symbol": "688576.SH", "action": "BUY", "quantity": 800, "price": 62.336233, "value": 49868.9864, "commission": 14.96069592, "order_id": "af92137e", "strategy": "手动交易", "metadata": {}}
+{"timestamp": "2026-02-05T21:11:16.553885", "symbol": "688576.SH", "action": "BUY", "quantity": 400, "price": 62.40624, "value": 24962.496, "commission": 7.488748799999999, "order_id": "9d01b63d", "strategy": "手动交易", "metadata": {}}
+{"timestamp": "2026-02-05T21:11:17.563493", "symbol": "688576.SH", "action": "SELL", "quantity": 600, "price": 62.243775, "value": 37346.265, "commission": 11.2038795, "order_id": "85ad308e", "strategy": "手动交易", "metadata": {}}
