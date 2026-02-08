@@ -33,8 +33,8 @@ from eastmoney_crawler import EastMoneyCrawler, CrawlerConfig, parse_kline_data
 # ============ 配置 ============
 START_DATE = "2023-01-01"
 END_DATE = "2025-02-05"
-BATCH_SIZE = 50  # 每批保存进度
-LONG_PAUSE_EVERY = 100  # 每处理多少只后长休息
+BATCH_SIZE = 500  # 每批保存进度
+LONG_PAUSE_EVERY = 500  # 每处理多少只后长休息
 LONG_PAUSE_TIME = 120   # 长休息时间（秒）
 
 # 进度文件路径

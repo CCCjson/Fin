@@ -74,7 +74,7 @@ class BrowserFingerprint:
             "User-Agent": ua,
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": random.choice(cls.ACCEPT_LANGUAGES),
-            "Accept-Encoding": random.choice(cls.ACCEPT_ENCODINGS),
+            # 移除 Accept-Encoding，让 requests 自动处理压缩
             "Connection": "keep-alive",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
@@ -170,6 +170,7 @@ class EastMoneyCrawler:
 
     # API 端点
     HIST_API = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    HOME_PAGE = "https://quote.eastmoney.com/"
 
     def __init__(self, config: CrawlerConfig = None):
         self.config = config or CrawlerConfig()
@@ -189,6 +190,9 @@ class EastMoneyCrawler:
             "failed": 0,
             "rate_limited": 0,
         }
+
+        # 初始化：访问主页获取 Cookie（模拟真实用户行为）
+        self._warm_up()
 
     def _create_session(self) -> requests.Session:
         """创建带重试机制的 Session"""
@@ -216,7 +220,25 @@ class EastMoneyCrawler:
     def _refresh_fingerprint(self):
         """刷新浏览器指纹"""
         self.fingerprint = BrowserFingerprint.generate()
-        self.session.headers.update(self.fingerprint)
+        # 不再直接更新 session.headers，改为每次请求时独立设置
+
+    def _warm_up(self):
+        """预热：访问主页获取 Cookie，模拟真实用户"""
+        try:
+            headers = self.fingerprint.copy()
+            headers.update({
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Upgrade-Insecure-Requests": "1",
+            })
+            response = self.session.get(
+                self.HOME_PAGE,
+                headers=headers,
+                timeout=10,
+                allow_redirects=True
+            )
+            logger.debug(f"预热完成，获得 {len(self.session.cookies)} 个 Cookie")
+        except Exception as e:
+            logger.warning(f"预热失败（不影响使用）: {e}")
 
     def _is_rate_limited(self, response: requests.Response = None, error: Exception = None) -> bool:
         """检测是否被限流"""
@@ -257,6 +279,17 @@ class EastMoneyCrawler:
             "_": str(int(time.time() * 1000)),  # 时间戳防缓存
         }
 
+    def _get_request_headers(self) -> Dict[str, str]:
+        """获取增强的请求头（模拟真实浏览器）"""
+        headers = self.fingerprint.copy()
+        headers.update({
+            "Referer": "https://quote.eastmoney.com/",
+            "Origin": "https://quote.eastmoney.com",
+            "Host": "push2his.eastmoney.com",
+            "DNT": "1",
+        })
+        return headers
+
     def fetch_stock_history(
         self,
         code: str,
@@ -293,16 +326,32 @@ class EastMoneyCrawler:
 
                 self.stats["total_requests"] += 1
 
-                # 发起请求
+                # 发起请求（使用增强的请求头）
+                headers = self._get_request_headers()
                 response = self.session.get(
                     self.HIST_API,
                     params=params,
+                    headers=headers,
                     timeout=self.config.timeout,
                 )
 
                 # 检查响应
                 if response.status_code == 200:
-                    data = response.json()
+                    # 检查响应内容是否为空
+                    if not response.text or not response.text.strip():
+                        logger.warning(f"响应内容为空，可能被限流")
+                        self.rate_limiter.on_failure(is_rate_limit=True)
+                        time.sleep(self.config.rate_limit_pause)
+                        continue
+
+                    try:
+                        data = response.json()
+                    except Exception as json_err:
+                        logger.error(f"JSON 解析失败: {json_err}")
+                        logger.debug(f"响应内容前 500 字符: {response.text[:500]}")
+                        self.rate_limiter.on_failure()
+                        time.sleep(self.config.retry_delay * (attempt + 1))
+                        continue
 
                     if data.get("data") and data["data"].get("klines"):
                         self.rate_limiter.on_success()
@@ -362,6 +411,7 @@ class EastMoneyCrawler:
         self.session.close()
         self.session = self._create_session()
         self._refresh_fingerprint()
+        self._warm_up()  # 重新获取 Cookie
         self.rate_limiter.reset()
 
 

@@ -1,0 +1,167 @@
+# ==================== Python ====================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# ==================== 数据库 & 数据文件 ====================
+# SQLite 数据库
+*.db
+*.sqlite
+*.sqlite3
+backend/data/*.db
+backend/data/*.sqlite
+
+# 数据文件（可选：如果数据量大不想上传）
+# backend/data/
+# data/
+
+# ==================== 日志文件 ====================
+# 所有日志
+logs/
+*.log
+backend/logs/
+*.log.*
+
+# ==================== 配置 & 密钥 ====================
+# 环境变量（包含 API key 等敏感信息）
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# 配置文件（如果包含敏感信息）
+# config.yaml
+# config.json
+
+# ==================== 进度文件 ====================
+# 爬虫进度
+backend/scripts/fetch_progress.json
+*_progress.json
+
+# ==================== IDE & 编辑器 ====================
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+
+# ==================== 操作系统 ====================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory
+.Trash-*
+
+# ==================== 前端 (Node.js / React) ====================
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Production build
+frontend/build/
+frontend/dist/
+
+# Testing
+coverage/
+.nyc_output/
+
+# Package manager
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ==================== 临时文件 ====================
+# 通用临时文件
+*.tmp
+*.temp
+*.bak
+*.swp
+*.cache
+
+# 输出文件
+output.log
+nohup.out
+
+# ==================== 测试 & 覆盖率 ====================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ==================== 其他 ====================
+# 编译后的文件
+*.o
+*.a
+*.lib
+*.exe
+*.out
+
+# 压缩文件（如果用于备份）
+*.zip
+*.tar.gz
+*.rar
+
+# 大文件（CSV 导出等）
+*.csv
+exports/
+
+# 调试文件
+debug.log
+error.log
