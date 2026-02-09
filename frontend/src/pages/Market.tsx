@@ -1,14 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { SimpleChart } from '../components/charts/SimpleChart';
+import { CandlestickChart } from '../components/charts/CandlestickChart';
+import { IndicatorPanel } from '../components/charts/IndicatorPanel';
 import { marketService } from '../services/marketService';
 import type { StockData } from '../types';
+import type { IndicatorConfig } from '../types/chart';
+import { DEFAULT_INDICATOR_CONFIG } from '../types/chart';
 
 export const Market: React.FC = () => {
   const [symbol, setSymbol] = useState('688576.SH');
   const [data, setData] = useState<StockData[]>([]);
   const [loading, setLoading] = useState(false);
   const [startDate, setStartDate] = useState('2025-01-01');
-  const [endDate, setEndDate] = useState('2025-12-31');
+  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [indicatorConfig, setIndicatorConfig] = useState<IndicatorConfig>(DEFAULT_INDICATOR_CONFIG);
 
   useEffect(() => {
     loadData();
@@ -27,6 +31,9 @@ export const Market: React.FC = () => {
   };
 
   const latestData = data[data.length - 1];
+  const prevData = data[data.length - 2];
+  const priceChange = latestData && prevData ? latestData.close - prevData.close : 0;
+  const priceChangePct = prevData ? (priceChange / prevData.close) * 100 : 0;
 
   return (
     <div className="min-h-screen bg-gradient-dark p-6">
@@ -83,10 +90,16 @@ export const Market: React.FC = () => {
 
         {/* 最新数据 */}
         {latestData && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl hover:shadow-glow-blue transition-all">
               <div className="text-gray-400 text-sm mb-1">最新价</div>
               <div className="text-2xl font-bold text-primary-light">¥{latestData.close.toFixed(2)}</div>
+            </div>
+            <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl hover:shadow-glow-blue transition-all">
+              <div className="text-gray-400 text-sm mb-1">涨跌幅</div>
+              <div className={`text-xl font-semibold ${priceChange >= 0 ? 'text-bull' : 'text-bear'}`}>
+                {priceChange >= 0 ? '+' : ''}{priceChangePct.toFixed(2)}%
+              </div>
             </div>
             <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl hover:shadow-glow-blue transition-all">
               <div className="text-gray-400 text-sm mb-1">开盘价</div>
@@ -109,9 +122,21 @@ export const Market: React.FC = () => {
 
         {/* K线图 */}
         <div className="bg-gradient-card border border-border shadow-card p-6 rounded-lg">
-          <h2 className="text-xl font-semibold text-white mb-4">价格走势</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-white">K线图</h2>
+          </div>
+
+          {/* 指标面板 */}
+          <div className="mb-4">
+            <IndicatorPanel config={indicatorConfig} onChange={setIndicatorConfig} />
+          </div>
+
           {data.length > 0 ? (
-            <SimpleChart data={data} height={400} />
+            <CandlestickChart
+              data={data}
+              height={500}
+              indicatorConfig={indicatorConfig}
+            />
           ) : (
             <div className="h-96 flex items-center justify-center text-gray-400">
               {loading ? '加载中...' : '暂无数据'}
@@ -131,20 +156,30 @@ export const Market: React.FC = () => {
                   <th className="px-4 py-2 text-right">最高</th>
                   <th className="px-4 py-2 text-right">最低</th>
                   <th className="px-4 py-2 text-right">收盘</th>
+                  <th className="px-4 py-2 text-right">涨跌</th>
                   <th className="px-4 py-2 text-right">成交量</th>
                 </tr>
               </thead>
               <tbody className="text-gray-300">
-                {data.slice(-20).reverse().map((item, idx) => (
-                  <tr key={idx} className="border-b border-border hover:bg-dark-light transition-colors">
-                    <td className="px-4 py-2">{item.date}</td>
-                    <td className="px-4 py-2 text-right">¥{item.open.toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right text-bull font-medium">¥{item.high.toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right text-bear font-medium">¥{item.low.toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right font-semibold text-primary-light">¥{item.close.toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right text-accent-cyan">{(item.volume / 10000).toFixed(2)}万</td>
-                  </tr>
-                ))}
+                {data.slice(-20).reverse().map((item, idx, arr) => {
+                  const prevItem = idx < arr.length - 1 ? arr[idx + 1] : null;
+                  const change = prevItem ? item.close - prevItem.close : 0;
+                  const changePct = prevItem ? (change / prevItem.close) * 100 : 0;
+
+                  return (
+                    <tr key={idx} className="border-b border-border hover:bg-dark-light transition-colors">
+                      <td className="px-4 py-2">{item.date}</td>
+                      <td className="px-4 py-2 text-right">¥{item.open.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right text-bull font-medium">¥{item.high.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right text-bear font-medium">¥{item.low.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right font-semibold text-primary-light">¥{item.close.toFixed(2)}</td>
+                      <td className={`px-4 py-2 text-right font-medium ${change >= 0 ? 'text-bull' : 'text-bear'}`}>
+                        {change >= 0 ? '+' : ''}{changePct.toFixed(2)}%
+                      </td>
+                      <td className="px-4 py-2 text-right text-accent-cyan">{(item.volume / 10000).toFixed(2)}万</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -6,10 +6,13 @@ export const Layout: React.FC = () => {
 
   const navItems = [
     { path: '/dashboard', label: '仪表盘', icon: '📊' },
-    { path: '/market', label: '行情', icon: '📈' },
+    { path: '/realtime', label: '实时行情', icon: '⚡' },
+    { path: '/market', label: 'K线分析', icon: '📈' },
     { path: '/trading', label: '交易', icon: '💱' },
     { path: '/signals', label: '信号分析', icon: '🎯' },
+    { path: '/tracking', label: '信号追踪', icon: '📋' },
     { path: '/backtest', label: '策略回测', icon: '🔬' },
+    { path: '/reports', label: 'AI 报告', icon: '🤖' },
   ];
 
   const isActive = (path: string) => location.pathname === path;

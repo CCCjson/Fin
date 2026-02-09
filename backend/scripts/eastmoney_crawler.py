@@ -21,6 +21,11 @@ from urllib3.util.retry import Retry
 from loguru import logger
 
 
+class ProxyTimeoutError(Exception):
+    """代理超时/失效异常，通知上层立即切换 IP"""
+    pass
+
+
 @dataclass
 class CrawlerConfig:
     """爬虫配置"""
@@ -222,7 +227,7 @@ class EastMoneyCrawler:
         self.fingerprint = BrowserFingerprint.generate()
         # 不再直接更新 session.headers，改为每次请求时独立设置
 
-    def _warm_up(self):
+    def _warm_up(self, proxies: Optional[Dict[str, str]] = None):
         """预热：访问主页获取 Cookie，模拟真实用户"""
         try:
             headers = self.fingerprint.copy()
@@ -234,7 +239,8 @@ class EastMoneyCrawler:
                 self.HOME_PAGE,
                 headers=headers,
                 timeout=10,
-                allow_redirects=True
+                allow_redirects=True,
+                proxies=proxies,
             )
             logger.debug(f"预热完成，获得 {len(self.session.cookies)} 个 Cookie")
         except Exception as e:
@@ -294,7 +300,8 @@ class EastMoneyCrawler:
         self,
         code: str,
         start_date: str,
-        end_date: str
+        end_date: str,
+        proxies: Optional[Dict[str, str]] = None
     ) -> Optional[Dict[str, Any]]:
         """
         获取股票历史数据
@@ -303,9 +310,13 @@ class EastMoneyCrawler:
             code: 股票代码（6位数字）
             start_date: 开始日期 YYYYMMDD
             end_date: 结束日期 YYYYMMDD
+            proxies: 代理配置，如 {"http": "http://ip:port", "https": "http://ip:port"}
 
         Returns:
             数据字典或 None
+
+        Raises:
+            ProxyTimeoutError: 代理超时/连接失败，需要上层切换 IP
         """
         # 判断市场（0=深圳，1=上海）
         if code.startswith("6"):
@@ -315,88 +326,72 @@ class EastMoneyCrawler:
 
         params = self._build_hist_params(code, market, start_date, end_date)
 
-        for attempt in range(self.config.max_retries):
-            try:
-                # 限速等待
-                self.rate_limiter.wait()
+        try:
+            # 限速等待
+            self.rate_limiter.wait()
 
-                # 每 50 次请求刷新一次指纹
-                if self.stats["total_requests"] % 50 == 0:
-                    self._refresh_fingerprint()
+            # 每 50 次请求刷新一次指纹
+            if self.stats["total_requests"] % 50 == 0:
+                self._refresh_fingerprint()
 
-                self.stats["total_requests"] += 1
+            self.stats["total_requests"] += 1
 
-                # 发起请求（使用增强的请求头）
-                headers = self._get_request_headers()
-                response = self.session.get(
-                    self.HIST_API,
-                    params=params,
-                    headers=headers,
-                    timeout=self.config.timeout,
-                )
+            # 发起请求
+            headers = self._get_request_headers()
+            response = self.session.get(
+                self.HIST_API,
+                params=params,
+                headers=headers,
+                timeout=self.config.timeout,
+                proxies=proxies,
+            )
 
-                # 检查响应
-                if response.status_code == 200:
-                    # 检查响应内容是否为空
-                    if not response.text or not response.text.strip():
-                        logger.warning(f"响应内容为空，可能被限流")
-                        self.rate_limiter.on_failure(is_rate_limit=True)
-                        time.sleep(self.config.rate_limit_pause)
-                        continue
-
-                    try:
-                        data = response.json()
-                    except Exception as json_err:
-                        logger.error(f"JSON 解析失败: {json_err}")
-                        logger.debug(f"响应内容前 500 字符: {response.text[:500]}")
-                        self.rate_limiter.on_failure()
-                        time.sleep(self.config.retry_delay * (attempt + 1))
-                        continue
-
-                    if data.get("data") and data["data"].get("klines"):
-                        self.rate_limiter.on_success()
-                        self.stats["success"] += 1
-                        return data["data"]
-
-                    # 空数据（可能是新股或停牌）
-                    if data.get("data") is None:
-                        self.rate_limiter.on_success()
-                        return None
-
-                # 被限流
-                if self._is_rate_limited(response=response):
-                    self.stats["rate_limited"] += 1
+            # 检查响应
+            if response.status_code == 200:
+                # 空响应 → 可能被限流，视为代理失效
+                if not response.text or not response.text.strip():
+                    logger.warning(f"响应内容为空，可能被限流")
                     self.rate_limiter.on_failure(is_rate_limit=True)
-                    wait_time = self.config.rate_limit_pause * (attempt + 1)
-                    logger.warning(f"被限流，等待 {wait_time:.0f} 秒...")
-                    time.sleep(wait_time)
-                    continue
+                    raise ProxyTimeoutError("响应内容为空")
 
-                # 其他错误
-                self.rate_limiter.on_failure()
-                logger.warning(f"请求失败 ({attempt + 1}/{self.config.max_retries}): HTTP {response.status_code}")
-
-            except Exception as e:
-                self.stats["failed"] += 1
-
-                if self._is_rate_limited(error=e):
-                    self.stats["rate_limited"] += 1
-                    self.rate_limiter.on_failure(is_rate_limit=True)
-                    wait_time = self.config.rate_limit_pause * (attempt + 1)
-                    logger.warning(f"连接被断开，等待 {wait_time:.0f} 秒...")
-                    time.sleep(wait_time)
-                else:
+                try:
+                    data = response.json()
+                except Exception as json_err:
+                    logger.error(f"JSON 解析失败: {json_err}")
                     self.rate_limiter.on_failure()
-                    wait_time = self.config.retry_delay * (attempt + 1)
-                    logger.warning(f"请求异常 ({attempt + 1}/{self.config.max_retries}): {e}")
-                    time.sleep(wait_time)
+                    raise ProxyTimeoutError(f"JSON 解析失败: {json_err}")
 
-                # 刷新 Session 和指纹
-                if attempt >= 1:
-                    self.session = self._create_session()
-                    self._refresh_fingerprint()
+                if data.get("data") and data["data"].get("klines"):
+                    self.rate_limiter.on_success()
+                    self.stats["success"] += 1
+                    return data["data"]
 
-        return None
+                # data 存在但 klines 为空列表 → 该日期范围内无数据（正常）
+                if data.get("data") is not None:
+                    self.rate_limiter.on_success()
+                    return None
+
+            # 被限流 → 需要换 IP
+            if self._is_rate_limited(response=response):
+                self.stats["rate_limited"] += 1
+                self.rate_limiter.on_failure(is_rate_limit=True)
+                raise ProxyTimeoutError(f"被限流 HTTP {response.status_code}")
+
+            # 其他 HTTP 错误
+            self.rate_limiter.on_failure()
+            logger.warning(f"请求失败: HTTP {response.status_code}")
+            return None
+
+        except ProxyTimeoutError:
+            # 直接抛给上层处理
+            raise
+
+        except Exception as e:
+            self.stats["failed"] += 1
+            self.rate_limiter.on_failure(is_rate_limit=self._is_rate_limited(error=e))
+            logger.warning(f"请求异常: {e}")
+            # 连接超时/断开等 → 通知上层换 IP
+            raise ProxyTimeoutError(f"连接异常: {e}")
 
     def get_stats(self) -> Dict:
         """获取统计信息"""
@@ -406,12 +401,12 @@ class EastMoneyCrawler:
             "current_delay": f"{self.rate_limiter.current_delay:.1f}s",
         }
 
-    def reset_session(self):
+    def reset_session(self, proxies: Optional[Dict[str, str]] = None):
         """重置 Session（用于长时间运行后刷新）"""
         self.session.close()
         self.session = self._create_session()
         self._refresh_fingerprint()
-        self._warm_up()  # 重新获取 Cookie
+        self._warm_up(proxies=proxies)  # 重新获取 Cookie
         self.rate_limiter.reset()
 
 

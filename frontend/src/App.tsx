@@ -6,6 +6,9 @@ import { Market } from './pages/Market';
 import { Trading } from './pages/Trading';
 import { Signals } from './pages/Signals';
 import { Backtest } from './pages/Backtest';
+import { Realtime } from './pages/Realtime';
+import { Reports } from './pages/Reports';
+import { SignalTracking } from './pages/SignalTracking';
 
 function App() {
   return (
@@ -14,10 +17,13 @@ function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
+          <Route path="realtime" element={<Realtime />} />
           <Route path="market" element={<Market />} />
           <Route path="trading" element={<Trading />} />
           <Route path="signals" element={<Signals />} />
+          <Route path="tracking" element={<SignalTracking />} />
           <Route path="backtest" element={<Backtest />} />
+          <Route path="reports" element={<Reports />} />
         </Route>
       </Routes>
     </BrowserRouter>

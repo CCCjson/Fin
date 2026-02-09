@@ -10,12 +10,15 @@ from pathlib import Path
 # 创建基类
 Base = declarative_base()
 
+# 项目根目录（backend/）
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+_DEFAULT_DB = _BACKEND_DIR / "data" / "market.db"
+
 # 数据库 URL
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/market.db")
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_DEFAULT_DB}")
 
 # 确保数据目录存在
-data_dir = Path("./data")
-data_dir.mkdir(parents=True, exist_ok=True)
+_DEFAULT_DB.parent.mkdir(parents=True, exist_ok=True)
 
 # 创建引擎
 engine = create_engine(

@@ -21,10 +21,11 @@ async def get_signals(
     end_date: Optional[date] = None,
     signal_type: Optional[str] = None,
     strategy: Optional[str] = None,
-    limit: int = Query(default=100, le=500)
+    limit: int = Query(default=50, le=500),
+    offset: int = Query(default=0, ge=0)
 ):
     """
-    查询交易信号历史
+    查询交易信号历史（支持分页）
 
     Args:
         symbol: 股票代码
@@ -32,17 +33,28 @@ async def get_signals(
         end_date: 结束日期
         signal_type: 信号类型 (BUY/SELL)
         strategy: 策略名称
-        limit: 返回条数
+        limit: 每页条数
+        offset: 偏移量
     """
     try:
         repo = HistoryRepository()
+
+        total = repo.count_signals(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            signal_type=signal_type,
+            strategy=strategy,
+        )
+
         signals = repo.get_signals(
             symbol=symbol,
             start_date=start_date,
             end_date=end_date,
             signal_type=signal_type,
             strategy=strategy,
-            limit=limit
+            limit=limit,
+            offset=offset,
         )
 
         result = []
@@ -67,7 +79,10 @@ async def get_signals(
 
         return {
             "signals": result,
-            "count": len(result)
+            "total": total,
+            "count": len(result),
+            "offset": offset,
+            "limit": limit
         }
 
     except Exception as e:
@@ -77,14 +92,14 @@ async def get_signals(
 @router.get("/signals/statistics")
 async def get_signal_statistics(
     symbol: Optional[str] = None,
-    days: int = Query(default=30, ge=1, le=365)
+    days: Optional[int] = Query(default=None, ge=1, le=3650)
 ):
     """
     获取信号统计
 
     Args:
         symbol: 股票代码
-        days: 统计天数
+        days: 统计天数（可选，不传则统计所有信号）
     """
     try:
         repo = HistoryRepository()

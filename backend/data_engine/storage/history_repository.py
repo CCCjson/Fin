@@ -29,14 +29,30 @@ class HistoryRepository:
         strategy: str = None,
         reasons: List[str] = None,
         **kwargs
-    ) -> Signal:
-        """保存交易信号"""
-        signal_id = f"{symbol}_{date}_{signal_type}_{datetime.now().strftime('%H%M%S')}"
+    ) -> Optional[Signal]:
+        """
+        保存交易信号（增量添加，避免重复）
+
+        如果同一天、同一股票、同一策略的信号已存在，则跳过
+        """
+        # 检查是否已存在相同信号
+        existing = self.session.query(Signal).filter(
+            Signal.symbol == symbol,
+            Signal.date == date,
+            Signal.signal_type == signal_type.upper(),
+            Signal.strategy == strategy
+        ).first()
+
+        if existing:
+            logger.debug(f"信号已存在，跳过: {symbol} {date} {signal_type} {strategy}")
+            return None
+
+        signal_id = f"{symbol}_{date}_{signal_type}_{strategy}_{datetime.now().strftime('%H%M%S%f')}"
 
         signal = Signal(
             symbol=symbol,
             date=date,
-            signal_type=signal_type,
+            signal_type=signal_type.upper(),  # 确保大写
             strength=strength,
             price=price,
             strategy=strategy,
@@ -60,11 +76,28 @@ class HistoryRepository:
         end_date: date = None,
         signal_type: str = None,
         strategy: str = None,
-        limit: int = 100
+        limit: int = 100,
+        offset: int = 0
     ) -> List[Signal]:
         """查询交易信号"""
-        query = self.session.query(Signal)
+        query = self._build_signal_query(symbol, start_date, end_date, signal_type, strategy)
+        return query.order_by(Signal.date.desc(), Signal.id.desc()).offset(offset).limit(limit).all()
 
+    def count_signals(
+        self,
+        symbol: str = None,
+        start_date: date = None,
+        end_date: date = None,
+        signal_type: str = None,
+        strategy: str = None,
+    ) -> int:
+        """统计信号总数"""
+        query = self._build_signal_query(symbol, start_date, end_date, signal_type, strategy)
+        return query.count()
+
+    def _build_signal_query(self, symbol, start_date, end_date, signal_type, strategy):
+        """构建信号查询条件"""
+        query = self.session.query(Signal)
         if symbol:
             query = query.filter(Signal.symbol == symbol)
         if start_date:
@@ -75,20 +108,26 @@ class HistoryRepository:
             query = query.filter(Signal.signal_type == signal_type)
         if strategy:
             query = query.filter(Signal.strategy == strategy)
+        return query
 
-        return query.order_by(Signal.date.desc()).limit(limit).all()
+    def get_signal_statistics(self, symbol: str = None, days: int = None) -> Dict:
+        """
+        获取信号统计
 
-    def get_signal_statistics(self, symbol: str = None, days: int = 30) -> Dict:
-        """获取信号统计"""
+        Args:
+            symbol: 股票代码（可选）
+            days: 统计天数（可选，None 表示统计所有信号）
+        """
         query = self.session.query(Signal)
 
         if symbol:
             query = query.filter(Signal.symbol == symbol)
 
-        # 获取最近N天的信号
-        from datetime import timedelta
-        cutoff_date = datetime.now().date() - timedelta(days=days)
-        query = query.filter(Signal.date >= cutoff_date)
+        # 如果指定了天数，则过滤日期
+        if days is not None:
+            from datetime import timedelta
+            cutoff_date = datetime.now().date() - timedelta(days=days)
+            query = query.filter(Signal.date >= cutoff_date)
 
         signals = query.all()
 

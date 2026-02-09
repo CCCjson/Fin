@@ -81,6 +81,35 @@ class RealtimeQuote(Base):
         return f"<RealtimeQuote(symbol={self.symbol}, price={self.price})>"
 
 
+class RealtimeSnapshot(Base):
+    """实时行情快照表 — 每次请求全市场数据存一份"""
+    __tablename__ = "realtime_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_time = Column(DateTime, nullable=False, index=True)  # 快照时间
+    symbol = Column(String(20), nullable=False, index=True)
+    name = Column(String(100))
+    price = Column(Float)           # 最新价
+    change_pct = Column(Float)      # 涨跌幅 %
+    change_amount = Column(Float)   # 涨跌额
+    volume = Column(Float)          # 成交量（手）
+    amount = Column(Float)          # 成交额
+    amplitude = Column(Float)       # 振幅 %
+    turnover = Column(Float)        # 换手率 %
+    pe_ratio = Column(Float)        # 市盈率
+    high = Column(Float)            # 最高
+    low = Column(Float)             # 最低
+    open = Column(Float)            # 今开
+    prev_close = Column(Float)      # 昨收
+
+    __table_args__ = (
+        Index('idx_snapshot_time_symbol', 'snapshot_time', 'symbol'),
+    )
+
+    def __repr__(self):
+        return f"<RealtimeSnapshot(symbol={self.symbol}, price={self.price}, change={self.change_pct}%)>"
+
+
 class DataUpdateLog(Base):
     """数据更新日志表"""
     __tablename__ = "data_update_logs"
@@ -268,3 +297,81 @@ class Trade(Base):
 
     def __repr__(self):
         return f"<Trade(trade_id={self.trade_id}, symbol={self.symbol}, quantity={self.quantity}, price={self.price})>"
+
+
+class SignalTracking(Base):
+    """信号追踪表 — 追踪每个信号的实际市场表现"""
+    __tablename__ = "signal_tracking"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    signal_id = Column(String(50), unique=True, nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    strategy = Column(String(50), index=True)
+    signal_type = Column(String(10), nullable=False)  # BUY / SELL
+    signal_date = Column(Date, nullable=False, index=True)
+    signal_price = Column(Float, nullable=False)
+    stop_loss = Column(Float)
+    take_profit = Column(Float)
+
+    # N 日收益率（%）
+    return_1d = Column(Float)
+    return_3d = Column(Float)
+    return_5d = Column(Float)
+    return_10d = Column(Float)
+    return_20d = Column(Float)
+
+    # 极值统计（20 日窗口内）
+    max_gain = Column(Float)       # 最大浮盈 %（MFE）
+    max_loss = Column(Float)       # 最大浮亏 %（MAE）
+    max_gain_day = Column(Integer)  # 第几个交易日达到最大浮盈
+    max_loss_day = Column(Integer)  # 第几个交易日达到最大浮亏
+
+    # 止损止盈追踪
+    hit_stop_loss = Column(Integer, default=0)
+    hit_take_profit = Column(Integer, default=0)
+    days_to_stop = Column(Integer)
+    days_to_target = Column(Integer)
+
+    # 状态
+    tracking_status = Column(String(20), nullable=False, default='pending', index=True)
+    outcome = Column(String(10))  # win / loss / neutral
+    tracked_days = Column(Integer, default=0)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index('idx_tracking_strategy', 'strategy'),
+        Index('idx_tracking_signal_date', 'signal_date'),
+        Index('idx_tracking_outcome', 'outcome'),
+    )
+
+    def __repr__(self):
+        return f"<SignalTracking(signal_id={self.signal_id}, status={self.tracking_status}, outcome={self.outcome})>"
+
+
+class AnalysisReport(Base):
+    """AI分析报告表"""
+    __tablename__ = "analysis_reports"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_id = Column(String(50), unique=True, nullable=False, index=True)
+    report_type = Column(String(20), nullable=False, index=True)  # weekly / monthly
+    title = Column(String(200), nullable=False)
+    content = Column(Text)  # 完整Markdown内容
+
+    period_start = Column(Date)
+    period_end = Column(Date)
+
+    model_used = Column(String(50))
+    token_count = Column(Integer)
+    generation_time_seconds = Column(Float)
+    data_snapshot = Column(Text)  # JSON格式的原始数据快照
+
+    status = Column(String(20), nullable=False, default="generating", index=True)  # generating / completed / failed
+    error_message = Column(Text)
+
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+
+    def __repr__(self):
+        return f"<AnalysisReport(report_id={self.report_id}, type={self.report_type}, status={self.status})>"

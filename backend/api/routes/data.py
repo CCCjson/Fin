@@ -1,10 +1,13 @@
 """
 数据相关API
 """
+import asyncio
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from typing import List
 import pandas as pd
 from datetime import datetime
+from loguru import logger
 
 from api.models.schemas import (
     StockDataRequest,
@@ -105,4 +108,51 @@ async def get_stock_info(symbol: str):
         return info
 
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 全市场增量更新 ====================
+
+@router.post("/update-daily/stream", summary="流式增量更新全市场日线数据")
+async def update_daily_stream():
+    """
+    增量更新全市场 A 股日线数据（流式进度）
+
+    复用 EastMoneyCrawler + ProxyManager，自动代理切换。
+    只拉每只股票 DB 中缺失的日期范围。
+    """
+    try:
+        from data_engine.daily_updater import DailyUpdater
+
+        updater = DailyUpdater()
+        sync_gen = updater.update_stream()
+
+        async def _flushing_wrapper():
+            for chunk in sync_gen:
+                yield chunk
+                await asyncio.sleep(0)
+
+        return StreamingResponse(
+            _flushing_wrapper(),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    except Exception as e:
+        logger.error(f"全市场增量更新失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/update-status", summary="查询数据更新状态")
+async def get_update_status():
+    """查询全市场数据覆盖状态和上次更新信息"""
+    try:
+        from data_engine.daily_updater import DailyUpdater
+
+        updater = DailyUpdater()
+        return updater.get_update_status()
+    except Exception as e:
+        logger.error(f"查询更新状态失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,167 +1,113 @@
 # ==================== Python ====================
-# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
-# Distribution / packaging
 .Python
 build/
-develop-eggs/
 dist/
-downloads/
 eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
-MANIFEST
-
-# Virtual environments
 venv/
 env/
-ENV/
 .venv
 
-# ==================== 数据库 & 数据文件 ====================
-# SQLite 数据库
+# ==================== 核心机密：策略 & 信号 ====================
+backend/strategy/strategies.py
+backend/strategy/signal_generator.py
+backend/strategy/indicators.py
+backend/analysis_engine/signals/detector.py
+backend/analysis_engine/signal_tracker.py
+
+# ==================== 核心机密：爬虫 & 代理 ====================
+backend/scripts/
+backend/data_engine/daily_updater.py
+
+# ==================== 核心机密：风控 & 交易配置 ====================
+backend/trading_engine/risk/rules.py
+backend/trading_engine/config.py
+
+# ==================== 核心机密：AI 报告引擎 ====================
+backend/report_engine/
+
+# ==================== 架构文档 & 开发提示词 ====================
+docs/
+claude.md
+CLAUDE.md
+.claude/
+
+# ==================== 数据 & 数据库 ====================
 *.db
+*.db.backup
 *.sqlite
 *.sqlite3
-backend/data/*.db
-backend/data/*.sqlite
+backend/data/
 
-# 数据文件（可选：如果数据量大不想上传）
-# backend/data/
-# data/
+# ==================== CTP 交易通信 ====================
+backend/md_flow/
+backend/td_flow/
 
-# ==================== 日志文件 ====================
-# 所有日志
-logs/
-*.log
-backend/logs/
-*.log.*
+# ==================== 测试文件 ====================
+backend/tests/
 
-# ==================== 配置 & 密钥 ====================
-# 环境变量（包含 API key 等敏感信息）
+# ==================== 环境变量 & 密钥 ====================
 .env
-.env.local
-.env.*.local
+.env.*
 *.key
 *.pem
+backend/.env.example
 
-# 配置文件（如果包含敏感信息）
-# config.yaml
-# config.json
+# ==================== 部署脚本 ====================
+restart.sh
 
-# ==================== 进度文件 ====================
-# 爬虫进度
-backend/scripts/fetch_progress.json
+# ==================== 日志 ====================
+logs/
+*.log
+*.log.*
+nohup.out
+
+# ==================== 进度 & 临时文件 ====================
 *_progress.json
+*.tmp
+*.temp
+*.bak
+*.cache
+*.csv
+exports/
 
-# ==================== IDE & 编辑器 ====================
-# VSCode
+# ==================== IDE ====================
 .vscode/
-*.code-workspace
-
-# PyCharm
 .idea/
+*.code-workspace
 *.iml
-
-# Jupyter Notebook
 .ipynb_checkpoints/
-*.ipynb
-
-# Sublime Text
-*.sublime-project
-*.sublime-workspace
-
-# Vim
 *.swp
 *.swo
 *~
 
-# Emacs
-*~
-\#*\#
-
 # ==================== 操作系统 ====================
-# macOS
 .DS_Store
-.AppleDouble
-.LSOverride
 ._*
-
-# Windows
 Thumbs.db
-ehthumbs.db
 Desktop.ini
-$RECYCLE.BIN/
 
-# Linux
-.directory
-.Trash-*
-
-# ==================== 前端 (Node.js / React) ====================
-# Dependencies
+# ==================== 前端 ====================
 node_modules/
-frontend/node_modules/
-
-# Production build
 frontend/build/
 frontend/dist/
-
-# Testing
 coverage/
-.nyc_output/
-
-# Package manager
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
-# ==================== 临时文件 ====================
-# 通用临时文件
-*.tmp
-*.temp
-*.bak
-*.swp
-*.cache
-
-# 输出文件
-output.log
-nohup.out
-
-# ==================== 测试 & 覆盖率 ====================
+# ==================== 其他 ====================
 .pytest_cache/
 .coverage
 htmlcov/
-.tox/
-
-# ==================== 其他 ====================
-# 编译后的文件
-*.o
-*.a
-*.lib
-*.exe
-*.out
-
-# 压缩文件（如果用于备份）
 *.zip
 *.tar.gz
-*.rar
-
-# 大文件（CSV 导出等）
-*.csv
-exports/
-
-# 调试文件
-debug.log
-error.log
+*.o
+*.a
+*.exe
+*.out

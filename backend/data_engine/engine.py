@@ -37,7 +37,8 @@ class DataEngine:
         start_date: str,
         end_date: str,
         adjust: str = "qfq",
-        force_update: bool = False
+        force_update: bool = False,
+        db_only: bool = False
     ) -> pd.DataFrame:
         """
         获取日线数据（优先从数据库，不存在则从网络获取）
@@ -48,6 +49,7 @@ class DataEngine:
             end_date: 结束日期 (YYYY-MM-DD)
             adjust: 复权方式 (qfq/hfq/none)
             force_update: 是否强制从网络更新
+            db_only: 仅查询数据库，不联网拉取数据
 
         Returns:
             DataFrame: 日线数据
@@ -57,17 +59,44 @@ class DataEngine:
 
         logger.info(f"获取 {symbol} 的日线数据: {start_date} ~ {end_date}")
 
-        # 如果不强制更新，先尝试从数据库获取
-        if not force_update:
+        # 仅 DB 模式：直接查库返回，不检查新鲜度、不联网
+        if db_only:
             df = self.quote_repo.get_daily_quotes_df(symbol, start_dt, end_dt)
-            if not df.empty:
-                logger.info(f"从数据库获取到 {len(df)} 条数据")
-                return df
+            logger.info(f"[db_only] 返回 {len(df)} 条数据")
+            return df
 
-        # 从网络获取
-        logger.info("从网络获取数据...")
-        df = self._fetch_and_save_daily_data(symbol, start_dt, end_dt, adjust)
+        if force_update:
+            logger.info("强制从网络获取数据...")
+            df = self._fetch_and_save_daily_data(symbol, start_dt, end_dt, adjust)
+            return df
 
+        # 先从数据库获取
+        df = self.quote_repo.get_daily_quotes_df(symbol, start_dt, end_dt)
+
+        if df.empty:
+            # 数据库没有任何数据，全量从网络获取
+            logger.info("数据库无数据，从网络获取...")
+            df = self._fetch_and_save_daily_data(symbol, start_dt, end_dt, adjust)
+            return df
+
+        # 检查数据是否够新：数据库最新日期 vs 请求的 end_date
+        latest_in_db = self.quote_repo.get_latest_date(symbol)
+        if latest_in_db and latest_in_db < end_dt.date():
+            # 数据库数据不够新，从最新日期的下一天开始补数据
+            fetch_start = datetime.combine(latest_in_db + timedelta(days=1), datetime.min.time())
+            logger.info(f"数据库最新: {latest_in_db}，补齐 {fetch_start.date()} ~ {end_dt.date()}")
+            try:
+                new_df = self._fetch_and_save_daily_data(symbol, fetch_start, end_dt, adjust)
+                if not new_df.empty:
+                    # 合并旧数据和新数据
+                    df = pd.concat([df, new_df])
+                    df = df[~df.index.duplicated(keep='last')]
+                    df.sort_index(inplace=True)
+                    logger.info(f"补齐后共 {len(df)} 条数据")
+            except Exception as e:
+                logger.warning(f"补齐数据失败（返回已有数据）: {e}")
+
+        logger.info(f"返回 {len(df)} 条数据")
         return df
 
     def _fetch_and_save_daily_data(
