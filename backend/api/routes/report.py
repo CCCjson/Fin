@@ -64,19 +64,20 @@ async def generate_report(request: GenerateReportRequest):
             yield json.dumps({"event": "collecting", "message": "正在构建分析提示..."}, ensure_ascii=False) + "\n"
             await asyncio.sleep(0)
 
-            # 2. 构建Prompt
+            # 2. 构建Prompt（多次调用拆分）
             builder = ReportPromptBuilder()
-            system_prompt, user_prompt = builder.build(data, request.report_type)
+            call_specs = builder.build_multi(data, request.report_type)
 
-            # 3. 生成
+            # 3. 生成（5次调用流式输出）
             report_id = f"rpt_{uuid.uuid4().hex[:12]}"
             period_label = "周报" if request.report_type == "weekly" else "月报"
             title = f"量化投资{period_label} ({data['period_start']} ~ {data['period_end']})"
 
             generator = ReportGenerator()
-            sync_gen = generator.generate_stream(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
+            sync_gen = generator.generate_multi_stream(
+                data=data,
+                call_specs=call_specs,
+                prompt_builder=builder,
                 report_id=report_id,
                 title=title,
                 model=request.model,

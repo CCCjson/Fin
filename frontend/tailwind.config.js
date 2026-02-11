@@ -21,18 +21,18 @@ export default {
           light: '#60A5FA',
           glow: 'rgba(59, 130, 246, 0.2)',
         },
-        // 涨跌颜色
+        // 涨跌颜色（A股习惯：红涨绿跌）
         bull: {
-          DEFAULT: '#10B981',
-          dark: '#059669',
-          light: '#34D399',
-          glow: 'rgba(16, 185, 129, 0.15)',
-        },
-        bear: {
           DEFAULT: '#EF4444',
           dark: '#DC2626',
           light: '#F87171',
           glow: 'rgba(239, 68, 68, 0.15)',
+        },
+        bear: {
+          DEFAULT: '#10B981',
+          dark: '#059669',
+          light: '#34D399',
+          glow: 'rgba(16, 185, 129, 0.15)',
         },
         // 辅助色
         accent: {
@@ -52,8 +52,8 @@ export default {
       },
       boxShadow: {
         'glow-blue': '0 0 20px rgba(59, 130, 246, 0.3)',
-        'glow-green': '0 0 20px rgba(16, 185, 129, 0.3)',
-        'glow-red': '0 0 20px rgba(239, 68, 68, 0.3)',
+        'glow-green': '0 0 20px rgba(16, 185, 129, 0.3)',  // bear glow
+        'glow-red': '0 0 20px rgba(239, 68, 68, 0.3)',    // bull glow
         'card': '0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2)',
       },
     },

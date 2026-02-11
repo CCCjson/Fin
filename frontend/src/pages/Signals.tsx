@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { signalService } from '../services/signalService';
 import type { ScanProgressEvent, DataFreshness } from '../services/signalService';
 import type { Signal, SignalStatistics } from '../types';
@@ -373,12 +374,10 @@ export const Signals: React.FC = () => {
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 股票代码
               </label>
-              <input
-                type="text"
+              <StockSymbolInput
                 value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
+                onChange={(s) => setSymbol(s)}
                 placeholder="全部"
-                className="w-full px-3 py-2 bg-dark-light text-white rounded-lg border border-border focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
               />
             </div>
             <div>

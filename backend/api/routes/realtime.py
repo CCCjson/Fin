@@ -193,6 +193,7 @@ async def stream_realtime_quotes(
     sort_by: str = Query("change_pct", description="排序字段"),
     ascending: bool = Query(False, description="是否升序"),
     save: bool = Query(True, description="是否保存到数据库"),
+    use_proxy: bool = Query(False, description="是否使用代理 IP"),
 ):
     """
     流式获取全 A股实时行情（NDJSON）
@@ -213,8 +214,8 @@ async def stream_realtime_quotes(
         loop = asyncio.get_event_loop()
         progress_queue: queue.Queue = queue.Queue()
 
-        def _on_progress(fetched: int, total: int, page: int, total_pages: int):
-            progress_queue.put((fetched, total, page, total_pages))
+        def _on_progress(fetched: int, total: int, percent: int, _scale: int):
+            progress_queue.put((fetched, total, percent))
 
         def _fetch():
             return fetch_a_share_realtime(
@@ -245,8 +246,8 @@ async def stream_realtime_quotes(
             await asyncio.sleep(0.5)
             latest = _drain_queue()
             if latest:
-                fetched, total, page, total_pages = latest
-                percent = round(fetched * 100 / total) if total > 0 else 0
+                fetched, total, percent = latest
+                percent = max(0, min(percent, 100))
                 if percent != last_percent:
                     last_percent = percent
                     heartbeat_counter = 0
@@ -254,8 +255,6 @@ async def stream_realtime_quotes(
                         "event": "progress",
                         "fetched": fetched,
                         "total": total,
-                        "page": page,
-                        "total_pages": total_pages,
                         "percent": percent,
                     }, ensure_ascii=False) + "\n"
             else:
@@ -268,15 +267,13 @@ async def stream_realtime_quotes(
         # future 完成后，最后再排空一次队列
         latest = _drain_queue()
         if latest:
-            fetched, total, page, total_pages = latest
-            percent = round(fetched * 100 / total) if total > 0 else 0
+            fetched, total, percent = latest
+            percent = max(0, min(percent, 100))
             if percent != last_percent:
                 yield json.dumps({
                     "event": "progress",
                     "fetched": fetched,
                     "total": total,
-                    "page": page,
-                    "total_pages": total_pages,
                     "percent": percent,
                 }, ensure_ascii=False) + "\n"
 

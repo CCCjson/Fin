@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { StockSymbolInput } from '../common/StockSymbolInput';
 
 interface OrderFormProps {
   onSubmit: (symbol: string, action: string, quantity: number, price?: number) => void;
@@ -26,12 +27,10 @@ export const OrderForm: React.FC<OrderFormProps> = ({ onSubmit, loading }) => {
         <label className="block text-sm font-medium text-gray-300 mb-2">
           股票代码
         </label>
-        <input
-          type="text"
+        <StockSymbolInput
           value={symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-          className="w-full px-3 py-2 bg-dark-light text-white rounded-lg border border-border focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-          required
+          onChange={(s) => setSymbol(s)}
+          placeholder="输入代码或名称搜索"
         />
       </div>
 

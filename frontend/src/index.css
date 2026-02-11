@@ -10,13 +10,13 @@
   --color-primary-dark: #2563EB;
   --color-primary-light: #60A5FA;
 
-  --color-bull: #10B981;
-  --color-bull-dark: #059669;
-  --color-bull-light: #34D399;
+  --color-bull: #EF4444;
+  --color-bull-dark: #DC2626;
+  --color-bull-light: #F87171;
 
-  --color-bear: #EF4444;
-  --color-bear-dark: #DC2626;
-  --color-bear-light: #F87171;
+  --color-bear: #10B981;
+  --color-bear-dark: #059669;
+  --color-bear-light: #34D399;
 
   --color-accent-purple: #8B5CF6;
   --color-accent-cyan: #06B6D4;

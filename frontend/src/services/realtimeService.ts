@@ -84,7 +84,7 @@ const realtimeService = {
    * 流式获取行情（带进度回调）
    */
   streamQuotes: async (
-    params: { sort_by?: string; ascending?: boolean; save?: boolean },
+    params: { sort_by?: string; ascending?: boolean; save?: boolean; use_proxy?: boolean },
     onEvent: (event: RealtimeStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
@@ -92,6 +92,7 @@ const realtimeService = {
     if (params.sort_by) query.set('sort_by', params.sort_by);
     if (params.ascending !== undefined) query.set('ascending', String(params.ascending));
     if (params.save !== undefined) query.set('save', String(params.save));
+    if (params.use_proxy !== undefined) query.set('use_proxy', String(params.use_proxy));
 
     const response = await fetch(
       `${API_BASE}/realtime/quotes/stream?${query.toString()}`,

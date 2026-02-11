@@ -375,3 +375,82 @@ class AnalysisReport(Base):
 
     def __repr__(self):
         return f"<AnalysisReport(report_id={self.report_id}, type={self.report_type}, status={self.status})>"
+
+
+class ManualTrade(Base):
+    """手动交易记录表"""
+    __tablename__ = "manual_trades"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    name = Column(String(100))
+    side = Column(String(10), nullable=False)  # BUY / SELL
+    price = Column(Float, nullable=False)
+    quantity = Column(Integer, nullable=False)
+    amount = Column(Float, nullable=False)
+    commission = Column(Float, default=0)
+    trade_date = Column(Date, nullable=False, index=True)
+    note = Column(Text)
+
+    # AI 报告关联（可空，手动录入时为 null）
+    report_id = Column(String(50), nullable=True, index=True)
+    ai_recommended_price = Column(Float, nullable=True)
+    ai_stop_loss = Column(Float, nullable=True)
+    ai_take_profit = Column(Float, nullable=True)
+    ai_composite_score = Column(Float, nullable=True)
+    ai_strategy = Column(String(100), nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index('idx_manual_trade_symbol_date', 'symbol', 'trade_date'),
+        Index('idx_manual_trade_report', 'report_id'),
+    )
+
+    def __repr__(self):
+        return f"<ManualTrade(symbol={self.symbol}, side={self.side}, price={self.price}, qty={self.quantity})>"
+
+
+class DailyReview(Base):
+    """每日复盘记录表"""
+    __tablename__ = "daily_reviews"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    review_date = Column(Date, unique=True, nullable=False, index=True)
+
+    # 当日快照
+    daily_pnl = Column(Float)
+    positions_count = Column(Integer)
+    trades_count = Column(Integer)
+    signals_count = Column(Integer)
+
+    # 评分系统
+    self_score = Column(Integer, nullable=True)       # 自评 1-10
+    ai_score = Column(Integer, nullable=True)         # AI评分 1-10
+    ai_score_reason = Column(Text, nullable=True)     # AI打分理由 Markdown
+    ai_dimension_scores = Column(Text, nullable=True) # JSON: 五维子评分 + 亮点 + 改进
+    composite_score = Column(Float, nullable=True)    # 综合分 = (self + ai) / 2
+
+    # 复盘笔记
+    note = Column(Text)
+    template_used = Column(String(20), default="beginner")
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<DailyReview(date={self.review_date}, composite={self.composite_score})>"
+
+
+class UserSettings(Base):
+    """用户设置表（键值对存储）"""
+    __tablename__ = "user_settings"
+
+    key = Column(String(50), primary_key=True)
+    value = Column(String(200), nullable=False)
+    description = Column(String(200))
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<UserSettings(key={self.key}, value={self.value})>"

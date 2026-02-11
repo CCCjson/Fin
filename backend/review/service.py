@@ -1,0 +1,645 @@
+"""
+每日复盘服务 — 聚合当日数据 + AI 评分
+"""
+import json
+import os
+import time
+from datetime import date, datetime
+from typing import Dict, Any, List, Optional
+from pathlib import Path
+
+import requests
+from loguru import logger
+from dotenv import load_dotenv
+
+from data_engine.storage.database import get_session
+from data_engine.storage.models import (
+    DailyQuote, ManualTrade, Signal, DailyReview,
+    StockInfo, RealtimeSnapshot,
+)
+from portfolio.calculator import PortfolioCalculator
+
+# 加载 .env
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(_BACKEND_DIR / ".env", override=True)
+
+# 大盘指数映射（EastMoney secid -> 显示信息）
+INDEX_MAP = {
+    "000001": {"name": "上证指数", "secid": "1.000001"},
+    "399001": {"name": "深证成指", "secid": "0.399001"},
+    "399006": {"name": "创业板指", "secid": "0.399006"},
+    "HSI":    {"name": "恒生指数", "secid": None},
+    "SPX":    {"name": "标普500",  "secid": None},
+}
+
+# 小白复盘模板
+BEGINNER_TEMPLATE = """## 今日复盘
+
+### 一、今天做了什么操作？为什么？
+<!-- 记录你今天的买卖操作，以及当时的思考过程 -->
+
+
+### 二、哪笔操作最满意？为什么？
+<!-- 回顾你今天做得最好的一个决定 -->
+
+
+### 三、哪笔操作最后悔？下次怎么改？
+<!-- 诚实面对失误，写下改进方法 -->
+
+
+### 四、有没有管住手？
+- [ ] 今天没有冲动交易
+- [ ] 每笔交易都设了止损
+- [ ] 单股仓位没有超过 20%
+
+### 五、今天学到了什么？
+<!-- 一句话总结今天最大的收获 -->
+
+
+### 六、明天计划
+- 关注标的:
+- 计划操作:
+- 需要注意:
+"""
+
+
+class ReviewService:
+    """每日复盘服务"""
+
+    def get_review_data(self, review_date: date,
+                        signals_limit: int = 20, signals_offset: int = 0) -> Dict[str, Any]:
+        """
+        聚合指定日期的全部复盘数据
+
+        返回: 大盘指数、当日持仓表现、当日交易、当日信号（分页）、复盘笔记+评分
+        """
+        session = get_session()
+        try:
+            # 1. 大盘指数
+            indices = self._get_indices(session, review_date)
+
+            # 2. 持仓当日表现
+            positions = self._get_positions_daily(session, review_date)
+
+            # 3. 当日交易
+            day_trades = self._get_day_trades(session, review_date)
+
+            # 4. 当日信号（分页）
+            signals_total = session.query(Signal).filter(Signal.date == review_date).count()
+            day_signals = self._get_day_signals(session, review_date, signals_limit, signals_offset)
+
+            # 5. 当日盈亏汇总
+            daily_pnl = sum(p.get("daily_pnl", 0) or 0 for p in positions)
+
+            # 6. 复盘记录（笔记 + 评分）
+            review = session.query(DailyReview).filter(
+                DailyReview.review_date == review_date
+            ).first()
+
+            review_data = None
+            if review:
+                # 解析维度评分 JSON
+                dim_scores = None
+                if review.ai_dimension_scores:
+                    try:
+                        dim_scores = json.loads(review.ai_dimension_scores)
+                    except json.JSONDecodeError:
+                        pass
+
+                review_data = {
+                    "id": review.id,
+                    "review_date": str(review.review_date),
+                    "self_score": review.self_score,
+                    "ai_score": review.ai_score,
+                    "ai_score_reason": review.ai_score_reason,
+                    "ai_dimension_scores": dim_scores,
+                    "composite_score": review.composite_score,
+                    "note": review.note,
+                    "template_used": review.template_used,
+                    "updated_at": str(review.updated_at) if review.updated_at else None,
+                }
+
+            return {
+                "date": str(review_date),
+                "indices": indices,
+                "daily_pnl": round(daily_pnl, 2),
+                "positions": positions,
+                "positions_count": len(positions),
+                "trades": day_trades,
+                "trades_count": len(day_trades),
+                "signals": day_signals,
+                "signals_total": signals_total,
+                "signals_count": len(day_signals),
+                "review": review_data,
+                "template": BEGINNER_TEMPLATE,
+            }
+
+        finally:
+            session.close()
+
+    def save_note(self, review_date: date, note: str, self_score: Optional[int] = None,
+                  template_used: str = "beginner") -> Dict[str, Any]:
+        """保存复盘笔记和自评分"""
+        session = get_session()
+        try:
+            review = session.query(DailyReview).filter(
+                DailyReview.review_date == review_date
+            ).first()
+
+            if not review:
+                # 获取当日快照数据
+                day_trades = session.query(ManualTrade).filter(
+                    ManualTrade.trade_date == review_date
+                ).all()
+                day_signals = session.query(Signal).filter(
+                    Signal.date == review_date
+                ).all()
+                calculator = PortfolioCalculator()
+                positions = calculator.get_current_positions()
+
+                review = DailyReview(
+                    review_date=review_date,
+                    daily_pnl=0,
+                    positions_count=len(positions),
+                    trades_count=len(day_trades),
+                    signals_count=len(day_signals),
+                    template_used=template_used,
+                )
+                session.add(review)
+
+            review.note = note
+            review.template_used = template_used
+            if self_score is not None:
+                review.self_score = max(1, min(10, self_score))
+                # 重算综合分
+                if review.ai_score is not None:
+                    review.composite_score = round((review.self_score + review.ai_score) / 2, 1)
+                else:
+                    review.composite_score = float(review.self_score)
+
+            session.commit()
+            session.refresh(review)
+
+            return {
+                "id": review.id,
+                "review_date": str(review.review_date),
+                "self_score": review.self_score,
+                "ai_score": review.ai_score,
+                "composite_score": review.composite_score,
+                "note": review.note,
+                "updated_at": str(review.updated_at) if review.updated_at else None,
+            }
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"保存复盘笔记失败: {e}")
+            raise
+        finally:
+            session.close()
+
+    def request_ai_score(self, review_date: date) -> Dict[str, Any]:
+        """
+        请求 AI 评分（非流式，直接返回结果）
+        """
+        from openai import OpenAI
+
+        session = get_session()
+        try:
+            # 收集当日数据
+            data = self.get_review_data(review_date)
+            review = session.query(DailyReview).filter(
+                DailyReview.review_date == review_date
+            ).first()
+
+            if not review:
+                review = DailyReview(
+                    review_date=review_date,
+                    positions_count=data["positions_count"],
+                    trades_count=data["trades_count"],
+                    signals_count=data["signals_count"],
+                )
+                session.add(review)
+                session.commit()
+
+            # 构建 prompt
+            system_prompt = self._build_ai_score_system_prompt()
+            user_prompt = self._build_ai_score_user_prompt(data)
+
+            # 调用 LLM
+            api_key = os.getenv("OPENAI_API_KEY", "")
+            base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY 未配置")
+
+            client = OpenAI(api_key=api_key, base_url=base_url)
+            logger.info(f"AI评分请求 | date={review_date}")
+
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=2048,
+                temperature=0.5,
+            )
+
+            content = response.choices[0].message.content or ""
+
+            # 解析 AI 返回的评分
+            score, reason, structured = self._parse_ai_score_response(content)
+
+            # 更新记录
+            review.ai_score = score
+            review.ai_score_reason = reason
+            if structured:
+                review.ai_dimension_scores = json.dumps(structured, ensure_ascii=False)
+            if review.self_score is not None:
+                review.composite_score = round((review.self_score + score) / 2, 1)
+            else:
+                review.composite_score = float(score)
+
+            session.commit()
+            session.refresh(review)
+
+            # 解析存储的 JSON
+            dim_scores = None
+            if review.ai_dimension_scores:
+                try:
+                    dim_scores = json.loads(review.ai_dimension_scores)
+                except json.JSONDecodeError:
+                    pass
+
+            return {
+                "ai_score": review.ai_score,
+                "ai_score_reason": review.ai_score_reason,
+                "ai_dimension_scores": dim_scores,
+                "composite_score": review.composite_score,
+                "self_score": review.self_score,
+            }
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"AI评分请求失败: {e}")
+            raise
+        finally:
+            session.close()
+
+    def get_calendar(self, year: int, month: int) -> List[Dict[str, Any]]:
+        """获取指定月份有复盘记录的日期列表"""
+        session = get_session()
+        try:
+            from sqlalchemy import extract
+            reviews = session.query(DailyReview).filter(
+                extract('year', DailyReview.review_date) == year,
+                extract('month', DailyReview.review_date) == month,
+            ).all()
+
+            return [
+                {
+                    "date": str(r.review_date),
+                    "composite_score": r.composite_score,
+                    "self_score": r.self_score,
+                    "ai_score": r.ai_score,
+                    "has_note": bool(r.note),
+                }
+                for r in reviews
+            ]
+        finally:
+            session.close()
+
+    def get_summary(self, limit: int = 30) -> List[Dict[str, Any]]:
+        """获取最近 N 天复盘摘要"""
+        session = get_session()
+        try:
+            reviews = (
+                session.query(DailyReview)
+                .order_by(DailyReview.review_date.desc())
+                .limit(limit)
+                .all()
+            )
+            return [
+                {
+                    "date": str(r.review_date),
+                    "daily_pnl": r.daily_pnl,
+                    "composite_score": r.composite_score,
+                    "self_score": r.self_score,
+                    "ai_score": r.ai_score,
+                    "trades_count": r.trades_count,
+                    "has_note": bool(r.note),
+                }
+                for r in reviews
+            ]
+        finally:
+            session.close()
+
+    # ==================== 内部方法 ====================
+
+    def _get_indices(self, session, review_date: date) -> List[Dict[str, Any]]:
+        """
+        获取大盘指数表现
+
+        A股指数从东方财富 API 实时拉取（不依赖 DailyQuote），
+        恒生/标普从 EastMoney 全球指数接口获取。
+        """
+        # A股 + 恒生 + 标普 一次性从东方财富获取
+        # secid 格式: 市场.代码  (1=沪, 0=深, 100=港/美/全球)
+        secids = "1.000001,0.399001,0.399006,100.HSI,100.SPX"
+        name_map = {
+            "000001": "上证指数",
+            "399001": "深证成指",
+            "399006": "创业板指",
+            "HSI": "恒生指数",
+            "SPX": "标普500",
+        }
+
+        url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+        params = {
+            "fltt": 2,
+            "invt": 2,
+            "fields": "f2,f3,f4,f6,f12,f14",
+            "secids": secids,
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "_": str(int(time.time() * 1000)),
+        }
+
+        try:
+            resp = requests.get(url, params=params, timeout=10, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                "Referer": "https://finance.eastmoney.com/",
+            })
+            data = resp.json()
+
+            if data.get("rc") != 0 or not data.get("data"):
+                logger.warning(f"指数行情请求失败: rc={data.get('rc')}")
+                return self._empty_indices(name_map)
+
+            result = []
+            for item in data["data"].get("diff", []):
+                code = item.get("f12", "")
+                result.append({
+                    "symbol": code,
+                    "name": name_map.get(code, item.get("f14", code)),
+                    "price": item.get("f2"),
+                    "change_pct": item.get("f3"),
+                })
+
+            # 确保 5 个指数都有，缺的补空
+            returned_codes = {r["symbol"] for r in result}
+            for code, name in name_map.items():
+                if code not in returned_codes:
+                    result.append({"symbol": code, "name": name, "price": None, "change_pct": None})
+
+            # 按固定顺序排
+            order = ["000001", "399001", "399006", "HSI", "SPX"]
+            result.sort(key=lambda x: order.index(x["symbol"]) if x["symbol"] in order else 99)
+            return result
+
+        except requests.RequestException as e:
+            logger.error(f"指数行情请求异常: {e}")
+            return self._empty_indices(name_map)
+
+    @staticmethod
+    def _empty_indices(name_map: Dict[str, str]) -> List[Dict[str, Any]]:
+        return [{"symbol": code, "name": name, "price": None, "change_pct": None}
+                for code, name in name_map.items()]
+
+    def _get_positions_daily(self, session, review_date: date) -> List[Dict[str, Any]]:
+        """获取持仓在当日的表现（只回放截止 review_date 的交易）"""
+        calculator = PortfolioCalculator()
+        positions = calculator.get_current_positions(as_of_date=review_date)
+
+        result = []
+        for pos in positions:
+            sym = pos["symbol"]
+
+            # 当日收盘价
+            today_quote = session.query(DailyQuote).filter(
+                DailyQuote.symbol == sym,
+                DailyQuote.date == review_date,
+            ).first()
+
+            # 前一日收盘价
+            prev_quote = session.query(DailyQuote).filter(
+                DailyQuote.symbol == sym,
+                DailyQuote.date < review_date,
+            ).order_by(DailyQuote.date.desc()).first()
+
+            today_close = today_quote.close if today_quote else pos.get("current_price")
+            prev_close = prev_quote.close if prev_quote else None
+
+            daily_change_pct = None
+            daily_pnl = None
+            if today_close and prev_close and prev_close > 0:
+                daily_change_pct = round((today_close - prev_close) / prev_close * 100, 2)
+                daily_pnl = round((today_close - prev_close) * pos["quantity"], 2)
+
+            result.append({
+                **pos,
+                "today_close": today_close,
+                "prev_close": prev_close,
+                "daily_change_pct": daily_change_pct,
+                "daily_pnl": daily_pnl,
+            })
+
+        return result
+
+    def _get_day_trades(self, session, review_date: date) -> List[Dict[str, Any]]:
+        """获取当日交易"""
+        trades = session.query(ManualTrade).filter(
+            ManualTrade.trade_date == review_date,
+        ).order_by(ManualTrade.id.asc()).all()
+
+        return [
+            {
+                "id": t.id,
+                "symbol": t.symbol,
+                "name": t.name,
+                "side": t.side,
+                "price": t.price,
+                "quantity": t.quantity,
+                "amount": t.amount,
+                "commission": t.commission,
+                "note": t.note,
+                "ai_recommended_price": t.ai_recommended_price,
+            }
+            for t in trades
+        ]
+
+    def _get_day_signals(self, session, review_date: date,
+                         limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
+        """获取当日触发的信号（分页），并标注用户是否持有"""
+        signals = (
+            session.query(Signal)
+            .filter(Signal.date == review_date)
+            .order_by(Signal.strength.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        # 获取截止该日期的持仓 symbol 集合
+        calculator = PortfolioCalculator()
+        positions = calculator.get_current_positions(as_of_date=review_date)
+        held_symbols = {p["symbol"] for p in positions}
+
+        # 获取当日卖出的 symbol
+        sold_today = session.query(ManualTrade.symbol).filter(
+            ManualTrade.trade_date == review_date,
+            ManualTrade.side == "SELL",
+        ).all()
+        sold_symbols = {s[0] for s in sold_today}
+
+        result = []
+        for s in signals:
+            # 获取股票名
+            stock = session.query(StockInfo).filter(StockInfo.symbol == s.symbol).first()
+            name = stock.name if stock else s.symbol
+
+            holding_status = "not_held"
+            if s.symbol in held_symbols:
+                holding_status = "held"
+            elif s.symbol in sold_symbols:
+                holding_status = "sold_today"
+
+            result.append({
+                "id": s.id,
+                "symbol": s.symbol,
+                "name": name,
+                "signal_type": s.signal_type,
+                "strength": s.strength,
+                "price": s.price,
+                "strategy": s.strategy,
+                "holding_status": holding_status,
+            })
+
+        return result
+
+    def _build_ai_score_system_prompt(self) -> str:
+        return """你是一位资深投资教练，专注于帮助投资新手建立正确的交易习惯和纪律。
+
+你的任务是根据用户当天的交易数据和复盘笔记，从五个维度分别打分，并给出综合评分和详细评语。
+
+评分维度和权重：
+1. 纪律执行（30%）：是否按信号操作，是否设了止损，有没有冲动交易
+2. 仓位管理（20%）：单股仓位是否合理，整体仓位是否安全
+3. 买卖时机（20%）：成交价是否合理，有没有追高杀跌
+4. 信号跟进（15%）：强信号是否跟进了，弱信号是否忍住了
+5. 自我反思（15%）：复盘笔记质量，有没有认真总结
+
+评分标准：
+- 1-3分：犯了严重错误（重仓追高、无止损、完全忽视信号）
+- 4-5分：有失误但不致命
+- 6-7分：中规中矩，基本按计划执行
+- 8-9分：表现优秀，操作有纪律
+- 10分：完美执行
+
+你的回复必须严格按照以下 JSON 格式，不要包含其他内容：
+```json
+{
+  "score": <1-10的整数，综合评分>,
+  "dimensions": {
+    "discipline":    { "score": <1-10>, "comment": "<一句话评价纪律执行>" },
+    "position":      { "score": <1-10>, "comment": "<一句话评价仓位管理>" },
+    "timing":        { "score": <1-10>, "comment": "<一句话评价买卖时机>" },
+    "signal_follow": { "score": <1-10>, "comment": "<一句话评价信号跟进>" },
+    "reflection":    { "score": <1-10>, "comment": "<一句话评价自我反思>" }
+  },
+  "highlights": ["<做得好的亮点1>", "<亮点2>"],
+  "improvements": ["<需要改进的点1>", "<改进点2>"],
+  "reason": "<Markdown格式的详细评语，包含整体分析、具体建议>"
+}
+```
+
+要求：
+- dimensions 中每个维度必须有 score(1-10整数) 和 comment(简短一句话)
+- highlights 和 improvements 各 2-4 条，简洁有力
+- reason 是完整的 Markdown 评语，可以包含小标题、列表等"""
+
+    def _build_ai_score_user_prompt(self, data: Dict[str, Any]) -> str:
+        parts = [f"## 复盘日期: {data['date']}\n"]
+
+        # 大盘
+        parts.append("### 当日大盘")
+        for idx in data.get("indices", []):
+            if idx["price"] is not None:
+                pct = f"{idx['change_pct']:+.2f}%" if idx["change_pct"] is not None else "N/A"
+                parts.append(f"- {idx['name']}: {idx['price']} ({pct})")
+
+        # 持仓
+        parts.append(f"\n### 当前持仓 ({data['positions_count']} 只)")
+        for p in data.get("positions", []):
+            daily = f"日涨跌 {p['daily_change_pct']:+.2f}%" if p.get("daily_change_pct") is not None else ""
+            pnl = f"日盈亏 {p['daily_pnl']:+.0f}" if p.get("daily_pnl") is not None else ""
+            parts.append(f"- {p['name']}({p['symbol']}): 均价{p['avg_cost']:.2f} 持{p['quantity']}股 {daily} {pnl}")
+
+        # 当日交易
+        parts.append(f"\n### 当日交易 ({data['trades_count']} 笔)")
+        if data.get("trades"):
+            for t in data["trades"]:
+                ai_price = f" (AI推荐价: {t['ai_recommended_price']})" if t.get("ai_recommended_price") else ""
+                parts.append(f"- {t['side']} {t['name']}({t['symbol']}) {t['price']}x{t['quantity']} 金额{t['amount']:.0f}{ai_price}")
+        else:
+            parts.append("- 今日无交易")
+
+        # 当日信号
+        parts.append(f"\n### 当日信号 ({data['signals_count']} 个)")
+        for s in data.get("signals", []):
+            status_map = {"held": "已持有", "sold_today": "今日已卖", "not_held": "未持有"}
+            status = status_map.get(s["holding_status"], "")
+            parts.append(f"- {s['name']} {s['strategy']} {s['signal_type']} 强度{s['strength']:.2f} [{status}]")
+
+        # 复盘笔记
+        review = data.get("review")
+        if review and review.get("note"):
+            parts.append(f"\n### 用户复盘笔记\n{review['note']}")
+        else:
+            parts.append("\n### 用户复盘笔记\n（用户未填写复盘笔记）")
+
+        if review and review.get("self_score"):
+            parts.append(f"\n用户自评分: {review['self_score']}/10")
+
+        return "\n".join(parts)
+
+    def _parse_ai_score_response(self, content: str) -> tuple[int, str, dict | None]:
+        """
+        解析 AI 返回的评分 JSON
+
+        返回: (score, reason, structured_data)
+        structured_data 包含 dimensions / highlights / improvements（可能为 None）
+        """
+        try:
+            # 可能被 ```json ``` 包裹
+            if "```json" in content:
+                json_str = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                json_str = content.split("```")[1].split("```")[0].strip()
+            else:
+                json_str = content.strip()
+
+            parsed = json.loads(json_str)
+            score = max(1, min(10, int(parsed.get("score", 5))))
+            reason = parsed.get("reason", content)
+
+            # 提取结构化数据
+            structured = None
+            dimensions = parsed.get("dimensions")
+            if dimensions and isinstance(dimensions, dict):
+                structured = {
+                    "dimensions": {},
+                    "highlights": parsed.get("highlights", []),
+                    "improvements": parsed.get("improvements", []),
+                }
+                for key in ("discipline", "position", "timing", "signal_follow", "reflection"):
+                    dim = dimensions.get(key, {})
+                    if isinstance(dim, dict):
+                        structured["dimensions"][key] = {
+                            "score": max(1, min(10, int(dim.get("score", 5)))),
+                            "comment": str(dim.get("comment", "")),
+                        }
+
+            return score, reason, structured
+        except (json.JSONDecodeError, IndexError, ValueError, TypeError, KeyError, AttributeError) as e:
+            logger.warning(f"AI评分解析失败，使用原始内容: {e}")
+            return 5, content, None

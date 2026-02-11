@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
@@ -6,6 +6,47 @@ import { reportService } from '../services/reportService';
 import type { ReportSummary, ReportDetail, ReportStreamEvent } from '../services/reportService';
 
 type View = 'list' | 'view' | 'generate';
+
+/* ================================================================
+   章节解析
+   ================================================================ */
+interface Chapter {
+  number: number;
+  title: string;
+  content: string;
+}
+
+function parseChapters(markdown: string): Chapter[] {
+  if (!markdown || !markdown.trim()) return [];
+
+  const chapters: Chapter[] = [];
+  const headerRegex = /^## (\d+)[.\s、：:]/gm;
+  const matches: { number: number; index: number }[] = [];
+
+  let m;
+  while ((m = headerRegex.exec(markdown)) !== null) {
+    matches.push({ number: parseInt(m[1]), index: m.index });
+  }
+
+  if (matches.length === 0) return [];
+
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i].index;
+    const end = i + 1 < matches.length ? matches[i + 1].index : markdown.length;
+    const section = markdown.slice(start, end).trimEnd();
+    const firstLine = section.split('\n')[0];
+    const title = firstLine.replace(/^##\s*\d+[.\s、：:]\s*/, '').trim();
+
+    chapters.push({
+      number: matches[i].number,
+      title: title || `第${matches[i].number}章`,
+      content: section,
+    });
+  }
+
+  chapters.sort((a, b) => a.number - b.number);
+  return chapters;
+}
 
 /* ================================================================
    Markdown 自定义渲染组件 — 暗色主题专属样式
@@ -129,6 +170,8 @@ export const Reports: React.FC = () => {
   const [collectingMsg, setCollectingMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [activeChapter, setActiveChapter] = useState<number | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
   const contentRef = useRef('');
   const rafRef = useRef(0);
@@ -156,6 +199,7 @@ export const Reports: React.FC = () => {
     setError(null);
     setGenMeta({});
     setCollectingMsg(null);
+    setActiveChapter(null);
     contentRef.current = '';
 
     const controller = new AbortController();
@@ -170,6 +214,8 @@ export const Reports: React.FC = () => {
           } else if (event.event === 'start') {
             setCollectingMsg(null);
             setGenMeta({ reportId: event.report_id, title: event.title });
+          } else if (event.event === 'chapter_progress') {
+            setCollectingMsg(event.label || `正在生成第${event.call_index}/${event.total_calls}部分...`);
           } else if (event.event === 'chunk') {
             contentRef.current += event.content || '';
             if (!rafRef.current) {
@@ -205,6 +251,7 @@ export const Reports: React.FC = () => {
     setView('view');
     setCurrentReport(null);
     setError(null);
+    setActiveChapter(null);
     try { setCurrentReport(await reportService.getReport(reportId)); }
     catch { setError('加载报告失败'); }
   };
@@ -215,9 +262,33 @@ export const Reports: React.FC = () => {
   };
 
   const handleBack = () => {
-    setView('list'); setCurrentReport(null); setStreamContent(''); setGenMeta({}); setCollectingMsg(null); setError(null);
+    setView('list'); setCurrentReport(null); setStreamContent(''); setGenMeta({}); setCollectingMsg(null); setError(null); setActiveChapter(null);
   };
 
+  /* ==================== 章节解析与导航 ==================== */
+  const displayContent = view === 'generate' ? streamContent : currentReport?.content || '';
+  const displayTitle = view === 'generate' ? genMeta.title : currentReport?.title;
+  const displayMeta = view === 'generate'
+    ? { model, tokenCount: genMeta.tokenCount, genTime: genMeta.genTime }
+    : { model: currentReport?.model_used, tokenCount: currentReport?.token_count, genTime: currentReport?.generation_time_seconds };
+
+  const chapters = useMemo(() => parseChapters(displayContent), [displayContent]);
+
+  const currentChapter = activeChapter !== null
+    ? chapters.find(ch => ch.number === activeChapter)
+    : chapters[0];
+  const currentChapterIndex = currentChapter
+    ? chapters.indexOf(currentChapter)
+    : -1;
+
+  const goPrev = () => {
+    if (currentChapterIndex > 0) setActiveChapter(chapters[currentChapterIndex - 1].number);
+  };
+  const goNext = () => {
+    if (currentChapterIndex < chapters.length - 1) setActiveChapter(chapters[currentChapterIndex + 1].number);
+  };
+
+  // Auto-scroll during streaming
   useEffect(() => {
     if (generating && contentEndRef.current) {
       contentEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -396,12 +467,6 @@ export const Reports: React.FC = () => {
   }
 
   /* ==================== 查看 / 生成视图 ==================== */
-  const displayContent = view === 'generate' ? streamContent : currentReport?.content || '';
-  const displayTitle = view === 'generate' ? genMeta.title : currentReport?.title;
-  const displayMeta = view === 'generate'
-    ? { model, tokenCount: genMeta.tokenCount, genTime: genMeta.genTime }
-    : { model: currentReport?.model_used, tokenCount: currentReport?.token_count, genTime: currentReport?.generation_time_seconds };
-
   return (
     <div className="min-h-screen bg-gradient-dark p-6">
       <div className="max-w-4xl mx-auto space-y-5">
@@ -487,37 +552,120 @@ export const Reports: React.FC = () => {
           </div>
         )}
 
-        {/* Markdown 正文 */}
+        {/* 报告正文 — 分章节展示 */}
         <div className="bg-gradient-card border border-border rounded-2xl overflow-hidden">
-          <div className="px-8 py-10 sm:px-10 sm:py-12">
-            {!displayContent && !generating && !error ? (
-              <div className="text-center py-16 text-gray-500">
-                <svg className="animate-spin h-8 w-8 mx-auto mb-3 text-gray-600" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                加载中...
+          {chapters.length > 0 ? (
+            <>
+              {/* 章节标签栏 */}
+              <div className="border-b border-border px-4 pt-3 pb-0">
+                <div className="flex gap-1 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+                  {chapters.map((ch) => {
+                    const isActive = currentChapter?.number === ch.number;
+                    return (
+                      <button
+                        key={ch.number}
+                        onClick={() => setActiveChapter(ch.number)}
+                        className={`relative px-4 py-2.5 text-sm font-medium whitespace-nowrap rounded-t-lg transition-all duration-200 ${
+                          isActive
+                            ? 'text-violet-300 bg-dark-lighter'
+                            : 'text-gray-500 hover:text-gray-300 hover:bg-dark-light/50'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-bold ${
+                            isActive
+                              ? 'bg-violet-500/30 text-violet-300'
+                              : 'bg-dark-light text-gray-500'
+                          }`}>
+                            {ch.number}
+                          </span>
+                          {ch.title}
+                        </span>
+                        {isActive && (
+                          <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-gradient-to-r from-violet-500 to-purple-500 rounded-full" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            ) : !displayContent && generating && collectingMsg ? (
-              <div className="text-center py-16">
-                <svg className="animate-spin h-10 w-10 mx-auto mb-4 text-violet-500" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                <p className="text-violet-300 text-lg font-medium">{collectingMsg}</p>
-                <p className="text-gray-500 text-sm mt-2">正在从东方财富获取指数、板块、概念、资金流向、新闻等数据...</p>
+
+              {/* 当前章节内容 */}
+              <div className="px-8 py-10 sm:px-10 sm:py-12">
+                {currentChapter ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                    {currentChapter.content}
+                  </ReactMarkdown>
+                ) : (
+                  <div className="text-center py-8 text-gray-500">选择一个章节查看</div>
+                )}
+                {generating && currentChapter && (
+                  <span className="inline-block w-2 h-5 bg-violet-400 rounded-sm animate-pulse ml-0.5 align-text-bottom" />
+                )}
+                <div ref={contentEndRef} />
               </div>
-            ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                {displayContent}
-              </ReactMarkdown>
-            )}
-            {/* 生成中的光标动画 */}
-            {generating && displayContent && (
-              <span className="inline-block w-2 h-5 bg-violet-400 rounded-sm animate-pulse ml-0.5 align-text-bottom" />
-            )}
-            <div ref={contentEndRef} />
-          </div>
+
+              {/* 底部翻页导航 */}
+              <div className="border-t border-border px-6 py-3 flex items-center justify-between">
+                <button
+                  onClick={goPrev}
+                  disabled={currentChapterIndex <= 0}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-all
+                    disabled:text-gray-600 disabled:cursor-not-allowed
+                    text-gray-400 hover:text-white hover:bg-dark-light"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  上一章
+                </button>
+                <span className="text-sm text-gray-500">
+                  {currentChapterIndex >= 0 ? currentChapterIndex + 1 : 0} / {chapters.length} 章
+                </span>
+                <button
+                  onClick={goNext}
+                  disabled={currentChapterIndex >= chapters.length - 1}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-all
+                    disabled:text-gray-600 disabled:cursor-not-allowed
+                    text-gray-400 hover:text-white hover:bg-dark-light"
+                >
+                  下一章
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="px-8 py-10 sm:px-10 sm:py-12">
+              {!displayContent && !generating && !error ? (
+                <div className="text-center py-16 text-gray-500">
+                  <svg className="animate-spin h-8 w-8 mx-auto mb-3 text-gray-600" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  加载中...
+                </div>
+              ) : !displayContent && generating && collectingMsg ? (
+                <div className="text-center py-16">
+                  <svg className="animate-spin h-10 w-10 mx-auto mb-4 text-violet-500" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <p className="text-violet-300 text-lg font-medium">{collectingMsg}</p>
+                  <p className="text-gray-500 text-sm mt-2">正在从东方财富获取指数、板块、概念、资金流向、新闻等数据...</p>
+                </div>
+              ) : displayContent ? (
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                  {displayContent}
+                </ReactMarkdown>
+              ) : null}
+              {generating && displayContent && (
+                <span className="inline-block w-2 h-5 bg-violet-400 rounded-sm animate-pulse ml-0.5 align-text-bottom" />
+              )}
+              <div ref={contentEndRef} />
+            </div>
+          )}
         </div>
       </div>
     </div>

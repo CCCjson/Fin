@@ -91,7 +91,6 @@ export const Realtime: React.FC = () => {
   const [indices, setIndices] = useState<IndexData[]>(cachedIndices);
   const [loading, setLoading] = useState(false);
   const [updateTime, setUpdateTime] = useState<string>(cachedUpdateTime);
-  const [useProxy, setUseProxy] = useState(false);
 
   // 进度状态
   const [progress, setProgress] = useState<{ percent: number; fetched: number; total: number; status: string } | null>(null);
@@ -116,7 +115,7 @@ export const Realtime: React.FC = () => {
 
     try {
       // 指数数据独立请求（不需要流式）
-      realtimeService.getIndices({ use_proxy: useProxy }).then(res => {
+      realtimeService.getIndices({ use_proxy: true }).then(res => {
         if (res.success) {
           cachedIndices = res.data;
           setIndices(cachedIndices);
@@ -126,7 +125,7 @@ export const Realtime: React.FC = () => {
 
       // 流式获取行情
       await realtimeService.streamQuotes(
-        { sort_by: sortBy, ascending, save: true },
+        { sort_by: sortBy, ascending, save: true, use_proxy: true },
         (event: RealtimeStreamEvent) => {
           switch (event.event) {
             case 'progress':
@@ -170,7 +169,15 @@ export const Realtime: React.FC = () => {
       setProgress(null);
       setLoading(false);
     }
-  }, [useProxy, sortBy, ascending]);
+  }, [sortBy, ascending]);
+
+  // 取消获取
+  const cancelFetch = useCallback(() => {
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = null;
+    setProgress(null);
+    setLoading(false);
+  }, []);
 
   // 前端过滤
   const filteredQuotes = useMemo(() => {
@@ -207,22 +214,21 @@ export const Realtime: React.FC = () => {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">实时行情</h1>
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-gray-400">
-            <input
-              type="checkbox"
-              checked={useProxy}
-              onChange={e => setUseProxy(e.target.checked)}
-              className="rounded bg-dark-card border-border"
-            />
-            使用代理 IP
-          </label>
-          <button
-            onClick={fetchData}
-            disabled={loading}
-            className="px-5 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-          >
-            {loading ? '获取中...' : '获取行情'}
-          </button>
+          {loading ? (
+            <button
+              onClick={cancelFetch}
+              className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+            >
+              取消获取
+            </button>
+          ) : (
+            <button
+              onClick={fetchData}
+              className="px-5 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg font-medium transition-colors"
+            >
+              获取行情
+            </button>
+          )}
           {updateTime && (
             <span className="text-xs text-gray-500">更新于 {updateTime}</span>
           )}

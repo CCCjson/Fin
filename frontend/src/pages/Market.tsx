@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { IndicatorPanel } from '../components/charts/IndicatorPanel';
 import { marketService } from '../services/marketService';
@@ -47,11 +48,10 @@ export const Market: React.FC = () => {
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 股票代码
               </label>
-              <input
-                type="text"
+              <StockSymbolInput
                 value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
-                className="w-full px-3 py-2 bg-dark-light text-white rounded-lg border border-border focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none"
+                onChange={(s) => setSymbol(s)}
+                placeholder="输入代码或名称搜索"
               />
             </div>
             <div>

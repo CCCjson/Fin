@@ -1,60 +1,118 @@
-import React from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Link, useLocation, Navigate } from 'react-router-dom';
+import { Dashboard } from '../../pages/Dashboard';
+import { Market } from '../../pages/Market';
+import { Trading } from '../../pages/Trading';
+import { Signals } from '../../pages/Signals';
+import { Backtest } from '../../pages/Backtest';
+import { Realtime } from '../../pages/Realtime';
+import { Reports } from '../../pages/Reports';
+import { SignalTracking } from '../../pages/SignalTracking';
+import { Portfolio } from '../../pages/Portfolio';
+import { Review } from '../../pages/Review';
+
+const routeConfig: { path: string; Component: React.FC }[] = [
+  { path: '/dashboard', Component: Dashboard },
+  { path: '/realtime', Component: Realtime },
+  { path: '/market', Component: Market },
+  { path: '/trading', Component: Trading },
+  { path: '/signals', Component: Signals },
+  { path: '/tracking', Component: SignalTracking },
+  { path: '/backtest', Component: Backtest },
+  { path: '/reports', Component: Reports },
+  { path: '/portfolio', Component: Portfolio },
+  { path: '/review', Component: Review },
+];
 
 export const Layout: React.FC = () => {
   const location = useLocation();
+  const [mountedPaths, setMountedPaths] = useState<Set<string>>(new Set());
+
+  const currentPath = location.pathname;
+
+  useEffect(() => {
+    setMountedPaths((prev) => {
+      if (prev.has(currentPath)) return prev;
+      const next = new Set(prev);
+      next.add(currentPath);
+      return next;
+    });
+  }, [currentPath]);
 
   const navItems = [
-    { path: '/dashboard', label: '仪表盘', icon: '📊' },
     { path: '/realtime', label: '实时行情', icon: '⚡' },
     { path: '/market', label: 'K线分析', icon: '📈' },
-    { path: '/trading', label: '交易', icon: '💱' },
+    { path: '/portfolio', label: '交易记录', icon: '📒' },
+    { path: '/review', label: '每日复盘', icon: '📝' },
     { path: '/signals', label: '信号分析', icon: '🎯' },
     { path: '/tracking', label: '信号追踪', icon: '📋' },
     { path: '/backtest', label: '策略回测', icon: '🔬' },
     { path: '/reports', label: 'AI 报告', icon: '🤖' },
   ];
 
-  const isActive = (path: string) => location.pathname === path;
+  const isActive = (path: string) => currentPath === path;
+
+  // Redirect / to /realtime
+  if (currentPath === '/') {
+    return <Navigate to="/realtime" replace />;
+  }
 
   return (
     <div className="flex h-screen bg-dark">
-      {/* 侧边栏 */}
-      <aside className="w-64 bg-dark-card border-r border-border">
-        <div className="p-6 border-b border-border">
-          <h1 className="text-2xl font-bold text-white mb-2 bg-gradient-to-r from-primary-light to-accent-cyan bg-clip-text text-transparent">
-            量化交易系统
-          </h1>
-          <p className="text-gray-400 text-sm">Quantitative Trading</p>
+      {/* 侧边栏：flex 子元素，hover 时展开推挤内容 */}
+      <aside className="group/sidebar flex-shrink-0 h-full z-30 flex flex-col bg-dark-card border-r border-border w-16 hover:w-64 transition-all duration-300 overflow-hidden">
+        {/* Logo */}
+        <div className="border-b border-border p-3 group-hover/sidebar:p-6 transition-all duration-300">
+          <div className="group-hover/sidebar:hidden text-2xl text-center text-primary-light font-bold">Q</div>
+          <div className="hidden group-hover/sidebar:block">
+            <h1 className="text-2xl font-bold text-white mb-2 bg-gradient-to-r from-primary-light to-accent-cyan bg-clip-text text-transparent whitespace-nowrap">
+              量化交易系统
+            </h1>
+            <p className="text-gray-400 text-sm whitespace-nowrap">Quantitative Trading</p>
+          </div>
         </div>
 
-        <nav className="px-3 py-4 space-y-2">
+        {/* 导航 */}
+        <nav className="flex-1 py-4 space-y-2 overflow-y-auto px-1.5 group-hover/sidebar:px-3 transition-all duration-300">
           {navItems.map((item) => (
             <Link
               key={item.path}
               to={item.path}
-              className={`flex items-center px-4 py-3 rounded-xl transition-all duration-200 ${
+              title={item.label}
+              className={`flex items-center justify-center group-hover/sidebar:justify-start px-0 group-hover/sidebar:px-4 py-3 rounded-xl transition-all duration-200 ${
                 isActive(item.path)
                   ? 'bg-primary text-white shadow-glow-blue'
                   : 'text-gray-400 hover:bg-dark-light hover:text-white'
               }`}
             >
-              <span className="mr-3 text-xl">{item.icon}</span>
-              <span className="font-medium">{item.label}</span>
+              <span className="text-xl flex-shrink-0 group-hover/sidebar:mr-3 transition-all duration-200">{item.icon}</span>
+              <span className="font-medium hidden group-hover/sidebar:inline whitespace-nowrap">{item.label}</span>
             </Link>
           ))}
         </nav>
 
-        <div className="absolute bottom-0 left-0 right-0 w-64 p-4 border-t border-border bg-dark-card">
-          <div className="text-xs text-gray-500 text-center">
+        {/* 底部版本号 */}
+        <div className="p-4 border-t border-border">
+          <div className="text-xs text-gray-500 text-center hidden group-hover/sidebar:block whitespace-nowrap">
             Version 1.0.0
           </div>
         </div>
       </aside>
 
-      {/* 主内容区 */}
-      <main className="flex-1 overflow-auto bg-dark-lighter">
-        <Outlet />
+      {/* 主内容区 — 不设 overflow-auto，滚动交给各页面 wrapper */}
+      <main className="flex-1 min-w-0 bg-dark-lighter relative">
+        {routeConfig.map(({ path, Component }) => {
+          if (!mountedPaths.has(path)) return null;
+          const visible = path === currentPath;
+          return (
+            <div
+              key={path}
+              className={visible ? 'h-full overflow-auto' : 'hidden'}
+            >
+              <Component />
+            </div>
+          );
+        })}
       </main>
     </div>
   );

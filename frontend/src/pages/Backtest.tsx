@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { backtestService } from '../services/backtestService';
 import type { BacktestTask, BacktestResult } from '../types';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -166,12 +167,26 @@ export const Backtest: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     股票代码（逗号分隔）
                   </label>
-                  <input
-                    type="text"
+                  <StockSymbolInput
                     value={formData.symbols}
-                    onChange={(e) => setFormData({ ...formData, symbols: e.target.value })}
-                    className="w-full px-3 py-2 bg-dark-light text-white rounded-lg border border-border focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                    required
+                    onChange={(symbol) => {
+                      // 支持从下拉选中后追加到逗号列表
+                      const existing = formData.symbols.trim();
+                      const parts = existing.split(',').map(s => s.trim()).filter(s => s);
+                      // 如果用户选择了一个完整代码（包含.），追加到列表
+                      if (symbol.includes('.') && !parts.includes(symbol)) {
+                        const lastPart = parts[parts.length - 1];
+                        // 替换最后一个正在输入的部分
+                        if (lastPart && !lastPart.includes('.')) {
+                          parts[parts.length - 1] = symbol;
+                        } else {
+                          parts.push(symbol);
+                        }
+                        setFormData({ ...formData, symbols: parts.join(', ') });
+                      } else {
+                        setFormData({ ...formData, symbols: symbol });
+                      }
+                    }}
                     placeholder="688576.SH, 000001.SZ"
                   />
                 </div>
