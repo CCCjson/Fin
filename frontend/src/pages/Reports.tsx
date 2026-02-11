@@ -164,18 +164,20 @@ export const Reports: React.FC = () => {
 
   const [view, setView] = useState<View>('list');
   const [generating, setGenerating] = useState(false);
-  const [streamContent, setStreamContent] = useState('');
   const [currentReport, setCurrentReport] = useState<ReportDetail | null>(null);
   const [genMeta, setGenMeta] = useState<{ reportId?: string; title?: string; tokenCount?: number; genTime?: number }>({});
   const [collectingMsg, setCollectingMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [activeChapter, setActiveChapter] = useState<number | null>(null);
+  const [generatingChapter, setGeneratingChapter] = useState<number | null>(null);
+  const [renderTick, setRenderTick] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
-  const contentRef = useRef('');
   const rafRef = useRef(0);
-  const contentEndRef = useRef<HTMLDivElement>(null);
+  const userInteractedRef = useRef(false);
+  const chapterContentsRef = useRef<Record<number, string>>({});
+  const currentGenChapterRef = useRef<number | null>(null);
 
   const loadReports = useCallback(async () => {
     setLoading(true);
@@ -195,12 +197,15 @@ export const Reports: React.FC = () => {
   const handleGenerate = async () => {
     setView('generate');
     setGenerating(true);
-    setStreamContent('');
     setError(null);
     setGenMeta({});
     setCollectingMsg(null);
     setActiveChapter(null);
-    contentRef.current = '';
+    userInteractedRef.current = false;
+    setGeneratingChapter(null);
+    chapterContentsRef.current = {};
+    currentGenChapterRef.current = null;
+    setRenderTick(0);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -212,21 +217,50 @@ export const Reports: React.FC = () => {
           if (event.event === 'collecting') {
             setCollectingMsg(event.message || '正在收集数据...');
           } else if (event.event === 'start') {
-            setCollectingMsg(null);
             setGenMeta({ reportId: event.report_id, title: event.title });
           } else if (event.event === 'chapter_progress') {
             setCollectingMsg(event.label || `正在生成第${event.call_index}/${event.total_calls}部分...`);
+            const targetCh = event.chapters?.[0];
+            if (targetCh != null) {
+              currentGenChapterRef.current = targetCh;
+              setGeneratingChapter(targetCh);
+              // 初始化该章节的内容 buffer
+              if (!(targetCh in chapterContentsRef.current)) {
+                chapterContentsRef.current[targetCh] = '';
+              }
+              // 只有第一个章节自动切换，后续章节不抢焦点
+              if (event.call_index === 1) {
+                setActiveChapter(targetCh);
+              }
+            }
+            // 强制触发 useMemo 重算，确保前序章节已积累的内容能被渲染
+            // （rAF 可能被流式读取的微任务链阻塞而延迟）
+            setRenderTick(t => t + 1);
+          } else if (event.event === 'chapter_complete') {
+            // 强制触发 useMemo 重算，保证已完成的章节立即可见
+            setRenderTick(t => t + 1);
+            // Ch1 是最后生成的，生成完毕后自动跳到第1章
+            if (event.chapter_number === 1) {
+              setActiveChapter(1);
+              userInteractedRef.current = false;
+            }
           } else if (event.event === 'chunk') {
-            contentRef.current += event.content || '';
+            // 按章节独立存储，互不干扰
+            const ch = currentGenChapterRef.current;
+            if (ch != null) {
+              chapterContentsRef.current[ch] = (chapterContentsRef.current[ch] || '') + (event.content || '');
+            }
             if (!rafRef.current) {
               rafRef.current = requestAnimationFrame(() => {
                 rafRef.current = 0;
-                setStreamContent(contentRef.current);
+                setRenderTick(t => t + 1);
               });
             }
           } else if (event.event === 'done') {
             if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; }
-            setStreamContent(contentRef.current);
+            setRenderTick(t => t + 1);
+            setGeneratingChapter(null);
+            currentGenChapterRef.current = null;
             setGenMeta(prev => ({ ...prev, reportId: event.report_id, tokenCount: event.token_count, genTime: event.generation_time }));
           } else if (event.event === 'error') {
             setError(event.message || '生成失败');
@@ -262,17 +296,35 @@ export const Reports: React.FC = () => {
   };
 
   const handleBack = () => {
-    setView('list'); setCurrentReport(null); setStreamContent(''); setGenMeta({}); setCollectingMsg(null); setError(null); setActiveChapter(null);
+    setView('list'); setCurrentReport(null); setGenMeta({}); setCollectingMsg(null); setError(null); setActiveChapter(null); userInteractedRef.current = false; setGeneratingChapter(null);
+    chapterContentsRef.current = {}; currentGenChapterRef.current = null;
   };
 
   /* ==================== 章节解析与导航 ==================== */
-  const displayContent = view === 'generate' ? streamContent : currentReport?.content || '';
   const displayTitle = view === 'generate' ? genMeta.title : currentReport?.title;
   const displayMeta = view === 'generate'
     ? { model, tokenCount: genMeta.tokenCount, genTime: genMeta.genTime }
     : { model: currentReport?.model_used, tokenCount: currentReport?.token_count, genTime: currentReport?.generation_time_seconds };
 
-  const chapters = useMemo(() => parseChapters(displayContent), [displayContent]);
+  const chapters = useMemo((): Chapter[] => {
+    if (view === 'generate') {
+      // 生成模式：从按章节独立存储的 buffer 中派生
+      const contents = chapterContentsRef.current;
+      return Object.keys(contents)
+        .map(Number)
+        .filter(num => contents[num].trim().length > 0)
+        .sort((a, b) => a - b)
+        .map(num => {
+          const content = contents[num];
+          const firstLine = content.split('\n')[0] || '';
+          const title = firstLine.replace(/^##\s*\d+[.\s、：:]\s*/, '').trim();
+          return { number: num, title: title || `第${num}章`, content };
+        });
+    }
+    // 查看模式：从保存的报告内容中解析
+    return parseChapters(currentReport?.content || '');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, renderTick, currentReport?.content]);
 
   const currentChapter = activeChapter !== null
     ? chapters.find(ch => ch.number === activeChapter)
@@ -288,12 +340,13 @@ export const Reports: React.FC = () => {
     if (currentChapterIndex < chapters.length - 1) setActiveChapter(chapters[currentChapterIndex + 1].number);
   };
 
-  // Auto-scroll during streaming
-  useEffect(() => {
-    if (generating && contentEndRef.current) {
-      contentEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  // 章节 tab 点击：标记用户已手动交互
+  const handleChapterClick = (chNumber: number) => {
+    setActiveChapter(chNumber);
+    if (generating) {
+      userInteractedRef.current = true;
     }
-  }, [streamContent, generating]);
+  };
 
   /* ==================== 列表视图 ==================== */
   if (view === 'list') {
@@ -339,6 +392,7 @@ export const Reports: React.FC = () => {
                   className="w-full px-3.5 py-2.5 bg-dark text-white rounded-xl border border-border
                     focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all"
                 >
+                  <option value="daily">日报</option>
                   <option value="weekly">周报</option>
                   <option value="monthly">月报</option>
                 </select>
@@ -396,11 +450,13 @@ export const Reports: React.FC = () => {
                         {/* 标签行 */}
                         <div className="flex items-center gap-2 mb-2">
                           <span className={`px-2.5 py-0.5 rounded-lg text-xs font-semibold ${
-                            r.report_type === 'weekly'
+                            r.report_type === 'daily'
+                              ? 'bg-green-500/15 text-green-400'
+                              : r.report_type === 'weekly'
                               ? 'bg-blue-500/15 text-blue-400'
                               : 'bg-amber-500/15 text-amber-400'
                           }`}>
-                            {r.report_type === 'weekly' ? '周报' : '月报'}
+                            {r.report_type === 'daily' ? '日报' : r.report_type === 'weekly' ? '周报' : '月报'}
                           </span>
                           <span className={`px-2.5 py-0.5 rounded-lg text-xs font-medium ${
                             r.status === 'completed'
@@ -561,10 +617,11 @@ export const Reports: React.FC = () => {
                 <div className="flex gap-1 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
                   {chapters.map((ch) => {
                     const isActive = currentChapter?.number === ch.number;
+                    const isGenerating = generating && generatingChapter === ch.number;
                     return (
                       <button
                         key={ch.number}
-                        onClick={() => setActiveChapter(ch.number)}
+                        onClick={() => handleChapterClick(ch.number)}
                         className={`relative px-4 py-2.5 text-sm font-medium whitespace-nowrap rounded-t-lg transition-all duration-200 ${
                           isActive
                             ? 'text-violet-300 bg-dark-lighter'
@@ -573,7 +630,9 @@ export const Reports: React.FC = () => {
                       >
                         <span className="flex items-center gap-1.5">
                           <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-bold ${
-                            isActive
+                            isGenerating
+                              ? 'bg-violet-500/50 text-violet-200 animate-pulse'
+                              : isActive
                               ? 'bg-violet-500/30 text-violet-300'
                               : 'bg-dark-light text-gray-500'
                           }`}>
@@ -599,10 +658,9 @@ export const Reports: React.FC = () => {
                 ) : (
                   <div className="text-center py-8 text-gray-500">选择一个章节查看</div>
                 )}
-                {generating && currentChapter && (
+                {generating && currentChapter && generatingChapter === currentChapter.number && (
                   <span className="inline-block w-2 h-5 bg-violet-400 rounded-sm animate-pulse ml-0.5 align-text-bottom" />
                 )}
-                <div ref={contentEndRef} />
               </div>
 
               {/* 底部翻页导航 */}
@@ -638,7 +696,7 @@ export const Reports: React.FC = () => {
             </>
           ) : (
             <div className="px-8 py-10 sm:px-10 sm:py-12">
-              {!displayContent && !generating && !error ? (
+              {!generating && !error && view === 'view' && !currentReport ? (
                 <div className="text-center py-16 text-gray-500">
                   <svg className="animate-spin h-8 w-8 mx-auto mb-3 text-gray-600" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
@@ -646,7 +704,7 @@ export const Reports: React.FC = () => {
                   </svg>
                   加载中...
                 </div>
-              ) : !displayContent && generating && collectingMsg ? (
+              ) : generating && collectingMsg ? (
                 <div className="text-center py-16">
                   <svg className="animate-spin h-10 w-10 mx-auto mb-4 text-violet-500" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
@@ -655,15 +713,7 @@ export const Reports: React.FC = () => {
                   <p className="text-violet-300 text-lg font-medium">{collectingMsg}</p>
                   <p className="text-gray-500 text-sm mt-2">正在从东方财富获取指数、板块、概念、资金流向、新闻等数据...</p>
                 </div>
-              ) : displayContent ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                  {displayContent}
-                </ReactMarkdown>
               ) : null}
-              {generating && displayContent && (
-                <span className="inline-block w-2 h-5 bg-violet-400 rounded-sm animate-pulse ml-0.5 align-text-bottom" />
-              )}
-              <div ref={contentEndRef} />
             </div>
           )}
         </div>

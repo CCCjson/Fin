@@ -5,7 +5,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 // ==================== 类型定义 ====================
 
 export interface ReportStreamEvent {
-  event: 'collecting' | 'start' | 'chunk' | 'done' | 'error' | 'chapter_progress';
+  event: 'collecting' | 'start' | 'chunk' | 'done' | 'error' | 'chapter_progress' | 'chapter_complete';
   // collecting
   message?: string;
   // start
@@ -20,7 +20,10 @@ export interface ReportStreamEvent {
   // chapter_progress
   call_index?: number;
   total_calls?: number;
+  chapters?: number[];
   label?: string;
+  // chapter_complete
+  chapter_number?: number;
 }
 
 export interface ReportSummary {

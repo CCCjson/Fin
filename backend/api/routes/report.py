@@ -22,7 +22,7 @@ router = APIRouter(prefix="/reports", tags=["AI分析报告"])
 
 class GenerateReportRequest(BaseModel):
     """生成报告请求"""
-    report_type: str = Field("weekly", description="报告类型: weekly / monthly")
+    report_type: str = Field("weekly", description="报告类型: daily / weekly / monthly")
     model: str = Field("gpt-4o", description="模型: gpt-4o / gpt-4o-mini")
     period_end: Optional[str] = Field(None, description="报告截止日期 (YYYY-MM-DD)，默认今天")
 
@@ -70,7 +70,9 @@ async def generate_report(request: GenerateReportRequest):
 
             # 3. 生成（5次调用流式输出）
             report_id = f"rpt_{uuid.uuid4().hex[:12]}"
-            period_label = "周报" if request.report_type == "weekly" else "月报"
+            period_label = {"daily": "日报", "weekly": "周报", "monthly": "月报"}.get(
+                request.report_type, "周报"
+            )
             title = f"量化投资{period_label} ({data['period_start']} ~ {data['period_end']})"
 
             generator = ReportGenerator()
