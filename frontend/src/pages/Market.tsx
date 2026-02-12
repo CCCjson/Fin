@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { IndicatorPanel } from '../components/charts/IndicatorPanel';
@@ -11,25 +12,77 @@ export const Market: React.FC = () => {
   const [symbol, setSymbol] = useState('688576.SH');
   const [data, setData] = useState<StockData[]>([]);
   const [loading, setLoading] = useState(false);
+  const [updating, setUpdating] = useState(false);  // 后台静默刷新中
+  const [error, setError] = useState<string | null>(null);
   const [startDate, setStartDate] = useState('2025-01-01');
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [indicatorConfig, setIndicatorConfig] = useState<IndicatorConfig>(DEFAULT_INDICATOR_CONFIG);
+  const hasLoadedRef = useRef(false);
+  const location = useLocation();
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  /**
+   * 两阶段加载：
+   *   阶段1: db_only=true，毫秒级返回缓存数据，先渲染图表
+   *   阶段2: db_only=false，后台联网补齐最新数据，补完静默刷新
+   */
+  const loadData = useCallback(async (forceFullLoad = false) => {
     try {
+      setError(null);
+
+      if (!forceFullLoad) {
+        // ── 阶段1: 快速加载缓存 ──
+        setLoading(true);
+        try {
+          const cached = await marketService.getDailyData(symbol, startDate, endDate, true);
+          if (cached.data && cached.data.length > 0) {
+            setData(cached.data);
+            hasLoadedRef.current = true;
+            setLoading(false);
+            // ── 阶段2: 后台静默补齐 ──
+            setUpdating(true);
+            try {
+              const fresh = await marketService.getDailyData(symbol, startDate, endDate, false);
+              if (fresh.data && fresh.data.length > 0) {
+                setData(fresh.data);
+              }
+            } catch {
+              // 静默刷新失败不影响已展示的缓存数据
+              console.warn('后台数据同步失败，使用缓存数据');
+            } finally {
+              setUpdating(false);
+            }
+            return;
+          }
+        } catch {
+          // 缓存也失败了，走 fallback
+        }
+      }
+
+      // ── Fallback / 强制全量加载: 直接联网拉取 ──
       setLoading(true);
-      const response = await marketService.getDailyData(symbol, startDate, endDate);
+      const response = await marketService.getDailyData(symbol, startDate, endDate, false);
       setData(response.data || []);
-    } catch (error) {
-      console.error('Failed to load data:', error);
+      hasLoadedRef.current = true;
+    } catch (err) {
+      console.error('Failed to load data:', err);
+      setError(err instanceof Error ? err.message : '加载数据失败，请检查网络连接');
     } finally {
       setLoading(false);
+      setUpdating(false);
     }
-  };
+  }, [symbol, startDate, endDate]);
+
+  // 首次挂载加载
+  useEffect(() => {
+    loadData();
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep-Alive 模式：导航回本页面时，如果之前加载失败则自动重试
+  useEffect(() => {
+    if (location.pathname === '/market' && !hasLoadedRef.current && !loading) {
+      loadData();
+    }
+  }, [location.pathname]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const latestData = data[data.length - 1];
   const prevData = data[data.length - 2];
@@ -78,7 +131,7 @@ export const Market: React.FC = () => {
             </div>
             <div className="flex items-end">
               <button
-                onClick={loadData}
+                onClick={() => loadData(true)}
                 disabled={loading}
                 className="w-full px-4 py-2 bg-primary text-white rounded-xl hover:bg-primary-dark shadow-glow-blue transition disabled:opacity-50"
               >
@@ -124,6 +177,9 @@ export const Market: React.FC = () => {
         <div className="bg-gradient-card border border-border shadow-card p-6 rounded-lg">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold text-white">K线图</h2>
+            {updating && (
+              <span className="text-xs text-gray-400 animate-pulse">正在同步最新数据...</span>
+            )}
           </div>
 
           {/* 指标面板 */}
@@ -138,8 +194,22 @@ export const Market: React.FC = () => {
               indicatorConfig={indicatorConfig}
             />
           ) : (
-            <div className="h-96 flex items-center justify-center text-gray-400">
-              {loading ? '加载中...' : '暂无数据'}
+            <div className="h-96 flex flex-col items-center justify-center gap-3">
+              {loading ? (
+                <span className="text-gray-400">加载中...</span>
+              ) : error ? (
+                <>
+                  <span className="text-red-400">{error}</span>
+                  <button
+                    onClick={() => loadData(true)}
+                    className="px-4 py-1.5 bg-primary text-white rounded-lg hover:bg-primary-dark transition text-sm"
+                  >
+                    重试
+                  </button>
+                </>
+              ) : (
+                <span className="text-gray-400">暂无数据</span>
+              )}
             </div>
           )}
         </div>

@@ -64,94 +64,115 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // 创建图表
-    const chart = createChart(chartContainerRef.current, {
-      width: chartContainerRef.current.clientWidth,
-      height: height,
-      layout: {
-        background: { type: ColorType.Solid, color: CHART_COLORS.background },
-        textColor: CHART_COLORS.text,
-      },
-      grid: {
-        vertLines: { color: CHART_COLORS.grid },
-        horzLines: { color: CHART_COLORS.grid },
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: {
-          color: CHART_COLORS.crosshair,
-          width: 1,
-          style: 2,
-          labelBackgroundColor: '#2B2B43',
+    const container = chartContainerRef.current;
+
+    // 实际创建图表的函数
+    const initChart = () => {
+      // 防止重复创建
+      if (chartRef.current) return;
+
+      const chart = createChart(container, {
+        width: container.clientWidth,
+        height: height,
+        layout: {
+          background: { type: ColorType.Solid, color: CHART_COLORS.background },
+          textColor: CHART_COLORS.text,
         },
-        horzLine: {
-          color: CHART_COLORS.crosshair,
-          width: 1,
-          style: 2,
-          labelBackgroundColor: '#2B2B43',
+        grid: {
+          vertLines: { color: CHART_COLORS.grid },
+          horzLines: { color: CHART_COLORS.grid },
         },
-      },
-      rightPriceScale: {
-        borderColor: CHART_COLORS.grid,
+        crosshair: {
+          mode: CrosshairMode.Normal,
+          vertLine: {
+            color: CHART_COLORS.crosshair,
+            width: 1,
+            style: 2,
+            labelBackgroundColor: '#2B2B43',
+          },
+          horzLine: {
+            color: CHART_COLORS.crosshair,
+            width: 1,
+            style: 2,
+            labelBackgroundColor: '#2B2B43',
+          },
+        },
+        rightPriceScale: {
+          borderColor: CHART_COLORS.grid,
+          scaleMargins: {
+            top: 0.1,
+            bottom: 0.25, // 留出成交量空间
+          },
+        },
+        timeScale: {
+          borderColor: CHART_COLORS.grid,
+          timeVisible: true,
+          secondsVisible: false,
+        },
+      });
+
+      chartRef.current = chart;
+
+      // 创建 K 线系列 (v5 API)
+      const candlestickSeries = chart.addSeries(CandlestickSeries, {
+        upColor: CHART_COLORS.up,
+        downColor: CHART_COLORS.down,
+        borderUpColor: CHART_COLORS.up,
+        borderDownColor: CHART_COLORS.down,
+        wickUpColor: CHART_COLORS.up,
+        wickDownColor: CHART_COLORS.down,
+      });
+      candlestickSeriesRef.current = candlestickSeries;
+
+      // 创建成交量系列 (v5 API)
+      const volumeSeries = chart.addSeries(HistogramSeries, {
+        priceFormat: {
+          type: 'volume',
+        },
+        priceScaleId: 'volume',
+      });
+
+      chart.priceScale('volume').applyOptions({
         scaleMargins: {
-          top: 0.1,
-          bottom: 0.25, // 留出成交量空间
+          top: 0.8,
+          bottom: 0,
         },
-      },
-      timeScale: {
-        borderColor: CHART_COLORS.grid,
-        timeVisible: true,
-        secondsVisible: false,
-      },
-    });
+      });
 
-    chartRef.current = chart;
-
-    // 创建 K 线系列 (v5 API)
-    const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: CHART_COLORS.up,
-      downColor: CHART_COLORS.down,
-      borderUpColor: CHART_COLORS.up,
-      borderDownColor: CHART_COLORS.down,
-      wickUpColor: CHART_COLORS.up,
-      wickDownColor: CHART_COLORS.down,
-    });
-    candlestickSeriesRef.current = candlestickSeries;
-
-    // 创建成交量系列 (v5 API)
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: {
-        type: 'volume',
-      },
-      priceScaleId: 'volume',
-    });
-
-    chart.priceScale('volume').applyOptions({
-      scaleMargins: {
-        top: 0.8,
-        bottom: 0,
-      },
-    });
-
-    volumeSeriesRef.current = volumeSeries;
-
-    // 响应式调整
-    const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-        });
-      }
+      volumeSeriesRef.current = volumeSeries;
     };
 
-    window.addEventListener('resize', handleResize);
+    // 如果容器宽度为 0（display:none 等情况），延迟到可见时再初始化
+    if (container.clientWidth > 0) {
+      initChart();
+    }
+
+    // 使用 ResizeObserver 监听容器尺寸变化（替代 window.resize）
+    // 能捕获：CSS visibility 切换、侧边栏展开/收起、窗口缩放等所有场景
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width } = entry.contentRect;
+        if (width > 0) {
+          if (!chartRef.current) {
+            // 容器从 hidden 变为可见，首次初始化图表
+            initChart();
+          } else {
+            // 容器宽度变化，更新图表宽度
+            chartRef.current.applyOptions({ width });
+          }
+        }
+      }
+    });
+    resizeObserver.observe(container);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
       }
+      candlestickSeriesRef.current = null;
+      volumeSeriesRef.current = null;
       maSeriesRefs.current.clear();
       bollSeriesRefs.current = {};
     };

@@ -133,4 +133,24 @@ export const reportService = {
   deleteReport: async (reportId: string): Promise<{ message: string }> => {
     return api.delete(`/reports/${reportId}`);
   },
+
+  /**
+   * 下载报告 PDF
+   */
+  downloadPdf: async (reportId: string, title?: string): Promise<void> => {
+    const response = await fetch(`${API_BASE}/reports/${reportId}/pdf`);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: '下载失败' }));
+      throw new Error(err.detail || '下载失败');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title || reportId}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
 };

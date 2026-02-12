@@ -30,15 +30,28 @@ data_engine = DataEngine()
 async def get_daily_data(request: StockDataRequest):
     """
     获取日线数据
+
+    db_only=true 时仅查数据库缓存（毫秒级），不联网拉取。
+    db_only=false 时若数据不够新会联网补齐（可能数秒）。
     """
     try:
-        df = data_engine.get_daily_data(
-            symbol=request.symbol,
-            start_date=request.start_date,
-            end_date=request.end_date
+        loop = asyncio.get_event_loop()
+
+        # 同步 IO 放到线程池，避免阻塞事件循环
+        df = await loop.run_in_executor(
+            None,
+            lambda: data_engine.get_daily_data(
+                symbol=request.symbol,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                db_only=request.db_only,
+            ),
         )
 
         if df.empty:
+            if request.db_only:
+                # db_only 模式下没数据不算错，返回空
+                return StockDataResponse(symbol=request.symbol, data=[], count=0)
             raise HTTPException(status_code=404, detail=f"未找到 {request.symbol} 的数据")
 
         # 转换为JSON格式
@@ -52,6 +65,8 @@ async def get_daily_data(request: StockDataRequest):
             count=len(data)
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

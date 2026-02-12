@@ -13,6 +13,7 @@ class StockDataRequest(BaseModel):
     symbol: str = Field(..., description="股票代码", example="688576.SH")
     start_date: str = Field(..., description="开始日期", example="2025-01-01")
     end_date: str = Field(..., description="结束日期", example="2025-12-31")
+    db_only: bool = Field(False, description="仅查数据库缓存，不联网拉取")
 
 
 class StockDataResponse(BaseModel):
