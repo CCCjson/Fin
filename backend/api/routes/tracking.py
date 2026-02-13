@@ -53,6 +53,7 @@ async def get_tracked_signals(
     strategy: Optional[str] = None,
     outcome: Optional[str] = None,
     signal_type: Optional[str] = None,
+    tracking_status: Optional[str] = Query(default=None, description="追踪状态，逗号分隔: pending/tracking/completed"),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     limit: int = Query(default=50, le=500),
@@ -65,6 +66,7 @@ async def get_tracked_signals(
         strategy: 策略名称
         outcome: 结果 (win/loss/neutral)
         signal_type: 信号类型 (BUY/SELL)
+        tracking_status: 追踪状态筛选，逗号分隔 (pending/tracking/completed)
         start_date: 开始日期
         end_date: 结束日期
         limit: 每页条数
@@ -76,6 +78,7 @@ async def get_tracked_signals(
             strategy=strategy,
             outcome=outcome,
             signal_type=signal_type,
+            tracking_status=tracking_status,
             start_date=start_date,
             end_date=end_date,
             limit=limit,

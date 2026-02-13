@@ -23,6 +23,7 @@ export const SignalTracking: React.FC = () => {
   const [filterStrategy, setFilterStrategy] = useState('');
   const [filterOutcome, setFilterOutcome] = useState('');
   const [filterSignalType, setFilterSignalType] = useState('');
+  const [filterTrackingStatus, setFilterTrackingStatus] = useState('tracking,completed');
   const [page, setPage] = useState(1);
   const pageSize = 50;
 
@@ -50,6 +51,7 @@ export const SignalTracking: React.FC = () => {
         strategy: filterStrategy || undefined,
         outcome: filterOutcome || undefined,
         signal_type: filterSignalType || undefined,
+        tracking_status: filterTrackingStatus || undefined,
         limit: pageSize,
         offset,
       });
@@ -432,7 +434,7 @@ export const SignalTracking: React.FC = () => {
 
         {/* Filters */}
         <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">策略</label>
               <select
@@ -471,6 +473,20 @@ export const SignalTracking: React.FC = () => {
                 <option value="SELL">卖出</option>
               </select>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">追踪状态</label>
+              <select
+                value={filterTrackingStatus}
+                onChange={(e) => setFilterTrackingStatus(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-light text-white rounded-lg border border-border focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+              >
+                <option value="tracking,completed">有数据</option>
+                <option value="">全部</option>
+                <option value="pending">待追踪</option>
+                <option value="tracking">追踪中</option>
+                <option value="completed">已完成</option>
+              </select>
+            </div>
             <div className="flex items-end">
               <button
                 onClick={handleSearch}
@@ -502,6 +518,7 @@ export const SignalTracking: React.FC = () => {
                   <th className="px-3 py-3 text-left">策略</th>
                   <th className="px-3 py-3 text-center">信号</th>
                   <th className="px-3 py-3 text-right">触发价</th>
+                  <th className="px-3 py-3 text-center">已追踪</th>
                   <th className="px-3 py-3 text-right">1日</th>
                   <th className="px-3 py-3 text-right">3日</th>
                   <th className="px-3 py-3 text-right">5日</th>
@@ -515,8 +532,8 @@ export const SignalTracking: React.FC = () => {
               <tbody className="text-gray-300">
                 {signals.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="px-4 py-8 text-center text-gray-500">
-                      {loading ? '加载中...' : '暂无追踪数据，点击"更新追踪数据"开始'}
+                    <td colSpan={14} className="px-4 py-8 text-center text-gray-500">
+                      {loading ? '加载中...' : '暂无追踪数据，点击"更新追踪"开始'}
                     </td>
                   </tr>
                 ) : (
@@ -540,6 +557,19 @@ export const SignalTracking: React.FC = () => {
                       </td>
                       <td className="px-3 py-3 text-right text-primary-light">
                         {s.signal_price.toFixed(2)}
+                      </td>
+                      <td className="px-3 py-3 text-center">
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                          s.tracked_days >= 20
+                            ? 'bg-bull/15 text-bull'
+                            : s.tracked_days >= 5
+                            ? 'bg-primary/15 text-primary-light'
+                            : s.tracked_days > 0
+                            ? 'bg-amber-500/15 text-amber-400'
+                            : 'bg-gray-500/15 text-gray-500'
+                        }`}>
+                          {s.tracked_days}天
+                        </span>
                       </td>
                       <td className={`px-3 py-3 text-right ${getReturnColor(s.return_1d)}`}>{formatReturn(s.return_1d)}</td>
                       <td className={`px-3 py-3 text-right ${getReturnColor(s.return_3d)}`}>{formatReturn(s.return_3d)}</td>

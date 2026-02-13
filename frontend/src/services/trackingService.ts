@@ -113,6 +113,7 @@ export const trackingService = {
     strategy?: string;
     outcome?: string;
     signal_type?: string;
+    tracking_status?: string;
     start_date?: string;
     end_date?: string;
     limit?: number;

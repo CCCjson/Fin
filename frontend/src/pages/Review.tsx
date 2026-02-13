@@ -84,7 +84,7 @@ export const Review: React.FC = () => {
 
   // Signal pagination
   const [signalPage, setSignalPage] = useState(1);
-  const signalPageSize = 20;
+  const signalPageSize = 15;
 
   // Calendar
   const [calendarEntries, setCalendarEntries] = useState<CalendarEntry[]>([]);
@@ -386,7 +386,7 @@ export const Review: React.FC = () => {
             {/* Two columns: Left (positions + trades + signals), Right (scoring) */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Left column (2/3) */}
-              <div className="lg:col-span-2 space-y-6">
+              <div className="lg:col-span-2 flex flex-col gap-6">
                 {/* Positions daily performance */}
                 <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
                   <h2 className="text-lg font-semibold text-white mb-4">持仓当日表现</h2>
@@ -477,7 +477,7 @@ export const Review: React.FC = () => {
                 </div>
 
                 {/* Review Note */}
-                <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
+                <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl flex-1 flex flex-col">
                   <div className="flex items-center justify-between mb-4">
                     <h2 className="text-lg font-semibold text-white">复盘笔记</h2>
                     <div className="flex items-center gap-3">
@@ -501,8 +501,8 @@ export const Review: React.FC = () => {
                     value={note}
                     onChange={e => handleNoteChange(e.target.value)}
                     placeholder="写下今天的复盘思考...&#10;&#10;提示：点击右上角「使用小白模板」可以获取引导式模板"
-                    rows={8}
-                    className="w-full px-4 py-3 bg-dark-light text-gray-200 rounded-xl border border-border focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all resize-y leading-relaxed font-mono text-sm"
+                    rows={14}
+                    className="w-full flex-1 min-h-[280px] px-4 py-3 bg-dark-light text-gray-200 rounded-xl border border-border focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all resize-y leading-relaxed font-mono text-sm"
                   />
                   <div className="flex items-center justify-between mt-2">
                     <span className="text-xs text-gray-500">
@@ -516,7 +516,7 @@ export const Review: React.FC = () => {
               </div>
 
               {/* Right column (1/3) - scoring + signals */}
-              <div className="space-y-6">
+              <div className="flex flex-col gap-6">
                 {/* Tabbed Score Panel */}
                 <div className="bg-gradient-card border border-border shadow-card rounded-xl overflow-hidden">
                   {/* Tab bar */}
@@ -791,7 +791,7 @@ export const Review: React.FC = () => {
                 </div>
 
                 {/* Day signals */}
-                <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
+                <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl flex-1 flex flex-col">
                   <div className="flex items-center justify-between mb-4">
                     <h2 className="text-lg font-semibold text-white">当日信号</h2>
                     {signalTotal > 0 && (
@@ -801,9 +801,9 @@ export const Review: React.FC = () => {
                     )}
                   </div>
                   {data.signals.length === 0 && signalTotal === 0 ? (
-                    <div className="text-gray-500 text-center py-6">今日无信号</div>
+                    <div className="text-gray-500 text-center py-6 flex-1 flex items-center justify-center">今日无信号</div>
                   ) : (
-                    <>
+                    <div className="flex-1 flex flex-col">
                       <div className="overflow-x-auto rounded-lg border border-border">
                         <table className="w-full text-sm">
                           <thead className="bg-dark-light text-gray-300 border-b border-border">
@@ -862,7 +862,7 @@ export const Review: React.FC = () => {
                           </div>
                         </div>
                       )}
-                    </>
+                    </div>
                   )}
                 </div>
               </div>
