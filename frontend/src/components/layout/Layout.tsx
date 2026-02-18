@@ -1,17 +1,20 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { Link, useLocation, Navigate } from 'react-router-dom';
-import { Dashboard } from '../../pages/Dashboard';
-import { Market } from '../../pages/Market';
-import { Trading } from '../../pages/Trading';
-import { Signals } from '../../pages/Signals';
-import { Backtest } from '../../pages/Backtest';
-import { Realtime } from '../../pages/Realtime';
-import { Reports } from '../../pages/Reports';
-import { SignalTracking } from '../../pages/SignalTracking';
-import { Portfolio } from '../../pages/Portfolio';
-import { Review } from '../../pages/Review';
 
-const routeConfig: { path: string; Component: React.FC }[] = [
+// 路由懒加载 — 按页面拆分 chunk，首屏只加载当前页面的代码
+const Dashboard = React.lazy(() => import('../../pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const Market = React.lazy(() => import('../../pages/Market').then(m => ({ default: m.Market })));
+const Trading = React.lazy(() => import('../../pages/Trading').then(m => ({ default: m.Trading })));
+const Signals = React.lazy(() => import('../../pages/Signals').then(m => ({ default: m.Signals })));
+const Backtest = React.lazy(() => import('../../pages/Backtest').then(m => ({ default: m.Backtest })));
+const Realtime = React.lazy(() => import('../../pages/Realtime').then(m => ({ default: m.Realtime })));
+const Reports = React.lazy(() => import('../../pages/Reports').then(m => ({ default: m.Reports })));
+const SignalTracking = React.lazy(() => import('../../pages/SignalTracking').then(m => ({ default: m.SignalTracking })));
+const Portfolio = React.lazy(() => import('../../pages/Portfolio').then(m => ({ default: m.Portfolio })));
+const Review = React.lazy(() => import('../../pages/Review').then(m => ({ default: m.Review })));
+const Advisor = React.lazy(() => import('../../pages/Advisor').then(m => ({ default: m.Advisor })));
+
+const routeConfig: { path: string; Component: React.LazyExoticComponent<React.FC> }[] = [
   { path: '/dashboard', Component: Dashboard },
   { path: '/realtime', Component: Realtime },
   { path: '/market', Component: Market },
@@ -22,7 +25,20 @@ const routeConfig: { path: string; Component: React.FC }[] = [
   { path: '/reports', Component: Reports },
   { path: '/portfolio', Component: Portfolio },
   { path: '/review', Component: Review },
+  { path: '/advisor', Component: Advisor },
 ];
+
+const PageLoader: React.FC = () => (
+  <div className="flex items-center justify-center h-full">
+    <div className="text-gray-400 flex items-center gap-3">
+      <svg className="animate-spin h-5 w-5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+      <span>Loading...</span>
+    </div>
+  </div>
+);
 
 export const Layout: React.FC = () => {
   const location = useLocation();
@@ -48,6 +64,7 @@ export const Layout: React.FC = () => {
     { path: '/tracking', label: '信号追踪', icon: '📋' },
     { path: '/backtest', label: '策略回测', icon: '🔬' },
     { path: '/reports', label: 'AI 报告', icon: '🤖' },
+    { path: '/advisor', label: 'AI 顾问', icon: '💬' },
   ];
 
   const isActive = (path: string) => currentPath === path;
@@ -109,7 +126,9 @@ export const Layout: React.FC = () => {
               key={path}
               className={visible ? 'h-full overflow-auto' : 'hidden'}
             >
-              <Component />
+              <Suspense fallback={<PageLoader />}>
+                <Component />
+              </Suspense>
             </div>
           );
         })}

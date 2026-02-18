@@ -1,0 +1,206 @@
+"""
+AI 投资顾问 — Prompt 构建器
+构建 system prompt + 首次分析 / 追问的 user prompt。
+"""
+from typing import Dict, Optional
+
+
+SYSTEM_PROMPT = """你是我的私人量化交易顾问，直接告诉我该怎么操作，不要废话。
+你的分析基于量化系统提供的真实数据。
+
+核心要求：
+1. 直接给出明确的买/卖/持有/观望操作指令，不要模棱两可
+2. 所有判断必须引用具体指标数值，禁止说"技术面良好"等空话
+3. 多指标交叉验证，给出确定性最高的结论
+4. 必须给出具体的入场价、止损价、止盈价，精确到小数点
+5. 禁止说"不构成投资建议""建议咨询专业人士"之类的废话，我就是要你的投资建议
+6. 使用 Markdown 格式输出，结构清晰
+
+分析框架（首次分析时遵循）：
+1. **操作结论** — 开头第一句话就告诉我：现在该买、该卖、还是观望，信心指数多少（0-100）
+2. **趋势研判** — 均线系统排列、MACD 趋势方向
+3. **动量分析** — RSI 超买超卖区间、KDJ 交叉状态
+4. **波动率与量价** — 布林带位置、ATR 水平、量比变化
+5. **信号与形态** — 量化系统检测到的买卖信号和 K 线形态
+6. **具体操作计划** — 明确写出：入场价、止损价、止盈价（分第一目标和第二目标）、建议仓位比例
+7. **风险点** — 什么情况下这个判断会失效，到时候怎么应对
+
+回答追问时，基于对话上下文中的数据，直接回答问题，给出明确操作建议。
+"""
+
+
+class AdvisorPromptBuilder:
+    """构建 system prompt 和 user prompt"""
+
+    @staticmethod
+    def build_system_prompt() -> str:
+        return SYSTEM_PROMPT.strip()
+
+    @staticmethod
+    def build_first_analysis_prompt(ctx: Dict) -> str:
+        """构建首次分析的 user prompt"""
+        symbol = ctx.get("symbol", "")
+        name = ctx.get("name", symbol)
+        parts = [f"请对 **{symbol}**（{name}）进行全面技术分析并给出投资建议。\n"]
+        parts.append("以下是该股票的量化分析数据：\n")
+
+        # 行情概览
+        price = ctx.get("price_data")
+        if price and price.get("latest"):
+            lt = price["latest"]
+            parts.append("### 行情概览\n")
+            parts.append(f"- 最新收盘价: ¥{lt['close']}")
+            def _pct_str(key: str) -> str:
+                v = price.get(key)
+                return f"{v}%" if v is not None else "N/A"
+
+            parts.append(f"- 5日涨跌: {_pct_str('change_5d_pct')}")
+            parts.append(f"- 20日涨跌: {_pct_str('change_20d_pct')}")
+            parts.append(f"- 60日涨跌: {_pct_str('change_60d_pct')}")
+            parts.append(f"- 20日高点: ¥{price.get('high_20d', 'N/A')}  20日低点: ¥{price.get('low_20d', 'N/A')}")
+            parts.append("")
+
+            # 近10日行情表
+            recent = price.get("recent_10d", [])
+            if recent:
+                parts.append("### 近10日行情\n")
+                parts.append("| 日期 | 开盘 | 最高 | 最低 | 收盘 | 成交量 |")
+                parts.append("|------|------|------|------|------|--------|")
+                for r in recent:
+                    parts.append(
+                        f"| {r['date']} | {r['open']} | {r['high']} | {r['low']} | {r['close']} | {r['volume']:,} |"
+                    )
+                parts.append("")
+
+        # 技术指标
+        ind = ctx.get("indicators")
+        if ind:
+            parts.append("### 技术指标快照\n")
+            parts.append("| 指标 | 当前值 | 状态 |")
+            parts.append("|------|--------|------|")
+
+            # 均线系统
+            ma_vals = [ind.get(f"ma{p}") for p in [5, 10, 20, 60]]
+            ma_str = " / ".join(str(v) if v else "N/A" for v in ma_vals)
+            ma_status = _ma_status(ma_vals)
+            parts.append(f"| MA(5/10/20/60) | {ma_str} | {ma_status} |")
+
+            # MACD
+            dif, dea, hist = ind.get("macd_dif"), ind.get("macd_dea"), ind.get("macd_hist")
+            macd_st = "金叉" if (dif is not None and dea is not None and dif > dea) else "死叉"
+            parts.append(f"| MACD | DIF={dif}, DEA={dea}, 柱={hist} | {macd_st} |")
+
+            # RSI
+            rsi = ind.get("rsi")
+            rsi_st = "超买" if rsi and rsi > 70 else ("超卖" if rsi and rsi < 30 else "中性")
+            parts.append(f"| RSI(14) | {rsi} | {rsi_st} |")
+
+            # KDJ
+            k, d, j = ind.get("kdj_k"), ind.get("kdj_d"), ind.get("kdj_j")
+            kdj_st = "金叉" if (k is not None and d is not None and k > d) else "死叉"
+            parts.append(f"| KDJ | K={k}, D={d}, J={j} | {kdj_st} |")
+
+            # BOLL
+            bu, bm, bl = ind.get("boll_upper"), ind.get("boll_middle"), ind.get("boll_lower")
+            if price and price.get("latest"):
+                close = price["latest"]["close"]
+                if bu and bl:
+                    pos = "上轨附近" if close > bu * 0.98 else ("下轨附近" if close < bl * 1.02 else "中轨附近")
+                else:
+                    pos = "-"
+            else:
+                pos = "-"
+            parts.append(f"| BOLL | 上={bu}, 中={bm}, 下={bl} | {pos} |")
+
+            # ATR
+            atr = ind.get("atr")
+            parts.append(f"| ATR(14) | {atr} | - |")
+
+            # 量比
+            vr = ind.get("volume_ratio")
+            vr_st = "放量" if vr and vr > 1.5 else ("缩量" if vr and vr < 0.7 else "正常")
+            parts.append(f"| 量比 | {vr} | {vr_st} |")
+            parts.append("")
+
+        # 策略信号
+        signals = ctx.get("signals")
+        if signals:
+            parts.append("### 近期交易信号\n")
+            parts.append("| 日期 | 类型 | 强度 | 策略 | 理由 |")
+            parts.append("|------|------|------|------|------|")
+            for s in signals[-20:]:
+                date_str = str(s.get("date", ""))[:10]
+                sig_type = s.get("signal_type", "")
+                strength = s.get("strength", "")
+                strategy = s.get("strategy", "")
+                reasons = "; ".join(s.get("reasons", [])) if isinstance(s.get("reasons"), list) else str(s.get("reasons", ""))
+                parts.append(f"| {date_str} | {sig_type} | {strength} | {strategy} | {reasons} |")
+            parts.append("")
+
+        # K线形态
+        patterns = ctx.get("patterns")
+        if patterns:
+            parts.append("### K线形态\n")
+            for p in patterns:
+                parts.append(f"- {p.get('date', '')}: {p.get('pattern', '')}")
+            parts.append("")
+
+        # 信号统计
+        stats = ctx.get("signal_stats")
+        if stats:
+            parts.append("### 信号统计（近90天）\n")
+            parts.append(f"- 总信号数: {stats.get('total_signals', 0)}")
+            parts.append(f"- 买入信号: {stats.get('buy_signals', 0)}")
+            parts.append(f"- 卖出信号: {stats.get('sell_signals', 0)}")
+            parts.append(f"- 平均强度: {stats.get('avg_strength', 0)}")
+            parts.append("")
+
+        # 基本面数据
+        fund = ctx.get("fundamentals")
+        if fund:
+            parts.append("### 基本面估值\n")
+            def _fv(key: str, label: str, suffix: str = "") -> str:
+                v = fund.get(key)
+                if v is None:
+                    return f"- {label}: N/A"
+                if key in ("total_market_cap", "float_market_cap") and v > 1e8:
+                    return f"- {label}: {v / 1e8:.2f}亿元"
+                return f"- {label}: {v}{suffix}"
+            parts.append(_fv("pe", "市盈率(动态)"))
+            parts.append(_fv("pe_ttm", "市盈率(TTM)"))
+            parts.append(_fv("pb", "市净率"))
+            parts.append(_fv("total_market_cap", "总市值"))
+            parts.append(_fv("float_market_cap", "流通市值"))
+            parts.append(_fv("roe", "ROE", "%"))
+            parts.append("")
+
+        # 个股相关新闻
+        news = ctx.get("web_news")
+        if news:
+            parts.append("### 该股票最新新闻\n")
+            for n in news[:10]:
+                title = n.get("title", "")
+                src = n.get("source", "")
+                t = n.get("time", "")[:16]
+                body = n.get("body", "")
+                line = f"- [{t}] {title}"
+                if src:
+                    line += f" ({src})"
+                if body:
+                    line += f"\n  > {body}"
+                parts.append(line)
+            parts.append("")
+
+        return "\n".join(parts)
+
+
+def _ma_status(ma_vals: list) -> str:
+    """判断均线排列"""
+    valid = [v for v in ma_vals if v is not None]
+    if len(valid) < 2:
+        return "-"
+    if all(valid[i] >= valid[i + 1] for i in range(len(valid) - 1)):
+        return "多头排列"
+    if all(valid[i] <= valid[i + 1] for i in range(len(valid) - 1)):
+        return "空头排列"
+    return "交叉排列"

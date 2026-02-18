@@ -82,6 +82,12 @@ class DataEngine:
         # 检查数据是否够新：数据库最新日期 vs 请求的 end_date
         latest_in_db = self.quote_repo.get_latest_date(symbol)
         if latest_in_db and latest_in_db < end_dt.date():
+            # 新鲜度容忍：如果差距 ≤ 3 天（覆盖周末/短假期），直接返回缓存
+            gap_days = (end_dt.date() - latest_in_db).days
+            if gap_days <= 3 and not force_update:
+                logger.info(f"数据足够新（差 {gap_days} 天，≤3天容忍），跳过网络更新")
+                return df
+
             # 数据库数据不够新，从最新日期的下一天开始补数据
             fetch_start = datetime.combine(latest_in_db + timedelta(days=1), datetime.min.time())
             logger.info(f"数据库最新: {latest_in_db}，补齐 {fetch_start.date()} ~ {end_dt.date()}")

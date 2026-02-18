@@ -8,6 +8,18 @@ import type { StockData } from '../types';
 import type { IndicatorConfig } from '../types/chart';
 import { DEFAULT_INDICATOR_CONFIG } from '../types/chart';
 
+/**
+ * 判断缓存数据是否足够新（3 天内视为新鲜，覆盖周末和短假期）
+ * 避免不必要的 akshare 网络请求
+ */
+function isDataFresh(latestDateStr: string, endDateStr: string): boolean {
+  if (!latestDateStr || !endDateStr) return false;
+  const latest = new Date(latestDateStr);
+  const end = new Date(endDateStr);
+  const diffDays = (end.getTime() - latest.getTime()) / (86400000);
+  return diffDays <= 3;
+}
+
 export const Market: React.FC = () => {
   const [symbol, setSymbol] = useState('688576.SH');
   const [data, setData] = useState<StockData[]>([]);
@@ -38,6 +50,13 @@ export const Market: React.FC = () => {
             setData(cached.data);
             hasLoadedRef.current = true;
             setLoading(false);
+
+            // ── 智能判断：缓存足够新则跳过阶段2 ──
+            const latestCachedDate = cached.data[cached.data.length - 1]?.date;
+            if (isDataFresh(latestCachedDate, endDate)) {
+              return; // 数据足够新，无需联网
+            }
+
             // ── 阶段2: 后台静默补齐 ──
             setUpdating(true);
             try {

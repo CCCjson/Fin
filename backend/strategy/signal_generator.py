@@ -2,6 +2,7 @@
 信号生成器
 """
 from typing import Generator, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import pandas as pd
 from loguru import logger
@@ -16,6 +17,70 @@ from .strategies import (
     RSIStrategy
 )
 from .base_strategy import Signal
+
+# 并行扫描的默认线程数
+_DEFAULT_WORKERS = 8
+
+
+def _process_symbol(symbol: str,
+                    start_date: str,
+                    end_date: str,
+                    save_to_db: bool,
+                    db_only: bool) -> tuple:
+    """
+    线程安全的单股票信号生成（每次调用创建独立的 DB 连接）
+
+    Returns:
+        (symbol, signals_list, error_msg_or_None)
+    """
+    engine = DataEngine()
+    indicators = TechnicalIndicators()
+    strategies = [
+        MACrossStrategy(fast_period=5, slow_period=20),
+        MACDStrategy(),
+        KDJStrategy(),
+        RSIStrategy()
+    ]
+    repo = None
+    try:
+        df = engine.get_daily_data(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            db_only=db_only
+        )
+        if df.empty:
+            return (symbol, [], None)
+
+        if 'date' not in df.columns:
+            df = df.reset_index()
+
+        df = indicators.calculate_all_indicators(df)
+
+        all_signals: List[Signal] = []
+        for strategy in strategies:
+            signals = strategy.generate_signals(df, symbol)
+            if signals:
+                all_signals.extend(signals)
+
+        # 保存到数据库（使用独立 session）
+        if save_to_db and all_signals:
+            repo = HistoryRepository()
+            for signal in all_signals:
+                try:
+                    repo.save_signal(**signal.to_dict())
+                except Exception as e:
+                    logger.error(f"保存信号失败: {e}")
+
+        return (symbol, all_signals, None)
+
+    except Exception as e:
+        logger.error(f"处理 {symbol} 失败: {e}")
+        return (symbol, [], str(e))
+    finally:
+        engine.close()
+        if repo:
+            repo.close()
 
 
 class SignalGenerator:
@@ -138,23 +203,8 @@ class SignalGenerator:
         logger.success(f"完成 {len(symbols)} 个股票的信号生成")
         return results
 
-    def scan_market(self,
-                   symbols: Optional[List[str]] = None,
-                   lookback_days: int = 60,
-                   save_to_db: bool = True,
-                   limit: int = 100) -> dict:
-        """
-        扫描市场生成最新信号
-
-        Args:
-            symbols: 股票代码列表，如果为None则从数据库获取所有有数据的股票
-            lookback_days: 回溯天数
-            save_to_db: 是否保存到数据库
-            limit: 最多扫描多少只股票
-
-        Returns:
-            扫描结果
-        """
+    def _resolve_scan_params(self, symbols, lookback_days, limit):
+        """解析扫描参数：获取股票列表和日期范围"""
         from datetime import datetime, timedelta
         from sqlalchemy import func
         from data_engine.storage.database import get_session
@@ -163,7 +213,6 @@ class SignalGenerator:
         session = get_session()
 
         if symbols is None:
-            # 从数据库获取所有有数据的股票
             query = session.query(DailyQuote.symbol).distinct()
             if limit:
                 query = query.limit(limit)
@@ -171,7 +220,6 @@ class SignalGenerator:
             symbols = [row[0] for row in symbol_rows]
             logger.info(f"从数据库获取到 {len(symbols)} 只股票")
 
-        # 使用数据库中实际存在的最新日期，而不是系统日期
         max_date_row = session.query(func.max(DailyQuote.date)).first()
         session.close()
 
@@ -184,39 +232,67 @@ class SignalGenerator:
             end_date = datetime.now().strftime('%Y-%m-%d')
             start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
 
+        return symbols, start_date, end_date
+
+    def scan_market(self,
+                   symbols: Optional[List[str]] = None,
+                   lookback_days: int = 60,
+                   save_to_db: bool = True,
+                   limit: int = 100) -> dict:
+        """
+        扫描市场生成最新信号（并行处理）
+
+        Args:
+            symbols: 股票代码列表，如果为None则从数据库获取所有有数据的股票
+            lookback_days: 回溯天数
+            save_to_db: 是否保存到数据库
+            limit: 最多扫描多少只股票
+
+        Returns:
+            扫描结果
+        """
+        symbols, start_date, end_date = self._resolve_scan_params(symbols, lookback_days, limit)
+
         logger.info(f"开始市场扫描: {len(symbols)} 个股票 ({start_date} ~ {end_date})")
 
-        # 统计
         total_signals = 0
         buy_signals = 0
         sell_signals = 0
         results = {}
+        max_workers = min(_DEFAULT_WORKERS, len(symbols)) if symbols else 1
 
-        for symbol in symbols:
-            try:
-                signals = self.generate_signals_for_symbol(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    save_to_db=save_to_db
-                )
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    _process_symbol, symbol, start_date, end_date, save_to_db, False
+                ): symbol
+                for symbol in symbols
+            }
 
-                symbol_buy = sum(1 for s in signals if s.signal_type.upper() == 'BUY')
-                symbol_sell = sum(1 for s in signals if s.signal_type.upper() == 'SELL')
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    _, signals, error = future.result()
+                    if error:
+                        results[symbol] = {'count': 0, 'error': error}
+                        continue
 
-                results[symbol] = {
-                    'count': len(signals),
-                    'buy': symbol_buy,
-                    'sell': symbol_sell
-                }
+                    symbol_buy = sum(1 for s in signals if s.signal_type.upper() == 'BUY')
+                    symbol_sell = sum(1 for s in signals if s.signal_type.upper() == 'SELL')
 
-                total_signals += len(signals)
-                buy_signals += symbol_buy
-                sell_signals += symbol_sell
+                    results[symbol] = {
+                        'count': len(signals),
+                        'buy': symbol_buy,
+                        'sell': symbol_sell
+                    }
 
-            except Exception as e:
-                logger.error(f"处理 {symbol} 失败: {e}")
-                results[symbol] = {'count': 0, 'error': str(e)}
+                    total_signals += len(signals)
+                    buy_signals += symbol_buy
+                    sell_signals += symbol_sell
+
+                except Exception as e:
+                    logger.error(f"处理 {symbol} 失败: {e}")
+                    results[symbol] = {'count': 0, 'error': str(e)}
 
         logger.success(f"市场扫描完成，共生成 {total_signals} 个信号 (买入: {buy_signals}, 卖出: {sell_signals})")
 
@@ -235,44 +311,19 @@ class SignalGenerator:
                            limit: Optional[int] = None,
                            db_only: bool = True) -> Generator[str, None, None]:
         """
-        流式扫描市场，逐只股票 yield NDJSON 事件。
+        流式扫描市场，并行处理，逐批 yield NDJSON 事件。
 
         事件类型:
         - start: 扫描开始，包含总数
-        - progress: 每只股票扫描完成后
+        - progress: 每批股票扫描完成后
         - complete: 扫描全部完成，包含汇总
 
         Yields:
             JSON 字符串（每行一个 JSON 对象）
         """
-        from datetime import datetime, timedelta
-        from sqlalchemy import func
-        from data_engine.storage.database import get_session
-        from data_engine.storage.models import DailyQuote
-
-        session = get_session()
-
-        if symbols is None:
-            query = session.query(DailyQuote.symbol).distinct()
-            if limit:
-                query = query.limit(limit)
-            symbol_rows = query.all()
-            symbols = [row[0] for row in symbol_rows]
-            logger.info(f"从数据库获取到 {len(symbols)} 只股票")
-
-        max_date_row = session.query(func.max(DailyQuote.date)).first()
-        session.close()
-
-        if max_date_row and max_date_row[0]:
-            end_date = max_date_row[0].strftime('%Y-%m-%d') if hasattr(max_date_row[0], 'strftime') else str(max_date_row[0])
-            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
-            start_date = (end_dt - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
-        else:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+        symbols, start_date, end_date = self._resolve_scan_params(symbols, lookback_days, limit)
 
         total = len(symbols)
-        # 每 1% 发一次 progress 事件，至少间隔 1 只
         emit_interval = max(1, total // 100)
         logger.info(f"开始流式市场扫描: {total} 个股票 ({start_date} ~ {end_date})，每 {emit_interval} 只推送一次进度")
 
@@ -288,39 +339,48 @@ class SignalGenerator:
         buy_signals = 0
         sell_signals = 0
         failed = 0
+        completed = 0
 
-        for i, symbol in enumerate(symbols):
-            try:
-                signals = self.generate_signals_for_symbol(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    save_to_db=save_to_db,
-                    db_only=db_only
-                )
-                symbol_count = len(signals)
-                total_signals += symbol_count
-                buy_signals += sum(1 for s in signals if s.signal_type.upper() == 'BUY')
-                sell_signals += sum(1 for s in signals if s.signal_type.upper() == 'SELL')
+        max_workers = min(_DEFAULT_WORKERS, total) if total else 1
 
-            except Exception as e:
-                logger.error(f"处理 {symbol} 失败: {e}")
-                failed += 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    _process_symbol, symbol, start_date, end_date, save_to_db, db_only
+                ): symbol
+                for symbol in symbols
+            }
 
-            # 每 emit_interval 只或最后一只时才 yield progress
-            if (i + 1) % emit_interval == 0 or i + 1 == total:
-                yield json.dumps({
-                    "event": "progress",
-                    "current": i + 1,
-                    "total": total,
-                    "symbol": symbol,
-                    "cumulative": {
-                        "total_signals": total_signals,
-                        "buy_signals": buy_signals,
-                        "sell_signals": sell_signals,
-                        "failed": failed
-                    }
-                }, ensure_ascii=False) + "\n"
+            for future in as_completed(futures):
+                symbol = futures[future]
+                completed += 1
+
+                try:
+                    _, signals, error = future.result()
+                    if error:
+                        failed += 1
+                    else:
+                        total_signals += len(signals)
+                        buy_signals += sum(1 for s in signals if s.signal_type.upper() == 'BUY')
+                        sell_signals += sum(1 for s in signals if s.signal_type.upper() == 'SELL')
+                except Exception as e:
+                    logger.error(f"处理 {symbol} 失败: {e}")
+                    failed += 1
+
+                # 每 emit_interval 只或最后一只时才 yield progress
+                if completed % emit_interval == 0 or completed == total:
+                    yield json.dumps({
+                        "event": "progress",
+                        "current": completed,
+                        "total": total,
+                        "symbol": symbol,
+                        "cumulative": {
+                            "total_signals": total_signals,
+                            "buy_signals": buy_signals,
+                            "sell_signals": sell_signals,
+                            "failed": failed
+                        }
+                    }, ensure_ascii=False) + "\n"
 
         logger.success(f"流式市场扫描完成，共生成 {total_signals} 个信号 (买入: {buy_signals}, 卖出: {sell_signals})")
 

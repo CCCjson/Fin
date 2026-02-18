@@ -151,6 +151,31 @@ class TechnicalIndicators:
         }
 
     @staticmethod
+    def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """
+        计算平均真实波幅（ATR）
+
+        Args:
+            df: 包含OHLCV数据的DataFrame
+            period: 周期
+
+        Returns:
+            ATR Series
+        """
+        high = df['high']
+        low = df['low']
+        close = df['close'].shift(1)
+
+        tr1 = high - low
+        tr2 = (high - close).abs()
+        tr3 = (low - close).abs()
+
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+
+        return atr
+
+    @staticmethod
     def calculate_volume_ratio(df: pd.DataFrame, period: int = 5) -> pd.Series:
         """
         计算量比
@@ -209,5 +234,8 @@ class TechnicalIndicators:
 
         # 量比
         result['volume_ratio'] = TechnicalIndicators.calculate_volume_ratio(df, 5)
+
+        # ATR
+        result['atr'] = TechnicalIndicators.calculate_atr(df, 14)
 
         return result

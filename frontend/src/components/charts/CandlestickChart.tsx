@@ -198,7 +198,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     chart.timeScale().fitContent();
   }, [data, formatCandlestickData, formatVolumeData]);
 
-  // 更新均线
+  // 更新均线（增量：只添加/移除变化的系列，已有系列仅更新数据）
   useEffect(() => {
     if (!chartRef.current || data.length === 0) return;
 
@@ -210,110 +210,94 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
       60: CHART_COLORS.ma60,
     };
 
-    // 移除旧的均线系列
-    maSeriesRefs.current.forEach((series) => {
-      chart.removeSeries(series);
-    });
-    maSeriesRefs.current.clear();
+    const desiredPeriods = new Set(indicatorConfig.ma.enabled ? indicatorConfig.ma.periods : []);
+    const currentPeriods = new Set(maSeriesRefs.current.keys());
 
-    // 添加新的均线系列
-    if (indicatorConfig.ma.enabled) {
-      indicatorConfig.ma.periods.forEach((period) => {
-        const maData = calculateMA(data, period);
-        if (maData.length > 0) {
-          const maSeries = chart.addSeries(LineSeries, {
-            color: maColors[period] || '#ffffff',
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerVisible: false,
-          });
+    // 移除不再需要的系列
+    for (const period of currentPeriods) {
+      if (!desiredPeriods.has(period)) {
+        chart.removeSeries(maSeriesRefs.current.get(period)!);
+        maSeriesRefs.current.delete(period);
+      }
+    }
 
-          const lineData: LineData[] = maData.map((item) => ({
-            time: item.time as string,
-            value: item.value,
-          }));
+    // 添加新系列 / 更新已有系列的数据
+    for (const period of desiredPeriods) {
+      const maData = calculateMA(data, period);
+      if (maData.length === 0) continue;
 
-          maSeries.setData(lineData);
-          maSeriesRefs.current.set(period, maSeries);
-        }
-      });
+      const lineData: LineData[] = maData.map((item) => ({
+        time: item.time as string,
+        value: item.value,
+      }));
+
+      if (maSeriesRefs.current.has(period)) {
+        // 已有系列，仅更新数据
+        maSeriesRefs.current.get(period)!.setData(lineData);
+      } else {
+        // 新系列，创建并设置数据
+        const maSeries = chart.addSeries(LineSeries, {
+          color: maColors[period] || '#ffffff',
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        maSeries.setData(lineData);
+        maSeriesRefs.current.set(period, maSeries);
+      }
     }
   }, [data, indicatorConfig.ma]);
 
-  // 更新布林带
+  // 更新布林带（增量：已有系列仅更新数据，避免销毁重建）
   useEffect(() => {
     if (!chartRef.current || data.length === 0) return;
 
     const chart = chartRef.current;
+    const hasBoll = bollSeriesRefs.current.upper !== undefined;
 
-    // 移除旧的布林带系列
-    if (bollSeriesRefs.current.upper) {
-      chart.removeSeries(bollSeriesRefs.current.upper);
-    }
-    if (bollSeriesRefs.current.middle) {
-      chart.removeSeries(bollSeriesRefs.current.middle);
-    }
-    if (bollSeriesRefs.current.lower) {
-      chart.removeSeries(bollSeriesRefs.current.lower);
-    }
-    bollSeriesRefs.current = {};
-
-    // 添加新的布林带系列
     if (indicatorConfig.boll.enabled) {
       const bollData = calculateBoll(data, indicatorConfig.boll.period, indicatorConfig.boll.stdDev);
+      if (bollData.length === 0) return;
 
-      if (bollData.length > 0) {
-        // 上轨
+      const upperData = bollData.map((item) => ({ time: item.time as string, value: item.upper }));
+      const middleData = bollData.map((item) => ({ time: item.time as string, value: item.middle }));
+      const lowerData = bollData.map((item) => ({ time: item.time as string, value: item.lower }));
+
+      if (hasBoll) {
+        // 已有系列，仅更新数据
+        bollSeriesRefs.current.upper!.setData(upperData);
+        bollSeriesRefs.current.middle!.setData(middleData);
+        bollSeriesRefs.current.lower!.setData(lowerData);
+      } else {
+        // 首次创建布林带系列
         const upperSeries = chart.addSeries(LineSeries, {
-          color: CHART_COLORS.bollUpper,
-          lineWidth: 1,
-          lineStyle: 2,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
+          color: CHART_COLORS.bollUpper, lineWidth: 1, lineStyle: 2,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         });
-        upperSeries.setData(
-          bollData.map((item) => ({
-            time: item.time as string,
-            value: item.upper,
-          }))
-        );
+        upperSeries.setData(upperData);
         bollSeriesRefs.current.upper = upperSeries;
 
-        // 中轨
         const middleSeries = chart.addSeries(LineSeries, {
-          color: CHART_COLORS.bollMiddle,
-          lineWidth: 1,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
+          color: CHART_COLORS.bollMiddle, lineWidth: 1,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         });
-        middleSeries.setData(
-          bollData.map((item) => ({
-            time: item.time as string,
-            value: item.middle,
-          }))
-        );
+        middleSeries.setData(middleData);
         bollSeriesRefs.current.middle = middleSeries;
 
-        // 下轨
         const lowerSeries = chart.addSeries(LineSeries, {
-          color: CHART_COLORS.bollLower,
-          lineWidth: 1,
-          lineStyle: 2,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
+          color: CHART_COLORS.bollLower, lineWidth: 1, lineStyle: 2,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         });
-        lowerSeries.setData(
-          bollData.map((item) => ({
-            time: item.time as string,
-            value: item.lower,
-          }))
-        );
+        lowerSeries.setData(lowerData);
         bollSeriesRefs.current.lower = lowerSeries;
       }
+    } else if (hasBoll) {
+      // 关闭布林带，移除系列
+      chart.removeSeries(bollSeriesRefs.current.upper!);
+      chart.removeSeries(bollSeriesRefs.current.middle!);
+      chart.removeSeries(bollSeriesRefs.current.lower!);
+      bollSeriesRefs.current = {};
     }
   }, [data, indicatorConfig.boll]);
 
