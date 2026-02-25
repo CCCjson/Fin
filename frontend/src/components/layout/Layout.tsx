@@ -13,6 +13,7 @@ const SignalTracking = React.lazy(() => import('../../pages/SignalTracking').the
 const Portfolio = React.lazy(() => import('../../pages/Portfolio').then(m => ({ default: m.Portfolio })));
 const Review = React.lazy(() => import('../../pages/Review').then(m => ({ default: m.Review })));
 const Advisor = React.lazy(() => import('../../pages/Advisor').then(m => ({ default: m.Advisor })));
+const OrderBook = React.lazy(() => import('../../pages/OrderBook').then(m => ({ default: m.OrderBook })));
 
 const routeConfig: { path: string; Component: React.LazyExoticComponent<React.FC> }[] = [
   { path: '/dashboard', Component: Dashboard },
@@ -26,6 +27,7 @@ const routeConfig: { path: string; Component: React.LazyExoticComponent<React.FC
   { path: '/portfolio', Component: Portfolio },
   { path: '/review', Component: Review },
   { path: '/advisor', Component: Advisor },
+  { path: '/orderbook', Component: OrderBook },
 ];
 
 const PageLoader: React.FC = () => (
@@ -65,6 +67,7 @@ export const Layout: React.FC = () => {
     { path: '/backtest', label: '策略回测', icon: '🔬' },
     { path: '/reports', label: 'AI 报告', icon: '🤖' },
     { path: '/advisor', label: 'AI 顾问', icon: '💬' },
+    { path: '/orderbook', label: '订单簿', icon: '📊' },
   ];
 
   const isActive = (path: string) => currentPath === path;
