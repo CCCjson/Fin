@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { trackingService } from '../services/trackingService';
-import type { TrackingStats, StrategyMetrics, TrackedSignal, UpdateResult, DataUpdateEvent, DataUpdateStatus } from '../services/trackingService';
+import type { TrackingStats, StrategyMetrics, TrackedSignal, UpdateResult } from '../services/trackingService';
 
 export const SignalTracking: React.FC = () => {
   const [stats, setStats] = useState<TrackingStats | null>(null);
@@ -9,15 +9,6 @@ export const SignalTracking: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [updateResult, setUpdateResult] = useState<UpdateResult | null>(null);
-
-  // Data update
-  const [dataUpdating, setDataUpdating] = useState(false);
-  const [dataProgress, setDataProgress] = useState<{ current: number; total: number; symbol: string; name: string; success: number; failed: number; records: number } | null>(null);
-  const [dataUpdateResult, setDataUpdateResult] = useState<string | null>(null);
-  const [dataStatus, setDataStatus] = useState<DataUpdateStatus | null>(null);
-  const dataAbortRef = useRef<AbortController | null>(null);
-  const dataProgressRef = useRef<typeof dataProgress>(null);
-  const dataRafRef = useRef<number>(0);
 
   // Filters
   const [filterStrategy, setFilterStrategy] = useState('');
@@ -30,7 +21,6 @@ export const SignalTracking: React.FC = () => {
   useEffect(() => {
     loadStats();
     loadSignals();
-    loadDataStatus();
   }, []);
 
   const loadStats = async () => {
@@ -62,85 +52,6 @@ export const SignalTracking: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const loadDataStatus = async () => {
-    try {
-      const status = await trackingService.getUpdateStatus();
-      setDataStatus(status);
-    } catch (error) {
-      console.error('Failed to load data status:', error);
-    }
-  };
-
-  const handleDataUpdate = async () => {
-    try {
-      setDataUpdating(true);
-      setDataUpdateResult(null);
-      setDataProgress(null);
-
-      const abortController = new AbortController();
-      dataAbortRef.current = abortController;
-
-      await trackingService.updateDailyStream(
-        (event: DataUpdateEvent) => {
-          if (event.event === 'start') {
-            const initial = { current: 0, total: event.total || 0, symbol: '', name: '', success: 0, failed: 0, records: 0 };
-            dataProgressRef.current = initial;
-            setDataProgress(initial);
-          } else if (event.event === 'progress') {
-            dataProgressRef.current = {
-              current: event.current || 0,
-              total: event.total || 0,
-              symbol: event.symbol || '',
-              name: event.name || '',
-              success: event.success || 0,
-              failed: event.failed || 0,
-              records: event.new_records || 0,
-            };
-            if (!dataRafRef.current) {
-              dataRafRef.current = requestAnimationFrame(() => {
-                dataRafRef.current = 0;
-                setDataProgress(dataProgressRef.current);
-              });
-            }
-          } else if (event.event === 'complete') {
-            if (dataRafRef.current) {
-              cancelAnimationFrame(dataRafRef.current);
-              dataRafRef.current = 0;
-            }
-            setDataUpdateResult(
-              `行情更新完成：成功 ${event.success} 只，跳过 ${event.skipped} 只（已最新），失败 ${event.failed} 只，新增 ${event.new_records} 条记录，耗时 ${event.duration_seconds}s`
-            );
-          } else if (event.event === 'error') {
-            setDataUpdateResult(`更新失败：${event.message}`);
-          }
-        },
-        abortController.signal,
-      );
-
-      await loadDataStatus();
-    } catch (error: unknown) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        setDataUpdateResult('行情更新已取消');
-      } else {
-        console.error('Failed to update daily data:', error);
-        setDataUpdateResult('行情更新失败，请重试');
-      }
-    } finally {
-      if (dataRafRef.current) {
-        cancelAnimationFrame(dataRafRef.current);
-        dataRafRef.current = 0;
-      }
-      dataProgressRef.current = null;
-      setDataUpdating(false);
-      setDataProgress(null);
-      dataAbortRef.current = null;
-    }
-  };
-
-  const handleCancelDataUpdate = () => {
-    dataAbortRef.current?.abort();
   };
 
   const handleUpdate = async () => {
@@ -221,45 +132,9 @@ export const SignalTracking: React.FC = () => {
         <div className="flex items-center justify-between">
           <h1 className="text-3xl font-bold text-white">信号追踪</h1>
           <div className="flex items-center gap-3">
-            {/* 取消按钮 */}
-            {dataUpdating && (
-              <button
-                onClick={handleCancelDataUpdate}
-                className="px-4 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl hover:bg-red-500/30 transition-all flex items-center gap-2"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                取消
-              </button>
-            )}
-            {/* 更新行情 */}
-            <button
-              onClick={handleDataUpdate}
-              disabled={dataUpdating || updating}
-              className="px-5 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl hover:from-amber-600 hover:to-orange-700 shadow-lg shadow-amber-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              {dataUpdating ? (
-                <>
-                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  更新行情中...
-                </>
-              ) : (
-                <>
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-                  </svg>
-                  更新行情
-                </>
-              )}
-            </button>
-            {/* 更新追踪 */}
             <button
               onClick={handleUpdate}
-              disabled={updating || dataUpdating}
+              disabled={updating}
               className="px-5 py-2 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl hover:from-violet-600 hover:to-purple-700 shadow-lg shadow-violet-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {updating ? (
@@ -281,56 +156,6 @@ export const SignalTracking: React.FC = () => {
             </button>
           </div>
         </div>
-
-        {/* Data status bar */}
-        {dataStatus && !dataUpdating && (
-          <div className="flex items-center gap-4 text-sm text-gray-400 bg-gradient-card border border-border rounded-xl px-5 py-3">
-            <span>行情数据截止: <span className="text-white font-medium">{dataStatus.latest_date || '无'}</span></span>
-            <span className="text-border">|</span>
-            <span>覆盖: <span className="text-white font-medium">{dataStatus.stocks_at_latest}</span> / {dataStatus.total_stocks} 只 ({dataStatus.coverage_pct}%)</span>
-            {dataStatus.last_update && (
-              <>
-                <span className="text-border">|</span>
-                <span>上次更新: {dataStatus.last_update.completed_at ? new Date(dataStatus.last_update.completed_at).toLocaleString('zh-CN') : '-'}</span>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Data update progress bar */}
-        {dataUpdating && dataProgress && dataProgress.total > 0 && (
-          <div className="bg-gradient-card border border-border shadow-card p-5 rounded-xl space-y-3">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-300">
-                正在更新: <span className="text-amber-400 font-medium">{dataProgress.name || dataProgress.symbol}</span>
-              </span>
-              <span className="text-gray-400">
-                {dataProgress.current} / {dataProgress.total}
-                <span className="ml-2 text-white font-medium">
-                  {Math.round((dataProgress.current / dataProgress.total) * 100)}%
-                </span>
-              </span>
-            </div>
-            <div className="w-full h-3 bg-dark-light rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-amber-500 to-orange-400 rounded-full transition-all duration-300 ease-out"
-                style={{ width: `${(dataProgress.current / dataProgress.total) * 100}%` }}
-              />
-            </div>
-            <div className="flex items-center gap-6 text-xs text-gray-400">
-              <span>成功: <span className="text-bull font-medium">{dataProgress.success}</span></span>
-              <span>失败: <span className="text-bear font-medium">{dataProgress.failed}</span></span>
-              <span>新记录: <span className="text-white font-medium">{dataProgress.records}</span></span>
-            </div>
-          </div>
-        )}
-
-        {/* Data update result */}
-        {dataUpdateResult && (
-          <div className={`p-4 rounded-xl border ${dataUpdateResult.includes('失败') || dataUpdateResult.includes('取消') ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'}`}>
-            {dataUpdateResult}
-          </div>
-        )}
 
         {/* Tracking update result */}
         {updateResult && (

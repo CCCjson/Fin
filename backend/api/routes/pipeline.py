@@ -4,12 +4,18 @@ C++ 数据管道 API 代理路由
 将前端请求转发到 C++ 数据管道服务 (localhost:8003)。
 前端只和 FastAPI(:8000) 通信，不直接访问 C++ 服务。
 """
+import os
 import asyncio
 import requests
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from loguru import logger
+from dotenv import load_dotenv
+
+# 加载 .env（项目根目录）
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 router = APIRouter(prefix="/pipeline", tags=["C++数据管道"])
 
@@ -26,6 +32,8 @@ class PipelineFetchRequest(BaseModel):
     end_date: str = Field(default="", description="结束日期 YYYYMMDD")
     thread_count: int = Field(default=4, description="线程数")
     batch_size: int = Field(default=500, description="批量写入大小")
+    use_proxy: bool = Field(default=True, description="是否使用代理")
+    switch_ip_every: int = Field(default=800, description="每N次请求换IP")
 
 
 # ── 代理工具函数（同步 requests，在线程池中运行） ──
@@ -75,6 +83,15 @@ async def health():
 async def fetch(req: PipelineFetchRequest):
     """提交数据抓取任务"""
     body = req.model_dump()
+    # 注入代理 API URL（密钥只存在 .env 中，前端只传 use_proxy: true/false）
+    if req.use_proxy:
+        body["proxy_api_url"] = os.getenv("kuaidaili_api", "")
+        if not body["proxy_api_url"]:
+            logger.warning("use_proxy=True 但 .env 中未配置 kuaidaili_api，将直连")
+    else:
+        body["proxy_api_url"] = ""
+    # 移除前端专用字段，C++ 不需要
+    body.pop("use_proxy", None)
     result = await _proxy("POST", "/api/pipeline/fetch", body)
     logger.info(f"数据管道任务已提交: {result.get('task_id', 'unknown')}")
     return result

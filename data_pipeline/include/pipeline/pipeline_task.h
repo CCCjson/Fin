@@ -4,7 +4,9 @@
 #include "pipeline/blocking_queue.h"
 #include "pipeline/sqlite_storage.h"
 #include "pipeline/stats_tracker.h"
+#include "pipeline/proxy_provider.h"
 #include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -45,6 +47,9 @@ private:
     FetchRequest req_;
     SqliteStorage& storage_;
     StatsTracker& global_stats_;
+
+    // 代理
+    std::unique_ptr<ProxyProvider> proxy_provider_;
 
     // 状态
     std::atomic<TaskState> state_{TaskState::PENDING};

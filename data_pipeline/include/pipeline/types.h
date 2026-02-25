@@ -60,8 +60,10 @@ struct TaskProgress {
     std::string current_symbol;
     std::string error_message;
 
+    int proxy_switches = 0;     // 代理切换次数
+
     nlohmann::json to_json() const {
-        return {
+        auto j = nlohmann::json{
             {"task_id", task_id},
             {"state", task_state_to_string(state)},
             {"total", total},
@@ -73,6 +75,10 @@ struct TaskProgress {
             {"error_message", error_message},
             {"speed", elapsed_seconds > 0 ? done / elapsed_seconds : 0}
         };
+        if (proxy_switches > 0) {
+            j["proxy_switches"] = proxy_switches;
+        }
+        return j;
     }
 };
 
@@ -84,15 +90,19 @@ struct FetchRequest {
     std::string end_date;               // "20250201"
     int thread_count = 4;
     int batch_size = 500;
+    std::string proxy_api_url;          // 快代理 API URL，空=不使用代理
+    int switch_ip_every = 800;          // 每 N 次请求主动换 IP
 
     static FetchRequest from_json(const nlohmann::json& j) {
         FetchRequest req;
-        if (j.contains("task_id"))      req.task_id = j["task_id"].get<std::string>();
-        if (j.contains("symbols"))      req.symbols = j["symbols"].get<std::vector<std::string>>();
-        if (j.contains("begin_date"))   req.begin_date = j["begin_date"].get<std::string>();
-        if (j.contains("end_date"))     req.end_date = j["end_date"].get<std::string>();
-        if (j.contains("thread_count")) req.thread_count = j["thread_count"].get<int>();
-        if (j.contains("batch_size"))   req.batch_size = j["batch_size"].get<int>();
+        if (j.contains("task_id"))        req.task_id = j["task_id"].get<std::string>();
+        if (j.contains("symbols"))        req.symbols = j["symbols"].get<std::vector<std::string>>();
+        if (j.contains("begin_date"))     req.begin_date = j["begin_date"].get<std::string>();
+        if (j.contains("end_date"))       req.end_date = j["end_date"].get<std::string>();
+        if (j.contains("thread_count"))   req.thread_count = j["thread_count"].get<int>();
+        if (j.contains("batch_size"))     req.batch_size = j["batch_size"].get<int>();
+        if (j.contains("proxy_api_url"))  req.proxy_api_url = j["proxy_api_url"].get<std::string>();
+        if (j.contains("switch_ip_every")) req.switch_ip_every = j["switch_ip_every"].get<int>();
         return req;
     }
 };

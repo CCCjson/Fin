@@ -15,6 +15,7 @@ interface TaskProgress {
   current_symbol: string;
   error_message: string;
   speed: number;
+  proxy_switches?: number;
 }
 
 interface GlobalStats {
@@ -33,6 +34,8 @@ export const DataPipeline: React.FC = () => {
   const [endDate, setEndDate] = useState('20260225');
   const [threadCount, setThreadCount] = useState(4);
   const [batchSize, setBatchSize] = useState(500);
+  const [useProxy, setUseProxy] = useState(true);
+  const [switchIpEvery, setSwitchIpEvery] = useState(800);
 
   const [taskId, setTaskId] = useState('');
   const [progress, setProgress] = useState<TaskProgress | null>(null);
@@ -61,15 +64,18 @@ export const DataPipeline: React.FC = () => {
     } catch {}
   }, []);
 
-  const handleSubmit = async () => {
+  const submitTask = async (params: {
+    symbols: string[]; begin_date: string; end_date: string;
+    thread_count: number; batch_size: number;
+    use_proxy: boolean; switch_ip_every: number;
+  }) => {
     setError('');
     setLoading(true);
     try {
-      const symList = symbols.trim() ? symbols.split(',').map(s => s.trim()).filter(Boolean) : [];
       const res = await fetch(`${API}/pipeline/fetch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbols: symList, begin_date: beginDate, end_date: endDate, thread_count: threadCount, batch_size: batchSize }),
+        body: JSON.stringify(params),
       });
       if (!res.ok) { const err = await res.json(); throw new Error(err.detail || `HTTP ${res.status}`); }
       const data = await res.json();
@@ -79,6 +85,19 @@ export const DataPipeline: React.FC = () => {
       intervalRef.current = setInterval(() => pollProgress(data.task_id), 2000);
       pollProgress(data.task_id);
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
+  };
+
+  const handleSubmit = () => {
+    const symList = symbols.trim() ? symbols.split(',').map(s => s.trim()).filter(Boolean) : [];
+    submitTask({ symbols: symList, begin_date: beginDate, end_date: endDate, thread_count: threadCount, batch_size: batchSize, use_proxy: useProxy, switch_ip_every: switchIpEvery });
+  };
+
+  const handleUpdateToday = () => {
+    const today = new Date();
+    const yyyymmdd = today.getFullYear().toString()
+      + (today.getMonth() + 1).toString().padStart(2, '0')
+      + today.getDate().toString().padStart(2, '0');
+    submitTask({ symbols: [], begin_date: '20240101', end_date: yyyymmdd, thread_count: threadCount, batch_size: batchSize, use_proxy: useProxy, switch_ip_every: switchIpEvery });
   };
 
   const handleStop = async () => {
@@ -98,9 +117,21 @@ export const DataPipeline: React.FC = () => {
 
       {/* ── 顶栏 ── */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-white">数据管道</h1>
-          <p className="text-gray-500 text-xs mt-0.5">C++ 多线程 · EastMoney API · SQLite WAL</p>
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-xl font-bold text-white">数据管道</h1>
+            <p className="text-gray-500 text-xs mt-0.5">C++ 多线程 · EastMoney API · SQLite WAL</p>
+          </div>
+          <button
+            onClick={handleUpdateToday}
+            disabled={loading || isRunning}
+            className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            更新今日数据
+          </button>
         </div>
         {globalStats && (
           <div className="flex items-center gap-5 text-sm">
@@ -153,6 +184,26 @@ export const DataPipeline: React.FC = () => {
                   min={100} max={5000} step={100}
                   className="w-full p-2 bg-dark rounded border border-border text-white text-sm font-mono focus:border-primary outline-none" />
               </Field>
+            </div>
+
+            {/* 代理配置 */}
+            <div className="pt-2 border-t border-border/50">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs text-gray-500">快代理</label>
+                <button
+                  onClick={() => setUseProxy(!useProxy)}
+                  className={`relative w-9 h-5 rounded-full transition-colors ${useProxy ? 'bg-primary' : 'bg-gray-700'}`}
+                >
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${useProxy ? 'left-[18px]' : 'left-0.5'}`} />
+                </button>
+              </div>
+              {useProxy && (
+                <Field label="换IP频率" hint="每N次请求换IP">
+                  <input type="number" value={switchIpEvery} onChange={e => setSwitchIpEvery(Number(e.target.value))}
+                    min={50} max={5000} step={50}
+                    className="w-full p-2 bg-dark rounded border border-border text-white text-sm font-mono focus:border-primary outline-none" />
+                </Field>
+              )}
             </div>
           </div>
 
@@ -217,7 +268,7 @@ export const DataPipeline: React.FC = () => {
                 </div>
 
                 {/* 指标网格 */}
-                <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+                <div className={`grid grid-cols-3 ${progress.proxy_switches != null ? 'md:grid-cols-7' : 'md:grid-cols-6'} gap-3`}>
                   <MetricCard
                     label="当前" icon=">"
                     value={progress.current_symbol || '-'}
@@ -246,6 +297,13 @@ export const DataPipeline: React.FC = () => {
                     label="耗时" icon="T"
                     value={formatDuration(progress.elapsed_seconds)}
                   />
+                  {progress.proxy_switches != null && (
+                    <MetricCard
+                      label="换IP" icon="@"
+                      value={progress.proxy_switches.toString()}
+                      valueColor="text-cyan-400"
+                    />
+                  )}
                 </div>
 
                 {/* 错误信息 */}

@@ -70,7 +70,7 @@ export const Layout: React.FC = () => {
     { path: '/reports', label: 'AI 报告', icon: '🤖' },
     { path: '/advisor', label: 'AI 顾问', icon: '💬' },
     { path: '/orderbook', label: '订单簿', icon: '📊' },
-    { path: '/pipeline', label: '数据管道', icon: '🔧' },
+    { path: '/pipeline', label: '数据管道', icon: '🚀' },
   ];
 
   const isActive = (path: string) => currentPath === path;

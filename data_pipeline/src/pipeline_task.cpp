@@ -34,24 +34,37 @@ void PipelineTask::run() {
             return;
         }
 
-        // 2. 加载增量日期
+        // 2. 创建代理提供者（如果有 proxy_api_url）
+        if (!req_.proxy_api_url.empty()) {
+            proxy_provider_ = std::make_unique<ProxyProvider>(req_.proxy_api_url);
+            proxy_provider_->set_switch_every(req_.switch_ip_every);
+            std::cout << "[PipelineTask] 代理模式已启用, 每 "
+                      << req_.switch_ip_every << " 次请求换 IP" << std::endl;
+        }
+
+        // 3. 加载增量日期
         auto latest_dates = storage_.load_symbol_latest_dates();
 
-        // 3. 启动消费者线程
+        // 4. 启动消费者线程
         std::thread consumer_thread([this] { consumer_work(); });
 
-        // 4. 启动生产者线程池
+        // 5. 启动生产者线程池
         producer_work(symbols, latest_dates);
 
-        // 5. 关闭队列，等待消费者完成
+        // 6. 关闭队列，等待消费者完成
         bar_queue_.close();
         consumer_thread.join();
 
-        // 6. 设置最终状态
+        // 7. 设置最终状态
         if (stop_requested_) {
             state_ = TaskState::STOPPED;
         } else {
             state_ = TaskState::COMPLETED;
+        }
+
+        if (proxy_provider_) {
+            std::cout << "[PipelineTask] 代理切换次数: "
+                      << proxy_provider_->switch_count() << std::endl;
         }
     } catch (const std::exception& e) {
         error_message_ = e.what();
@@ -84,8 +97,28 @@ void PipelineTask::producer_work(const std::vector<std::string>& symbols,
 
             // 每个线程自己的 HttpClient（SSLClient 非线程安全）
             HttpClient client;
-            std::string json_str = client.fetch_kline(secid, begin, end);
+
+            // 设置代理
+            if (proxy_provider_) {
+                auto pi = proxy_provider_->get_proxy();
+                if (!pi.empty()) {
+                    client.set_proxy(pi.host, pi.port, pi.username, pi.password);
+                }
+            }
+
+            auto [json_str, banned] = client.fetch_kline(secid, begin, end);
             global_stats_.add_requests();
+            if (proxy_provider_) {
+                proxy_provider_->add_request_count();
+            }
+
+            if (banned && proxy_provider_) {
+                // IP 被封 → 切换代理，不重试当前 symbol
+                proxy_provider_->switch_proxy(client.proxy_host());
+                failed_++;
+                global_stats_.add_errors();
+                return;
+            }
 
             if (json_str.empty()) {
                 failed_++;
@@ -184,6 +217,10 @@ TaskProgress PipelineTask::progress() const {
     p.rows_written = rows_written_.load();
     p.current_symbol = current_symbol_;
     p.error_message = error_message_;
+
+    if (proxy_provider_) {
+        p.proxy_switches = proxy_provider_->switch_count();
+    }
 
     auto now = std::chrono::steady_clock::now();
     p.elapsed_seconds = std::chrono::duration<double>(now - start_time_).count();

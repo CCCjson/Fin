@@ -59,6 +59,7 @@ set(LIB_SOURCES
     src/symbol_mapper.cpp
     src/kline_parser.cpp
     src/http_client.cpp
+    src/proxy_provider.cpp
     src/sqlite_storage.cpp
     src/pipeline_task.cpp
     src/orchestrator.cpp
