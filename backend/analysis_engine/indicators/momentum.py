@@ -109,8 +109,9 @@ class MomentumIndicators(BaseIndicator):
         # 计算平均绝对偏差
         mad = df["tp"].rolling(window=period).apply(lambda x: np.abs(x - x.mean()).mean())
 
-        # 计算 CCI
-        df["cci"] = (df["tp"] - ma_tp) / (0.015 * mad)
+        # 计算 CCI（避免除零：mad 为 0 时 CCI 设为 0）
+        denominator = 0.015 * mad
+        df["cci"] = np.where(denominator != 0, (df["tp"] - ma_tp) / denominator, 0)
 
         # 清理临时列
         df.drop(["tp"], axis=1, inplace=True)

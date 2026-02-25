@@ -156,12 +156,13 @@ class TrendIndicators(BaseIndicator):
         df["plus_dm_smooth"] = df["plus_dm"].rolling(window=period).sum()
         df["minus_dm_smooth"] = df["minus_dm"].rolling(window=period).sum()
 
-        # 计算方向指标
-        df["plus_di"] = 100 * df["plus_dm_smooth"] / df["tr_smooth"]
-        df["minus_di"] = 100 * df["minus_dm_smooth"] / df["tr_smooth"]
+        # 计算方向指标（避免 tr_smooth 为 0 时除零）
+        df["plus_di"] = np.where(df["tr_smooth"] != 0, 100 * df["plus_dm_smooth"] / df["tr_smooth"], 0)
+        df["minus_di"] = np.where(df["tr_smooth"] != 0, 100 * df["minus_dm_smooth"] / df["tr_smooth"], 0)
 
-        # 计算 DX 和 ADX
-        df["dx"] = 100 * abs(df["plus_di"] - df["minus_di"]) / (df["plus_di"] + df["minus_di"])
+        # 计算 DX 和 ADX（避免 plus_di + minus_di 为 0 时除零）
+        di_sum = df["plus_di"] + df["minus_di"]
+        df["dx"] = np.where(di_sum != 0, 100 * abs(df["plus_di"] - df["minus_di"]) / di_sum, 0)
         df["adx"] = df["dx"].rolling(window=period).mean()
 
         # 清理临时列

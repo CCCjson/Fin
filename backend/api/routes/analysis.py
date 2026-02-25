@@ -99,7 +99,7 @@ async def calculate_indicators(request: IndicatorRequest):
             elif indicator_upper == "BOLL":
                 df = analysis_engine.trend_indicators.boll(df)
                 result_indicators["boll_upper"] = df["boll_upper"].tolist()
-                result_indicators["boll_middle"] = df["boll_middle"].tolist()
+                result_indicators["boll_mid"] = df["boll_mid"].tolist()
                 result_indicators["boll_lower"] = df["boll_lower"].tolist()
 
             elif indicator_upper == "ATR":
@@ -166,22 +166,26 @@ async def detect_signals(request: SignalRequest):
         if df.empty:
             raise HTTPException(status_code=404, detail=f"未找到 {request.symbol} 的数据")
 
+        # 先计算技术指标（信号检测依赖指标列）
+        df = analysis_engine.add_indicators(df)
+
         # 检测信号
         signals = analysis_engine.detect_signals(
-            df,
-            signal_types=request.signal_types
+            symbol=request.symbol,
+            df=df
         )
 
         # 转换为JSON格式
         signals_list = []
         for signal in signals:
             signals_list.append({
-                "date": str(signal["date"]),
-                "signal_type": signal["signal_type"],
-                "direction": signal["direction"],
-                "strength": signal["strength"],
-                "price": signal["price"],
-                "reason": signal.get("reason", "")
+                "date": str(signal.timestamp),
+                "signal_type": signal.signal_type.value,
+                "direction": signal.signal_type.value.upper(),
+                "strength": signal.strength,
+                "price": signal.price,
+                "reason": signal.reason,
+                "indicators": signal.indicators
             })
 
         return SignalResponse(
@@ -190,6 +194,8 @@ async def detect_signals(request: SignalRequest):
             count=len(signals_list)
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -219,25 +225,27 @@ async def detect_patterns(request: PatternRequest):
         if df.empty:
             raise HTTPException(status_code=404, detail=f"未找到 {request.symbol} 的数据")
 
-        # 识别形态
-        patterns = analysis_engine.detect_candlestick_patterns(df)
+        # 识别形态（返回 Dict[str, List[int]]，value 是出现位置的行索引）
+        patterns = analysis_engine.detect_patterns(df)
 
-        # 转换为JSON格式
+        # 转换为JSON格式：用位置索引从 df 中取出对应行的 OHLCV 数据
         patterns_dict = {}
-        for pattern_name, pattern_df in patterns.items():
-            if not pattern_df.empty:
-                pattern_list = []
-                for idx, row in pattern_df.iterrows():
-                    pattern_list.append({
-                        "date": str(idx),
-                        "pattern": pattern_name,
-                        "signal": row.get("signal", ""),
-                        "open": row["open"],
-                        "high": row["high"],
-                        "low": row["low"],
-                        "close": row["close"]
-                    })
-                patterns_dict[pattern_name] = pattern_list
+        for pattern_name, indices in patterns.items():
+            if not indices:
+                continue
+            pattern_list = []
+            for idx in indices:
+                row = df.iloc[idx]
+                pattern_list.append({
+                    "date": str(df.index[idx]),
+                    "pattern": pattern_name,
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": float(row["volume"]) if "volume" in row else 0
+                })
+            patterns_dict[pattern_name] = pattern_list
 
         total_count = sum(len(v) for v in patterns_dict.values())
 
@@ -247,6 +255,8 @@ async def detect_patterns(request: PatternRequest):
             count=total_count
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -225,12 +225,12 @@ export function calculateBoll(
     }
     const middle = sum / period;
 
-    // 计算标准差
+    // 计算标准差（样本标准差，与后端 pandas rolling.std(ddof=1) 一致）
     let sumSquares = 0;
     for (let j = 0; j < period; j++) {
       sumSquares += Math.pow(data[i - j].close - middle, 2);
     }
-    const std = Math.sqrt(sumSquares / period);
+    const std = Math.sqrt(sumSquares / (period - 1));
 
     result.push({
       time: data[i].date,

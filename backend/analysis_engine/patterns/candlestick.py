@@ -62,7 +62,7 @@ class CandlestickPatterns:
         # 实体小于总波动的 10%
         is_doji = body_size / total_range < 0.1
 
-        return df.index[is_doji].tolist()
+        return np.flatnonzero(is_doji).tolist()
 
     @staticmethod
     def detect_hammer(df: pd.DataFrame) -> List[int]:
@@ -88,7 +88,7 @@ class CandlestickPatterns:
             (total_range > 0)
         )
 
-        return df.index[is_hammer].tolist()
+        return np.flatnonzero(is_hammer).tolist()
 
     @staticmethod
     def detect_shooting_star(df: pd.DataFrame) -> List[int]:
@@ -114,7 +114,7 @@ class CandlestickPatterns:
             (total_range > 0)
         )
 
-        return df.index[is_shooting].tolist()
+        return np.flatnonzero(is_shooting).tolist()
 
     @staticmethod
     def detect_marubozu(df: pd.DataFrame) -> List[int]:
@@ -133,7 +133,7 @@ class CandlestickPatterns:
         # 实体占总波动的 90% 以上
         is_marubozu = (body_size / total_range > 0.9) & (total_range > 0)
 
-        return df.index[is_marubozu].tolist()
+        return np.flatnonzero(is_marubozu).tolist()
 
     @staticmethod
     def detect_engulfing(df: pd.DataFrame, bullish: bool = True) -> List[int]:

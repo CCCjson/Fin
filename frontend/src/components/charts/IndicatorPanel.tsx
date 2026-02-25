@@ -46,6 +46,13 @@ export const IndicatorPanel: React.FC<IndicatorPanelProps> = ({ config, onChange
     });
   };
 
+  const handleSignalsToggle = () => {
+    onChange({
+      ...config,
+      signals: { ...config.signals, enabled: !config.signals.enabled },
+    });
+  };
+
   return (
     <div className="flex flex-wrap items-center gap-4 p-3 bg-dark-light rounded-lg border border-border">
       {/* 均线设置 */}
@@ -129,6 +136,24 @@ export const IndicatorPanel: React.FC<IndicatorPanelProps> = ({ config, onChange
         <span className="text-sm text-gray-300">RSI</span>
         {config.rsi.enabled && (
           <span className="text-xs text-gray-500 ml-1">({config.rsi.period})</span>
+        )}
+      </label>
+
+      <div className="w-px h-6 bg-border" />
+
+      {/* 买卖信号 */}
+      <label className="flex items-center gap-1 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={config.signals.enabled}
+          onChange={handleSignalsToggle}
+          className="w-4 h-4 rounded border-border bg-dark text-primary focus:ring-primary/20"
+        />
+        <span className="text-sm text-gray-300">信号</span>
+        {config.signals.enabled && (
+          <span className="text-xs text-gray-500 ml-1">
+            (<span style={{ color: '#26a69a' }}>买</span>/<span style={{ color: '#ef5350' }}>卖</span>)
+          </span>
         )}
       </label>
     </div>

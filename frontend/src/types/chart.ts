@@ -42,6 +42,14 @@ export interface BollData {
   lower: number;
 }
 
+/** 买卖信号 */
+export interface ChartSignal {
+  time: string;
+  type: 'buy' | 'sell';
+  reason: string;
+  strength: number;
+}
+
 /** 指标配置 */
 export interface IndicatorConfig {
   ma: {
@@ -62,6 +70,9 @@ export interface IndicatorConfig {
     enabled: boolean;
     period: number;
     stdDev: number;
+  };
+  signals: {
+    enabled: boolean;
   };
 }
 
@@ -85,6 +96,9 @@ export const DEFAULT_INDICATOR_CONFIG: IndicatorConfig = {
     enabled: false,
     period: 20,
     stdDev: 2,
+  },
+  signals: {
+    enabled: false,
   },
 };
 
