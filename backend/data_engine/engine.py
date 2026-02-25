@@ -36,7 +36,7 @@ class DataEngine:
         symbol: str,
         start_date: str,
         end_date: str,
-        adjust: str = "qfq",
+        adjust: str = "",
         force_update: bool = False,
         db_only: bool = False
     ) -> pd.DataFrame:
@@ -110,7 +110,7 @@ class DataEngine:
         symbol: str,
         start_date: datetime,
         end_date: datetime,
-        adjust: str = "qfq"
+        adjust: str = ""
     ) -> pd.DataFrame:
         """从网络获取数据并保存到数据库"""
         try:

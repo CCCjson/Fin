@@ -14,6 +14,7 @@ const Portfolio = React.lazy(() => import('../../pages/Portfolio').then(m => ({ 
 const Review = React.lazy(() => import('../../pages/Review').then(m => ({ default: m.Review })));
 const Advisor = React.lazy(() => import('../../pages/Advisor').then(m => ({ default: m.Advisor })));
 const OrderBook = React.lazy(() => import('../../pages/OrderBook').then(m => ({ default: m.OrderBook })));
+const DataPipeline = React.lazy(() => import('../../pages/DataPipeline').then(m => ({ default: m.DataPipeline })));
 
 const routeConfig: { path: string; Component: React.LazyExoticComponent<React.FC> }[] = [
   { path: '/dashboard', Component: Dashboard },
@@ -28,6 +29,7 @@ const routeConfig: { path: string; Component: React.LazyExoticComponent<React.FC
   { path: '/review', Component: Review },
   { path: '/advisor', Component: Advisor },
   { path: '/orderbook', Component: OrderBook },
+  { path: '/pipeline', Component: DataPipeline },
 ];
 
 const PageLoader: React.FC = () => (
@@ -68,6 +70,7 @@ export const Layout: React.FC = () => {
     { path: '/reports', label: 'AI 报告', icon: '🤖' },
     { path: '/advisor', label: 'AI 顾问', icon: '💬' },
     { path: '/orderbook', label: '订单簿', icon: '📊' },
+    { path: '/pipeline', label: '数据管道', icon: '🔧' },
   ];
 
   const isActive = (path: string) => currentPath === path;
