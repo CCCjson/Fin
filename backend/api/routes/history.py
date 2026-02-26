@@ -233,9 +233,9 @@ async def delete_backtest_task(task_id: str):
     try:
         repo = HistoryRepository()
 
-        # 检查任务是否存在
-        tasks = repo.get_backtest_tasks(limit=1000)
-        task = next((t for t in tasks if t.task_id == task_id), None)
+        # 直接按 task_id 查询，避免 limit=1000 全扫
+        from data_engine.storage.models import BacktestTask as _BT
+        task = repo.session.query(_BT).filter(_BT.task_id == task_id).first()
 
         if not task:
             raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
@@ -273,9 +273,9 @@ async def get_backtest_result(task_id: str):
         if not result:
             raise HTTPException(status_code=404, detail=f"未找到回测结果: {task_id}")
 
-        # 获取任务信息
-        tasks = repo.get_backtest_tasks(limit=1000)
-        task = next((t for t in tasks if t.task_id == task_id), None)
+        # 直接按 task_id 查询任务信息，避免 limit=1000 全扫
+        from data_engine.storage.models import BacktestTask as _BT
+        task = repo.session.query(_BT).filter(_BT.task_id == task_id).first()
 
         repo.close()
 

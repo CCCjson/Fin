@@ -123,7 +123,7 @@ export const Layout: React.FC = () => {
         {/* 底部版本号 */}
         <div className="p-4 border-t border-border">
           <div className="text-xs text-gray-500 text-center hidden group-hover/sidebar:block whitespace-nowrap">
-            Version 1.0.0
+            Version 1.4.0
           </div>
         </div>
       </aside>

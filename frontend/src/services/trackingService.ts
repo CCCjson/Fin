@@ -4,6 +4,7 @@ export interface StrategyMetrics {
   total: number;
   tracked: number;
   completed: number;
+  judged: number;  // 有 outcome 的信号数（win+loss+neutral）
   win: number;
   loss: number;
   neutral: number;

@@ -170,7 +170,7 @@ export const SignalTracking: React.FC = () => {
             {renderMetricCard(
               '总胜率',
               `${overall.win_rate}%`,
-              `${overall.win}胜 / ${overall.loss}负 / ${overall.neutral}平`,
+              `${overall.win}胜 / ${overall.loss}负 / ${overall.neutral}平 · 已评判 ${overall.judged} / ${overall.total} 条`,
               overall.win_rate >= 50 ? 'text-bull' : 'text-bear'
             )}
             {renderMetricCard(
@@ -211,7 +211,7 @@ export const SignalTracking: React.FC = () => {
                     <th className="px-4 py-3 text-left">策略</th>
                     <th className="px-4 py-3 text-right">信号数</th>
                     <th className="px-4 py-3 text-right">已追踪</th>
-                    <th className="px-4 py-3 text-right">胜率</th>
+                    <th className="px-4 py-3 text-right" title="基于10日收益评判的胜率（仅含已评判信号）">胜率 *</th>
                     <th className="px-4 py-3 text-right">5日均收益</th>
                     <th className="px-4 py-3 text-right">10日均收益</th>
                     <th className="px-4 py-3 text-right">最大浮盈</th>
@@ -233,6 +233,7 @@ export const SignalTracking: React.FC = () => {
                         <td className="px-4 py-3 text-right">{m.tracked}</td>
                         <td className={`px-4 py-3 text-right font-semibold ${m.win_rate >= 50 ? 'text-bull' : 'text-bear'}`}>
                           {m.win_rate}%
+                          <span className="text-gray-500 font-normal text-xs ml-1">({m.judged})</span>
                         </td>
                         <td className={`px-4 py-3 text-right ${getReturnColor(m.avg_return_5d)}`}>
                           {formatReturn(m.avg_return_5d)}

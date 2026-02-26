@@ -112,34 +112,36 @@ class HistoryRepository:
 
     def get_signal_statistics(self, symbol: str = None, days: int = None) -> Dict:
         """
-        获取信号统计
+        获取信号统计（SQL 聚合，不加载全部记录到内存）
 
         Args:
             symbol: 股票代码（可选）
             days: 统计天数（可选，None 表示统计所有信号）
         """
-        query = self.session.query(Signal)
+        from sqlalchemy import func, case as sql_case
+
+        query = self.session.query(
+            func.count(Signal.id).label('total'),
+            func.sum(sql_case((Signal.signal_type == 'BUY', 1), else_=0)).label('buy_count'),
+            func.sum(sql_case((Signal.signal_type == 'SELL', 1), else_=0)).label('sell_count'),
+            func.avg(Signal.strength).label('avg_strength'),
+        )
 
         if symbol:
             query = query.filter(Signal.symbol == symbol)
 
-        # 如果指定了天数，则过滤日期
         if days is not None:
             from datetime import timedelta
             cutoff_date = datetime.now().date() - timedelta(days=days)
             query = query.filter(Signal.date >= cutoff_date)
 
-        signals = query.all()
-
-        buy_count = len([s for s in signals if s.signal_type == "BUY"])
-        sell_count = len([s for s in signals if s.signal_type == "SELL"])
-        avg_strength = sum(s.strength for s in signals) / len(signals) if signals else 0
+        row = query.one()
 
         return {
-            "total_signals": len(signals),
-            "buy_signals": buy_count,
-            "sell_signals": sell_count,
-            "avg_strength": avg_strength,
+            "total_signals": int(row.total or 0),
+            "buy_signals": int(row.buy_count or 0),
+            "sell_signals": int(row.sell_count or 0),
+            "avg_strength": float(row.avg_strength or 0),
             "days": days
         }
 

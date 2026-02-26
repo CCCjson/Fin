@@ -344,6 +344,7 @@ class SignalTracking(Base):
         Index('idx_tracking_strategy', 'strategy'),
         Index('idx_tracking_signal_date', 'signal_date'),
         Index('idx_tracking_outcome', 'outcome'),
+        Index('idx_tracking_symbol_date', 'symbol', 'signal_date'),
     )
 
     def __repr__(self):

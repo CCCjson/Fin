@@ -59,6 +59,17 @@ def init_db():
                 conn.execute(text("ALTER TABLE daily_reviews ADD COLUMN index_snapshot TEXT"))
             print("✓ daily_reviews 表已添加 index_snapshot 列")
 
+    # 自动迁移：为 signal_tracking 表添加 (symbol, signal_date) 复合索引
+    if "signal_tracking" in insp.get_table_names():
+        existing_indexes = {idx["name"] for idx in insp.get_indexes("signal_tracking")}
+        if "idx_tracking_symbol_date" not in existing_indexes:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_tracking_symbol_date "
+                    "ON signal_tracking (symbol, signal_date)"
+                ))
+            print("✓ signal_tracking 表已添加 idx_tracking_symbol_date 复合索引")
+
     print("✓ 数据库初始化完成")
 
 

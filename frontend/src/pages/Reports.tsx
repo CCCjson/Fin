@@ -19,7 +19,6 @@ interface Chapter {
 function parseChapters(markdown: string): Chapter[] {
   if (!markdown || !markdown.trim()) return [];
 
-  const chapters: Chapter[] = [];
   const headerRegex = /^## (\d+)[.\s、：:]/gm;
   const matches: { number: number; index: number }[] = [];
 
@@ -30,22 +29,34 @@ function parseChapters(markdown: string): Chapter[] {
 
   if (matches.length === 0) return [];
 
+  // 按章节号合并重复章节（同一章节多批次生成时 GPT 可能重复输出标题）
+  const chapterMap = new Map<number, Chapter>();
+
   for (let i = 0; i < matches.length; i++) {
     const start = matches[i].index;
     const end = i + 1 < matches.length ? matches[i + 1].index : markdown.length;
     const section = markdown.slice(start, end).trimEnd();
     const firstLine = section.split('\n')[0];
     const title = firstLine.replace(/^##\s*\d+[.\s、：:]\s*/, '').trim();
+    const num = matches[i].number;
 
-    chapters.push({
-      number: matches[i].number,
-      title: title || `第${matches[i].number}章`,
-      content: section,
-    });
+    if (chapterMap.has(num)) {
+      // 同章节重复：把后续内容去掉重复的二级标题后追加
+      const existing = chapterMap.get(num)!;
+      const extra = section.replace(/^##[^\n]*\n?/, '').trimStart();
+      if (extra) {
+        existing.content += '\n\n' + extra;
+      }
+    } else {
+      chapterMap.set(num, {
+        number: num,
+        title: title || `第${num}章`,
+        content: section,
+      });
+    }
   }
 
-  chapters.sort((a, b) => a.number - b.number);
-  return chapters;
+  return Array.from(chapterMap.values()).sort((a, b) => a.number - b.number);
 }
 
 /* ================================================================
@@ -159,7 +170,7 @@ export const Reports: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [totalReports, setTotalReports] = useState(0);
 
-  const [reportType, setReportType] = useState('weekly');
+  const [reportType, setReportType] = useState('daily');
   const [model, setModel] = useState('gpt-4.1');
 
   const [view, setView] = useState<View>('list');
@@ -315,7 +326,14 @@ export const Reports: React.FC = () => {
         .filter(num => contents[num].trim().length > 0)
         .sort((a, b) => a - b)
         .map(num => {
-          const content = contents[num];
+          const raw = contents[num];
+          // 去除续批 GPT 可能重复输出的二级标题（保留第一次出现，删除后续重复）
+          const headerPattern = new RegExp(`^##\\s+${num}[.\\s、：:][^\\n]*\\n?`, 'gm');
+          let firstSeen = false;
+          const content = raw.replace(headerPattern, (match) => {
+            if (!firstSeen) { firstSeen = true; return match; }
+            return '';
+          });
           const firstLine = content.split('\n')[0] || '';
           const title = firstLine.replace(/^##\s*\d+[.\s、：:]\s*/, '').trim();
           return { number: num, title: title || `第${num}章`, content };

@@ -23,7 +23,7 @@ router = APIRouter(prefix="/reports", tags=["AI分析报告"])
 
 class GenerateReportRequest(BaseModel):
     """生成报告请求"""
-    report_type: str = Field("weekly", description="报告类型: daily / weekly / monthly")
+    report_type: str = Field("daily", description="报告类型: daily / weekly / monthly")
     model: str = Field("gpt-4o", description="模型: gpt-4o / gpt-4o-mini")
     period_end: Optional[str] = Field(None, description="报告截止日期 (YYYY-MM-DD)，默认今天")
 

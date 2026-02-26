@@ -943,7 +943,7 @@ export const Portfolio: React.FC = () => {
                       >
                         <div className="font-medium text-white text-sm">{r.title}</div>
                         <div className="text-xs text-gray-400 mt-1">
-                          {r.report_type === 'weekly' ? '周报' : '月报'} | {r.created_at ? new Date(r.created_at).toLocaleDateString('zh-CN') : '-'}
+                          {r.report_type === 'daily' ? '日报' : r.report_type === 'weekly' ? '周报' : '月报'} | {r.created_at ? new Date(r.created_at).toLocaleDateString('zh-CN') : '-'}
                         </div>
                       </button>
                     ))}
