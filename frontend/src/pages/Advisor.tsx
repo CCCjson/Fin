@@ -375,79 +375,81 @@ export const Advisor: React.FC = () => {
 
   /* ==================== 渲染 ==================== */
   return (
-    <div className="min-h-screen bg-gradient-dark flex flex-col">
+    <div className="min-h-screen bg-gradient-dark flex flex-col pb-20 md:pb-0">
       {/* 头部 */}
       <div className="flex-shrink-0 border-b border-border bg-dark-card/50 backdrop-blur-sm">
-        <div className="max-w-4xl mx-auto px-6 py-4">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-lg shadow-lg shadow-purple-500/25">
+        <div className="max-w-4xl mx-auto px-3 md:px-6 py-3 md:py-4">
+          <div className="flex items-center gap-3 mb-3 md:mb-4">
+            <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-sm md:text-lg shadow-lg shadow-purple-500/25">
               AI
             </div>
             <div>
-              <h1 className="text-xl font-bold text-white">AI 投资顾问</h1>
-              <p className="text-xs text-gray-500">输入新代码随时切换分析，支持多股票对话</p>
+              <h1 className="text-lg md:text-xl font-bold text-white">AI 投资顾问</h1>
+              <p className="text-xs text-gray-500 hidden md:block">输入新代码随时切换分析，支持多股票对话</p>
             </div>
           </div>
 
           {/* 输入栏 */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex-1 min-w-[200px]">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-3 md:flex-wrap">
+            <div className="flex-1 min-w-0 md:min-w-[200px]">
               <StockSymbolInput
                 value={symbol}
                 onChange={(sym, name) => { setSymbol(sym); if (name) setStockName(name); }}
-                placeholder="输入代码或名称搜索，如 600519 / 贵州茅台"
+                placeholder="输入代码或名称搜索"
                 disabled={isStreaming}
-                className="w-full px-4 py-2.5 bg-dark text-white rounded-xl border border-border
+                className="w-full px-3 md:px-4 py-2 md:py-2.5 bg-dark text-white rounded-xl border border-border
                   focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all
-                  placeholder:text-gray-600 disabled:opacity-50"
+                  placeholder:text-gray-600 disabled:opacity-50 text-sm md:text-base"
               />
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={enableWebSearch}
-                onChange={e => setEnableWebSearch(e.target.checked)}
-                className="w-4 h-4 rounded border-border bg-dark text-violet-500 focus:ring-violet-500/20"
-              />
-              联网
-            </label>
+            <div className="flex items-center gap-2 md:gap-3">
+              <label className="flex items-center gap-1.5 text-sm text-gray-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={enableWebSearch}
+                  onChange={e => setEnableWebSearch(e.target.checked)}
+                  className="w-4 h-4 rounded border-border bg-dark text-violet-500 focus:ring-violet-500/20"
+                />
+                联网
+              </label>
 
-            <select
-              value={model}
-              onChange={e => setModel(e.target.value)}
-              disabled={isStreaming}
-              className="px-3 py-2.5 bg-dark text-white rounded-xl border border-border
-                focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all text-sm
-                disabled:opacity-50"
-            >
-              <option value="gpt-4.1">GPT-4.1</option>
-              <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
-              <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
-              <option value="gpt-4o">GPT-4o</option>
-              <option value="gpt-4o-mini">GPT-4o Mini</option>
-            </select>
+              <select
+                value={model}
+                onChange={e => setModel(e.target.value)}
+                disabled={isStreaming}
+                className="px-2 md:px-3 py-2 md:py-2.5 bg-dark text-white rounded-xl border border-border
+                  focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all text-xs md:text-sm
+                  disabled:opacity-50"
+              >
+                <option value="gpt-4.1">GPT-4.1</option>
+                <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
+                <option value="gpt-4o">GPT-4o</option>
+                <option value="gpt-4o-mini">GPT-4o Mini</option>
+              </select>
 
-            <button
-              onClick={handleAnalyze}
-              disabled={!symbol.trim() || isStreaming}
-              className="px-6 py-2.5 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl
-                hover:from-violet-600 hover:to-purple-700 shadow-lg shadow-purple-500/25
-                hover:shadow-purple-500/40 transition-all duration-300 font-medium
-                disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              {isStreaming ? (
-                <>
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  分析中
-                </>
-              ) : (
-                '分析'
-              )}
-            </button>
+              <button
+                onClick={handleAnalyze}
+                disabled={!symbol.trim() || isStreaming}
+                className="px-4 md:px-6 py-2 md:py-2.5 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl
+                  hover:from-violet-600 hover:to-purple-700 shadow-lg shadow-purple-500/25
+                  hover:shadow-purple-500/40 transition-all duration-300 font-medium text-sm md:text-base
+                  disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isStreaming ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    分析中
+                  </>
+                ) : (
+                  '分析'
+                )}
+              </button>
+            </div>
           </div>
 
           {/* 股票标签栏 */}
@@ -471,7 +473,7 @@ export const Advisor: React.FC = () => {
                     {tab.sessionId && <span className="w-1.5 h-1.5 rounded-full bg-green-500/60" title="会话存活" />}
                     <span
                       onClick={(e) => closeTab(idx, e)}
-                      className="ml-1 opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity text-xs"
+                      className="ml-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-red-400 transition-opacity text-xs"
                     >
                       x
                     </span>
@@ -485,7 +487,7 @@ export const Advisor: React.FC = () => {
 
       {/* 聊天区域 */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
+        <div className="max-w-4xl mx-auto px-3 md:px-6 py-4 md:py-6 space-y-4 md:space-y-6">
           {/* 欢迎提示 */}
           {currentMessages.length === 0 && !collectingMsg && !error && (
             <div className="text-center py-20">
@@ -532,7 +534,7 @@ export const Advisor: React.FC = () => {
                 {msg.role === 'user' ? 'Me' : 'AI'}
               </div>
 
-              <div className={`max-w-[85%] ${
+              <div className={`max-w-[88%] md:max-w-[85%] ${
                 msg.role === 'user'
                   ? 'bg-blue-500/10 border border-blue-500/20 rounded-2xl rounded-tr-sm px-5 py-3'
                   : 'bg-gradient-card border border-border rounded-2xl rounded-tl-sm px-6 py-5'
@@ -580,8 +582,8 @@ export const Advisor: React.FC = () => {
       {/* 底部追问栏 */}
       {activeTab?.sessionId && (
         <div className="flex-shrink-0 border-t border-border bg-dark-card/50 backdrop-blur-sm">
-          <div className="max-w-4xl mx-auto px-6 py-4">
-            <div className="flex items-center gap-3">
+          <div className="max-w-4xl mx-auto px-3 md:px-6 py-3 md:py-4">
+            <div className="flex items-center gap-2 md:gap-3">
               <input
                 type="text"
                 value={followUpInput}
@@ -589,9 +591,9 @@ export const Advisor: React.FC = () => {
                 onKeyDown={handleKeyDown}
                 placeholder={`追问 ${activeTab.name || activeTab.symbol}...`}
                 disabled={isStreaming}
-                className="flex-1 px-4 py-2.5 bg-dark text-white rounded-xl border border-border
+                className="flex-1 px-3 md:px-4 py-2 md:py-2.5 bg-dark text-white rounded-xl border border-border
                   focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all
-                  placeholder:text-gray-600 disabled:opacity-50"
+                  placeholder:text-gray-600 disabled:opacity-50 text-sm md:text-base"
               />
 
               {isStreaming ? (

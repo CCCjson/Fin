@@ -216,15 +216,15 @@ export const Signals: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-dark p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold text-white">信号分析</h1>
-          <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6">
+      <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <h1 className="text-2xl md:text-3xl font-bold text-white">信号分析</h1>
+          <div className="flex items-center gap-2 md:gap-3">
             {scanning && (
               <button
                 onClick={handleCancelScan}
-                className="px-4 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl hover:bg-red-500/30 transition-all flex items-center gap-2"
+                className="px-3 md:px-4 py-1.5 md:py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl hover:bg-red-500/30 transition-all flex items-center gap-2 text-sm"
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -235,11 +235,11 @@ export const Signals: React.FC = () => {
             <button
               onClick={handleScanMarket}
               disabled={scanning || checkingFreshness}
-              className="px-6 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl hover:from-green-600 hover:to-emerald-700 shadow-lg shadow-green-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              className="px-4 md:px-6 py-1.5 md:py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl hover:from-green-600 hover:to-emerald-700 shadow-lg shadow-green-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm md:text-base"
             >
               {scanning || checkingFreshness ? (
                 <>
-                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                  <svg className="animate-spin h-4 w-4 md:h-5 md:w-5" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
@@ -247,7 +247,7 @@ export const Signals: React.FC = () => {
                 </>
               ) : (
                 <>
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="h-4 w-4 md:h-5 md:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
                   获取今日信号
@@ -354,28 +354,28 @@ export const Signals: React.FC = () => {
 
         {/* 统计卡片 */}
         {statistics && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
-              <div className="text-gray-400 text-sm mb-2">总信号数</div>
-              <div className="text-3xl font-bold text-primary-light">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+              <div className="text-gray-400 text-xs md:text-sm mb-1 md:mb-2">总信号数</div>
+              <div className="text-xl md:text-3xl font-bold text-primary-light">
                 {statistics.total_signals || 0}
               </div>
             </div>
-            <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-green transition-all">
-              <div className="text-gray-400 text-sm mb-2">买入信号</div>
-              <div className="text-3xl font-bold text-bull">
+            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-green transition-all">
+              <div className="text-gray-400 text-xs md:text-sm mb-1 md:mb-2">买入信号</div>
+              <div className="text-xl md:text-3xl font-bold text-bull">
                 {statistics.buy_signals || 0}
               </div>
             </div>
-            <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-red transition-all">
-              <div className="text-gray-400 text-sm mb-2">卖出信号</div>
-              <div className="text-3xl font-bold text-bear">
+            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-red transition-all">
+              <div className="text-gray-400 text-xs md:text-sm mb-1 md:mb-2">卖出信号</div>
+              <div className="text-xl md:text-3xl font-bold text-bear">
                 {statistics.sell_signals || 0}
               </div>
             </div>
-            <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
-              <div className="text-gray-400 text-sm mb-2">平均强度</div>
-              <div className="text-3xl font-bold text-accent-cyan">
+            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all col-span-2 md:col-span-1">
+              <div className="text-gray-400 text-xs md:text-sm mb-1 md:mb-2">平均强度</div>
+              <div className="text-xl md:text-3xl font-bold text-accent-cyan">
                 {statistics.avg_strength ? (statistics.avg_strength * 100).toFixed(1) : 0}%
               </div>
             </div>
@@ -383,7 +383,7 @@ export const Signals: React.FC = () => {
         )}
 
         {/* 筛选表单 */}
-        <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
+        <div className="bg-gradient-card border border-border shadow-card p-4 md:p-6 rounded-xl">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -444,16 +444,18 @@ export const Signals: React.FC = () => {
         </div>
 
         {/* 信号列表 */}
-        <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-white">信号历史</h2>
+        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+          <div className="flex items-center justify-between mb-3 md:mb-4">
+            <h2 className="text-lg md:text-xl font-semibold text-white">信号历史</h2>
             {totalSignals > 0 && (
-              <span className="text-sm text-gray-400">
-                共 <span className="text-white font-medium">{totalSignals}</span> 条信号
+              <span className="text-xs md:text-sm text-gray-400">
+                共 <span className="text-white font-medium">{totalSignals}</span> 条
               </span>
             )}
           </div>
-          <div className="overflow-x-auto rounded-lg border border-border">
+
+          {/* 桌面端表格 */}
+          <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead className="bg-dark-light text-gray-300 border-b border-border">
                 <tr>
@@ -497,9 +499,7 @@ export const Signals: React.FC = () => {
                       </td>
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-2">
-                          <div
-                            className="w-16 h-2 bg-dark-light rounded-full overflow-hidden"
-                          >
+                          <div className="w-16 h-2 bg-dark-light rounded-full overflow-hidden">
                             <div
                               className={`h-full ${getStrengthColor(signal.strength)} bg-current`}
                               style={{ width: `${signal.strength * 100}%` }}
@@ -531,9 +531,54 @@ export const Signals: React.FC = () => {
             </table>
           </div>
 
-          {/* 分页控件 */}
+          {/* 手机端卡片列表 */}
+          <div className="md:hidden space-y-2">
+            {signals.length === 0 ? (
+              <div className="py-8 text-center text-gray-500 text-sm">
+                {loading ? '加载中...' : '暂无信号数据，点击"获取今日信号"开始扫描'}
+              </div>
+            ) : (
+              signals.map((signal) => (
+                <div
+                  key={signal.id}
+                  className="bg-dark-light/30 rounded-lg p-3 border border-border/50"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-medium text-sm">{signal.symbol}</span>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                          signal.signal_type === 'BUY'
+                            ? 'bg-bull/20 text-bull'
+                            : 'bg-bear/20 text-bear'
+                        }`}
+                      >
+                        {signal.signal_type === 'BUY' ? '买入' : '卖出'}
+                      </span>
+                      <span className={`text-[10px] font-semibold ${getStrengthColor(signal.strength)}`}>
+                        {getStrengthLabel(signal.strength)}
+                      </span>
+                    </div>
+                    <span className="text-primary-light text-sm font-medium">¥{signal.price.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-gray-500">
+                    <span>{signal.date}</span>
+                    <div className="flex gap-3">
+                      {signal.stop_loss && <span className="text-bear">止损 ¥{signal.stop_loss.toFixed(2)}</span>}
+                      {signal.take_profit && <span className="text-bull">止盈 ¥{signal.take_profit.toFixed(2)}</span>}
+                    </div>
+                  </div>
+                  {signal.strategy && (
+                    <div className="text-accent-purple text-[10px] mt-1">{signal.strategy}</div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* 分页控件 - 桌面端 */}
           {totalSignals > pageSize && (
-            <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
+            <div className="hidden md:flex items-center justify-between mt-4 pt-4 border-t border-border">
               <span className="text-sm text-gray-400">
                 第 {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalSignals)} 条，共 {totalSignals} 条
               </span>
@@ -552,7 +597,6 @@ export const Signals: React.FC = () => {
                 >
                   上一页
                 </button>
-                {/* 页码按钮 */}
                 {(() => {
                   const pages: number[] = [];
                   let start = Math.max(1, page - 2);
@@ -592,6 +636,27 @@ export const Signals: React.FC = () => {
                   末页
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* 分页控件 - 手机端 */}
+          {totalSignals > pageSize && (
+            <div className="md:hidden flex items-center justify-between mt-3 pt-3 border-t border-border">
+              <button
+                onClick={() => handlePageChange(page - 1)}
+                disabled={page === 1 || loading}
+                className="px-4 py-2 text-sm bg-dark-light text-gray-300 rounded-lg border border-border active:bg-border disabled:opacity-30"
+              >
+                上一页
+              </button>
+              <span className="text-xs text-gray-500">{page} / {totalPages}</span>
+              <button
+                onClick={() => handlePageChange(page + 1)}
+                disabled={page === totalPages || loading}
+                className="px-4 py-2 text-sm bg-dark-light text-gray-300 rounded-lg border border-border active:bg-border disabled:opacity-30"
+              >
+                下一页
+              </button>
             </div>
           )}
         </div>

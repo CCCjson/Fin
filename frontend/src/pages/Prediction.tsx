@@ -29,8 +29,8 @@ export const Prediction: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabKey>('train');
 
   return (
-    <div className="min-h-screen bg-gradient-dark p-6 space-y-6">
-      <h1 className="text-2xl font-bold text-white">股价预测</h1>
+    <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6 space-y-4 md:space-y-6">
+      <h1 className="text-2xl md:text-3xl font-bold text-white">股价预测</h1>
 
       {/* Tab 切换 */}
       <div className="flex gap-1 bg-dark-card rounded-lg p-1 w-fit">
@@ -38,7 +38,7 @@ export const Prediction: React.FC = () => {
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key)}
-            className={`px-5 py-2 rounded-md text-sm font-medium transition-all ${
+            className={`px-3 py-1.5 md:px-5 md:py-2 rounded-md text-sm font-medium transition-all ${
               activeTab === t.key
                 ? 'bg-primary text-white shadow-glow-blue'
                 : 'text-gray-400 hover:text-white hover:bg-dark-light'
@@ -141,10 +141,10 @@ const TrainTab: React.FC = () => {
   const currentStageIdx = stages.findIndex(s => s.key === stage);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       {/* 训练配置 */}
-      <div className="bg-dark-card rounded-xl p-6 border border-border">
-        <h2 className="text-lg font-semibold text-white mb-4">训练配置</h2>
+      <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
+        <h2 className="text-lg md:text-xl font-semibold text-white mb-4">训练配置</h2>
         <div className="flex flex-wrap gap-4 items-end">
           <div className="w-64">
             <label className="block text-sm text-gray-400 mb-1">股票代码</label>
@@ -175,13 +175,13 @@ const TrainTab: React.FC = () => {
 
       {/* 训练进度 */}
       {(training || trainResult) && (
-        <div className="bg-dark-card rounded-xl p-6 border border-border space-y-4">
-          <h2 className="text-lg font-semibold text-white">
+        <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border space-y-4">
+          <h2 className="text-lg md:text-xl font-semibold text-white">
             {trainResult ? '训练完成' : '训练进度'}
           </h2>
 
           {/* 阶段指示 */}
-          <div className="flex gap-2 items-center">
+          <div className="flex flex-wrap gap-2 items-center">
             {stages.map((s, i) => {
               const done = i < currentStageIdx || trainResult;
               const active = i === currentStageIdx && !trainResult;
@@ -254,8 +254,8 @@ const TrainTab: React.FC = () => {
       )}
 
       {/* 已训练模型列表 */}
-      <div className="bg-dark-card rounded-xl p-6 border border-border">
-        <h2 className="text-lg font-semibold text-white mb-4">已训练模型</h2>
+      <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
+        <h2 className="text-lg md:text-xl font-semibold text-white mb-4">已训练模型</h2>
         {models.length === 0 ? (
           <p className="text-gray-500 text-sm">暂无已训练模型</p>
         ) : (
@@ -344,9 +344,9 @@ const PredictTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       {/* 输入区 */}
-      <div className="bg-dark-card rounded-xl p-6 border border-border">
+      <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
         <div className="flex flex-wrap gap-4 items-end">
           <div className="w-64">
             <label className="block text-sm text-gray-400 mb-1">股票代码</label>
@@ -381,8 +381,8 @@ const PredictTab: React.FC = () => {
       {result && (
         <>
           {/* 图表 */}
-          <div className="bg-dark-card rounded-xl p-6 border border-border">
-            <h2 className="text-lg font-semibold text-white mb-4">价格预测图表</h2>
+          <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
+            <h2 className="text-lg md:text-xl font-semibold text-white mb-4">价格预测图表</h2>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3e" />
@@ -400,8 +400,8 @@ const PredictTab: React.FC = () => {
           </div>
 
           {/* 摘要 + 模型详情 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-dark-card rounded-xl p-6 border border-border">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+            <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
               <h3 className="text-base font-semibold text-white mb-3">预测摘要</h3>
               <div className="space-y-3">
                 <div className="flex justify-between">
@@ -429,7 +429,7 @@ const PredictTab: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-dark-card rounded-xl p-6 border border-border">
+            <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
               <h3 className="text-base font-semibold text-white mb-3">模型详情</h3>
               <div className="space-y-4">
                 <div>
@@ -456,7 +456,7 @@ const PredictTab: React.FC = () => {
 
           {/* 历史预测记录 */}
           {history.length > 0 && (
-            <div className="bg-dark-card rounded-xl p-6 border border-border">
+            <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
               <h3 className="text-base font-semibold text-white mb-4">历史预测记录</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -572,9 +572,9 @@ const ValidateTab: React.FC = () => {
   ] : [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       {/* 筛选栏 */}
-      <div className="bg-dark-card rounded-xl p-6 border border-border">
+      <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
         <div className="flex flex-wrap gap-4 items-end">
           <div className="w-64">
             <label className="block text-sm text-gray-400 mb-1">筛选股票 (可选)</label>
@@ -620,10 +620,10 @@ const ValidateTab: React.FC = () => {
           </div>
 
           {/* 图表区 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
             {/* 分模型准确率对比 */}
             {modelCompareData.length > 0 && (
-              <div className="bg-dark-card rounded-xl p-6 border border-border">
+              <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
                 <h3 className="text-base font-semibold text-white mb-4">分模型准确率对比</h3>
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={modelCompareData}>
@@ -644,7 +644,7 @@ const ValidateTab: React.FC = () => {
 
             {/* 置信度校准图 */}
             {calibrationData.length > 0 && (
-              <div className="bg-dark-card rounded-xl p-6 border border-border">
+              <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
                 <h3 className="text-base font-semibold text-white mb-4">置信度校准</h3>
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={calibrationData}>
@@ -662,7 +662,7 @@ const ValidateTab: React.FC = () => {
           </div>
 
           {/* 验证明细表格 */}
-          <div className="bg-dark-card rounded-xl p-6 border border-border">
+          <div className="bg-dark-card rounded-xl p-3 md:p-6 border border-border">
             <h3 className="text-base font-semibold text-white mb-4">
               验证明细
               <span className="text-sm text-gray-500 ml-2">
@@ -737,9 +737,9 @@ const StatCard: React.FC<{ label: string; value: string; color: string }> = ({ l
   };
 
   return (
-    <div className="bg-dark-card rounded-xl p-4 border border-border">
+    <div className="bg-dark-card rounded-xl p-3 md:p-4 border border-border">
       <p className="text-xs text-gray-500 mb-1">{label}</p>
-      <p className={`text-2xl font-bold font-mono ${colorMap[color] || 'text-white'}`}>{value}</p>
+      <p className={`text-xl md:text-2xl font-bold font-mono ${colorMap[color] || 'text-white'}`}>{value}</p>
     </div>
   );
 };

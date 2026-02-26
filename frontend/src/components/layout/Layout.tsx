@@ -51,6 +51,7 @@ const PageLoader: React.FC = () => (
 export const Layout: React.FC = () => {
   const location = useLocation();
   const [mountedPaths, setMountedPaths] = useState<Set<string>>(new Set());
+  const [moreDrawerOpen, setMoreDrawerOpen] = useState(false);
 
   const currentPath = location.pathname;
 
@@ -61,6 +62,11 @@ export const Layout: React.FC = () => {
       next.add(currentPath);
       return next;
     });
+  }, [currentPath]);
+
+  // 切换页面时关闭抽屉
+  useEffect(() => {
+    setMoreDrawerOpen(false);
   }, [currentPath]);
 
   const navItems = [
@@ -79,7 +85,21 @@ export const Layout: React.FC = () => {
     { path: '/news', label: '新闻分析', icon: '📰' },
   ];
 
+  // 底部 Tab 栏固定显示的 4 个 + 更多
+  const mobileTabItems = [
+    { path: '/realtime', label: '行情', icon: '⚡' },
+    { path: '/market', label: 'K线', icon: '📈' },
+    { path: '/signals', label: '信号', icon: '🎯' },
+    { path: '/advisor', label: '顾问', icon: '💬' },
+  ];
+
+  // 「更多」抽屉里的其他页面
+  const moreItems = navItems.filter(
+    (item) => !mobileTabItems.some((tab) => tab.path === item.path)
+  );
+
   const isActive = (path: string) => currentPath === path;
+  const isInMore = moreItems.some((item) => item.path === currentPath);
 
   // Redirect / to /realtime
   if (currentPath === '/') {
@@ -88,8 +108,8 @@ export const Layout: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-dark">
-      {/* 侧边栏：flex 子元素，hover 时展开推挤内容 */}
-      <aside className="group/sidebar flex-shrink-0 h-full z-30 flex flex-col bg-dark-card border-r border-border w-16 hover:w-64 transition-all duration-300 overflow-hidden">
+      {/* ========== 桌面端侧边栏 ========== */}
+      <aside className="hidden md:flex group/sidebar flex-shrink-0 h-full z-30 flex-col bg-dark-card border-r border-border w-16 hover:w-64 transition-all duration-300 overflow-hidden">
         {/* Logo */}
         <div className="border-b border-border p-3 group-hover/sidebar:p-6 transition-all duration-300">
           <div className="group-hover/sidebar:hidden text-2xl text-center text-primary-light font-bold">Q</div>
@@ -128,7 +148,7 @@ export const Layout: React.FC = () => {
         </div>
       </aside>
 
-      {/* 主内容区 — 不设 overflow-auto，滚动交给各页面 wrapper */}
+      {/* ========== 主内容区 ========== */}
       <main className="flex-1 min-w-0 bg-dark-lighter relative">
         {routeConfig.map(({ path, Component }) => {
           if (!mountedPaths.has(path)) return null;
@@ -145,6 +165,77 @@ export const Layout: React.FC = () => {
           );
         })}
       </main>
+
+      {/* ========== 手机端底部 Tab 栏 ========== */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-card border-t border-border">
+        <div className="flex items-center justify-around h-14">
+          {mobileTabItems.map((item) => (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={`flex flex-col items-center justify-center flex-1 h-full transition-colors ${
+                isActive(item.path)
+                  ? 'text-primary'
+                  : 'text-gray-500 active:text-gray-300'
+              }`}
+            >
+              <span className="text-lg">{item.icon}</span>
+              <span className="text-[10px] mt-0.5 font-medium">{item.label}</span>
+            </Link>
+          ))}
+
+          {/* 更多按钮 */}
+          <button
+            onClick={() => setMoreDrawerOpen(!moreDrawerOpen)}
+            className={`flex flex-col items-center justify-center flex-1 h-full transition-colors ${
+              moreDrawerOpen || isInMore
+                ? 'text-primary'
+                : 'text-gray-500 active:text-gray-300'
+            }`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+            <span className="text-[10px] mt-0.5 font-medium">更多</span>
+          </button>
+        </div>
+        {/* iPhone 安全区 */}
+        <div className="h-[env(safe-area-inset-bottom)] bg-dark-card" />
+      </nav>
+
+      {/* ========== 更多抽屉 ========== */}
+      {moreDrawerOpen && (
+        <>
+          {/* 背景遮罩 */}
+          <div
+            className="md:hidden fixed inset-0 bg-black/60 z-40"
+            onClick={() => setMoreDrawerOpen(false)}
+          />
+          {/* 抽屉面板 */}
+          <div className="md:hidden fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] left-0 right-0 z-40 bg-dark-card border-t border-border rounded-t-2xl overflow-hidden">
+            <div className="flex justify-center pt-2 pb-1">
+              <div className="w-10 h-1 bg-gray-600 rounded-full" />
+            </div>
+            <div className="grid grid-cols-4 gap-1 px-3 pb-4">
+              {moreItems.map((item) => (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setMoreDrawerOpen(false)}
+                  className={`flex flex-col items-center justify-center py-3 rounded-xl transition-colors ${
+                    isActive(item.path)
+                      ? 'bg-primary/20 text-primary'
+                      : 'text-gray-400 active:bg-dark-light'
+                  }`}
+                >
+                  <span className="text-2xl mb-1">{item.icon}</span>
+                  <span className="text-xs font-medium">{item.label}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };

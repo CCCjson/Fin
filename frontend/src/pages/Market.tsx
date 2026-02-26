@@ -109,13 +109,13 @@ export const Market: React.FC = () => {
   const priceChangePct = prevData ? (priceChange / prevData.close) * 100 : 0;
 
   return (
-    <div className="min-h-screen bg-gradient-dark p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <h1 className="text-3xl font-bold text-white">行情数据</h1>
+    <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6">
+      <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
+        <h1 className="text-2xl md:text-3xl font-bold text-white">行情数据</h1>
 
         {/* 查询表单 */}
-        <div className="bg-gradient-card border border-border shadow-card p-6 rounded-lg">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-gradient-card border border-border shadow-card p-4 md:p-6 rounded-lg">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 md:gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 股票代码
@@ -162,63 +162,68 @@ export const Market: React.FC = () => {
 
         {/* 最新数据 */}
         {latestData && (
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-            <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl hover:shadow-glow-blue transition-all">
-              <div className="text-gray-400 text-sm mb-1">最新价</div>
-              <div className="text-2xl font-bold text-primary-light">¥{latestData.close.toFixed(2)}</div>
+          <div className="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-4">
+            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-blue transition-all">
+              <div className="text-gray-400 text-xs md:text-sm mb-1">最新价</div>
+              <div className="text-lg md:text-2xl font-bold text-primary-light">¥{latestData.close.toFixed(2)}</div>
             </div>
-            <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl hover:shadow-glow-blue transition-all">
-              <div className="text-gray-400 text-sm mb-1">涨跌幅</div>
-              <div className={`text-xl font-semibold ${priceChange >= 0 ? 'text-bull' : 'text-bear'}`}>
+            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-blue transition-all">
+              <div className="text-gray-400 text-xs md:text-sm mb-1">涨跌幅</div>
+              <div className={`text-lg md:text-xl font-semibold ${priceChange >= 0 ? 'text-bull' : 'text-bear'}`}>
                 {priceChange >= 0 ? '+' : ''}{priceChangePct.toFixed(2)}%
               </div>
             </div>
-            <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl hover:shadow-glow-blue transition-all">
-              <div className="text-gray-400 text-sm mb-1">开盘价</div>
-              <div className="text-xl font-semibold text-white">¥{latestData.open.toFixed(2)}</div>
+            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-blue transition-all">
+              <div className="text-gray-400 text-xs md:text-sm mb-1">开盘价</div>
+              <div className="text-lg md:text-xl font-semibold text-white">¥{latestData.open.toFixed(2)}</div>
             </div>
-            <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl hover:shadow-glow-green transition-all">
-              <div className="text-gray-400 text-sm mb-1">最高价</div>
-              <div className="text-xl font-semibold text-bull">¥{latestData.high.toFixed(2)}</div>
+            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-green transition-all">
+              <div className="text-gray-400 text-xs md:text-sm mb-1">最高价</div>
+              <div className="text-lg md:text-xl font-semibold text-bull">¥{latestData.high.toFixed(2)}</div>
             </div>
-            <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl hover:shadow-glow-red transition-all">
-              <div className="text-gray-400 text-sm mb-1">最低价</div>
-              <div className="text-xl font-semibold text-bear">¥{latestData.low.toFixed(2)}</div>
+            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-red transition-all">
+              <div className="text-gray-400 text-xs md:text-sm mb-1">最低价</div>
+              <div className="text-lg md:text-xl font-semibold text-bear">¥{latestData.low.toFixed(2)}</div>
             </div>
-            <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl hover:shadow-glow-blue transition-all">
-              <div className="text-gray-400 text-sm mb-1">成交量</div>
-              <div className="text-xl font-semibold text-accent-cyan">{(latestData.volume / 10000).toFixed(2)}万</div>
+            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-blue transition-all">
+              <div className="text-gray-400 text-xs md:text-sm mb-1">成交量</div>
+              <div className="text-lg md:text-xl font-semibold text-accent-cyan">{(latestData.volume / 10000).toFixed(2)}万</div>
             </div>
           </div>
         )}
 
         {/* K线图 */}
-        <div className="bg-gradient-card border border-border shadow-card p-6 rounded-lg">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-white">K线图</h2>
+        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-lg">
+          <div className="flex items-center justify-between mb-3 md:mb-4">
+            <h2 className="text-lg md:text-xl font-semibold text-white">K线图</h2>
             {updating && (
               <span className="text-xs text-gray-400 animate-pulse">正在同步最新数据...</span>
             )}
           </div>
 
           {/* 指标面板 */}
-          <div className="mb-4">
+          <div className="mb-3 md:mb-4">
             <IndicatorPanel config={indicatorConfig} onChange={setIndicatorConfig} />
           </div>
 
           {data.length > 0 ? (
-            <CandlestickChart
-              data={data}
-              height={500}
-              indicatorConfig={indicatorConfig}
-            />
+            <>
+              {/* 手机端较矮，桌面端较高，用 CSS 切换包裹容器即可，只渲染一个图表实例 */}
+              <div className="h-[350px] md:h-[500px]">
+                <CandlestickChart
+                  data={data}
+                  height={typeof window !== 'undefined' && window.innerWidth < 768 ? 350 : 500}
+                  indicatorConfig={indicatorConfig}
+                />
+              </div>
+            </>
           ) : (
-            <div className="h-96 flex flex-col items-center justify-center gap-3">
+            <div className="h-64 md:h-96 flex flex-col items-center justify-center gap-3">
               {loading ? (
                 <span className="text-gray-400">加载中...</span>
               ) : error ? (
                 <>
-                  <span className="text-red-400">{error}</span>
+                  <span className="text-red-400 text-sm text-center px-4">{error}</span>
                   <button
                     onClick={() => loadData(true)}
                     className="px-4 py-1.5 bg-primary text-white rounded-lg hover:bg-primary-dark transition text-sm"
@@ -233,8 +238,8 @@ export const Market: React.FC = () => {
           )}
         </div>
 
-        {/* 数据表格 */}
-        <div className="bg-gradient-card border border-border shadow-card p-6 rounded-lg">
+        {/* 数据表格 - 桌面端 */}
+        <div className="hidden md:block bg-gradient-card border border-border shadow-card p-6 rounded-lg">
           <h2 className="text-xl font-semibold text-white mb-4">历史数据</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -271,6 +276,33 @@ export const Market: React.FC = () => {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* 数据表格 - 手机端卡片 */}
+        <div className="md:hidden bg-gradient-card border border-border shadow-card p-3 rounded-lg">
+          <h2 className="text-lg font-semibold text-white mb-3">历史数据</h2>
+          <div className="space-y-1.5">
+            {data.slice(-20).reverse().map((item, idx, arr) => {
+              const prevItem = idx < arr.length - 1 ? arr[idx + 1] : null;
+              const change = prevItem ? item.close - prevItem.close : 0;
+              const changePct = prevItem ? (change / prevItem.close) * 100 : 0;
+
+              return (
+                <div key={idx} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-dark-light/50">
+                  <div>
+                    <div className="text-xs text-gray-500">{item.date}</div>
+                    <div className="text-sm font-semibold text-primary-light">¥{item.close.toFixed(2)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className={`text-sm font-medium ${change >= 0 ? 'text-bull' : 'text-bear'}`}>
+                      {change >= 0 ? '+' : ''}{changePct.toFixed(2)}%
+                    </div>
+                    <div className="text-xs text-gray-500">量 {(item.volume / 10000).toFixed(1)}万</div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

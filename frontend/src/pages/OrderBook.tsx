@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 
-const API = 'http://localhost:8000';
+const API = '/api';
 
 // ── 类型定义 ──
 
@@ -177,13 +177,13 @@ export const OrderBook: React.FC = () => {
   // 如果还没有会话，显示创建表单
   if (!sessionId) {
     return (
-      <div className="p-6 max-w-xl mx-auto mt-20">
-        <h1 className="text-2xl font-bold text-white mb-6">订单簿模拟器</h1>
+      <div className="p-3 md:p-6 max-w-xl mx-auto mt-10 md:mt-20 pb-20 md:pb-6">
+        <h1 className="text-2xl md:text-3xl font-bold text-white mb-6">订单簿模拟器</h1>
         <p className="text-gray-400 mb-6">
           创建一个模拟交易会话，体验限价订单簿的撮合逻辑。
           底层由独立的 C++ 服务驱动。
         </p>
-        <div className="space-y-4 bg-dark-card p-6 rounded-xl border border-border">
+        <div className="space-y-4 bg-dark-card p-3 md:p-6 rounded-xl border border-border">
           <div>
             <label className="text-sm text-gray-400">股票代码</label>
             <input value={symbol} onChange={e => setSymbol(e.target.value)}
@@ -212,12 +212,12 @@ export const OrderBook: React.FC = () => {
   }
 
   return (
-    <div className="p-4 h-full flex flex-col gap-4 overflow-auto">
+    <div className="p-3 md:p-4 h-full flex flex-col gap-3 md:gap-4 overflow-auto pb-20 md:pb-4">
       {/* 头部 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-bold text-white">订单簿 — {symbol}</h1>
-          <span className="text-xs text-gray-500 font-mono">session: {sessionId.slice(0, 12)}</span>
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-2 md:gap-4">
+          <h1 className="text-lg md:text-xl font-bold text-white">订单簿 — {symbol}</h1>
+          <span className="text-xs text-gray-500 font-mono hidden md:inline">session: {sessionId.slice(0, 12)}</span>
         </div>
         <button onClick={() => { setSessionId(''); setDepth(null); setFills([]); setStats(null); }}
           className="text-sm text-gray-400 hover:text-white px-3 py-1 border border-border rounded">
@@ -228,10 +228,10 @@ export const OrderBook: React.FC = () => {
       {error && <p className="text-red-400 text-sm bg-red-400/10 px-3 py-2 rounded">{error}</p>}
 
       {/* 主体：三列 */}
-      <div className="flex-1 grid grid-cols-12 gap-4 min-h-0">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 min-h-0">
 
         {/* 左列：买卖盘深度 */}
-        <div className="col-span-5 bg-dark-card rounded-xl border border-border p-4 overflow-auto">
+        <div className="md:col-span-5 bg-dark-card rounded-xl border border-border p-3 md:p-4 overflow-auto">
           <h2 className="text-sm font-medium text-gray-400 mb-3">盘口深度</h2>
 
           {/* 卖盘（从高到低显示，最低价在最下面靠近中间） */}
@@ -276,7 +276,7 @@ export const OrderBook: React.FC = () => {
         </div>
 
         {/* 中列：成交流水 */}
-        <div className="col-span-3 bg-dark-card rounded-xl border border-border p-4 overflow-auto">
+        <div className="md:col-span-3 bg-dark-card rounded-xl border border-border p-3 md:p-4 overflow-auto">
           <h2 className="text-sm font-medium text-gray-400 mb-3">成交流水</h2>
           <div className="space-y-1 text-xs font-mono">
             <div className="flex gap-2 text-gray-500 mb-2">
@@ -298,7 +298,7 @@ export const OrderBook: React.FC = () => {
         </div>
 
         {/* 右列：下单面板 */}
-        <div className="col-span-4 flex flex-col gap-4">
+        <div className="md:col-span-4 flex flex-col gap-3 md:gap-4">
           {/* 下单表单 */}
           <div className="bg-dark-card rounded-xl border border-border p-4">
             <h2 className="text-sm font-medium text-gray-400 mb-3">提交订单</h2>
@@ -378,7 +378,7 @@ export const OrderBook: React.FC = () => {
 
       {/* 底部：市场统计 */}
       {stats && (
-        <div className="bg-dark-card rounded-xl border border-border px-6 py-3 flex items-center gap-8 text-sm">
+        <div className="bg-dark-card rounded-xl border border-border px-3 md:px-6 py-3 flex flex-wrap items-center gap-3 md:gap-8 text-xs md:text-sm">
           <Stat label="价差" value={stats.spread.toFixed(2)} />
           <Stat label="价差(bps)" value={stats.spread_bps.toFixed(1)} />
           <Stat label="买盘深度" value={stats.bid_depth.toLocaleString()} />

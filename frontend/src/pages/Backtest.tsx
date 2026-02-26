@@ -4,7 +4,7 @@ import { backtestService } from '../services/backtestService';
 import type { BacktestTask, BacktestResult } from '../types';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
 
-const API = 'http://localhost:8000';
+const API = '/api';
 
 // ── C++ 回测面板组件 ──
 
@@ -68,10 +68,10 @@ const CppBacktest: React.FC = () => {
   const m = result?.metrics;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       {/* 表单 */}
-      <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-        <h2 className="text-xl font-semibold text-white mb-2">C++ 回测引擎</h2>
+      <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+        <h2 className="text-lg md:text-xl font-semibold text-white mb-2">C++ 回测引擎</h2>
         <p className="text-gray-400 text-sm mb-4">
           使用独立的 C++ 服务运行回测，支持均线交叉和动量两种策略。数据自动从 DataEngine 获取。
         </p>
@@ -167,8 +167,8 @@ const CppBacktest: React.FC = () => {
       {m && (
         <>
           {/* 核心指标 */}
-          <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-            <h2 className="text-xl font-semibold text-white mb-4">
+          <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+            <h2 className="text-lg md:text-xl font-semibold text-white mb-4">
               回测结果 — {result.strategy_name} / {result.symbol}
             </h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -193,7 +193,7 @@ const CppBacktest: React.FC = () => {
 
           {/* 资金曲线 */}
           {result.equity_curve?.length > 0 && (
-            <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
+            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
               <h3 className="text-lg font-semibold text-white mb-4">资产曲线</h3>
               <ResponsiveContainer width="100%" height={350}>
                 <AreaChart data={result.equity_curve} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
@@ -221,11 +221,12 @@ const CppBacktest: React.FC = () => {
 
           {/* 成交记录 */}
           {result.trades?.length > 0 && (
-            <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
+            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
               <h3 className="text-lg font-semibold text-white mb-4">
                 交易记录 ({result.trades.length}笔)
               </h3>
-              <div className="overflow-x-auto rounded-lg border border-border">
+              {/* Desktop table */}
+              <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
                 <table className="w-full text-sm">
                   <thead className="bg-dark-light text-gray-300 border-b border-border">
                     <tr>
@@ -265,6 +266,35 @@ const CppBacktest: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+              {/* Mobile cards */}
+              <div className="md:hidden space-y-2">
+                {result.trades.map((t: any, i: number) => (
+                  <div key={i} className="bg-dark-light rounded-lg p-3 border border-border">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-gray-400">{t.date}</span>
+                      <span className={`px-2 py-0.5 rounded-lg text-xs font-semibold ${
+                        t.side === 'BUY'
+                          ? 'bg-bull/20 text-bull border border-bull/30'
+                          : 'bg-bear/20 text-bear border border-bear/30'
+                      }`}>
+                        {t.side === 'BUY' ? '买入' : '卖出'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">价格</span>
+                      <span className="font-mono text-primary-light">¥{t.price.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">数量</span>
+                      <span className="font-mono text-white">{t.quantity}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">金额</span>
+                      <span className="font-mono text-white">¥{(t.price * t.quantity).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </>
@@ -274,9 +304,9 @@ const CppBacktest: React.FC = () => {
 };
 
 const CppMetricCard: React.FC<{ label: string; value: string; color: string }> = ({ label, value, color }) => (
-  <div className="text-center p-4 bg-dark-light rounded-lg border border-border">
-    <div className="text-gray-400 text-sm mb-1">{label}</div>
-    <div className={`text-2xl font-bold ${color}`}>{value}</div>
+  <div className="text-center p-3 md:p-4 bg-dark-light rounded-lg border border-border">
+    <div className="text-gray-400 text-xs md:text-sm mb-1">{label}</div>
+    <div className={`text-xl md:text-2xl font-bold ${color}`}>{value}</div>
   </div>
 );
 
@@ -393,12 +423,12 @@ export const Backtest: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-dark p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6">
+      <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         {/* 头部 + Tab 切换 */}
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-3xl font-bold text-white">策略回测</h1>
+            <h1 className="text-2xl md:text-3xl font-bold text-white">策略回测</h1>
             <div className="flex bg-dark-card rounded-lg border border-border p-1">
               <button
                 onClick={() => setTab('python')}
@@ -421,7 +451,7 @@ export const Backtest: React.FC = () => {
           {tab === 'python' && (
             <button
               onClick={() => setShowForm(!showForm)}
-              className="px-6 py-3 bg-primary text-white rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all font-semibold"
+              className="px-3 py-1.5 md:px-6 md:py-3 text-sm md:text-base bg-primary text-white rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all font-semibold"
             >
               {showForm ? '取消' : '+ 新建回测'}
             </button>
@@ -437,8 +467,8 @@ export const Backtest: React.FC = () => {
 
         {/* 回测表单 */}
         {showForm && (
-          <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-            <h2 className="text-xl font-semibold text-white mb-4">配置回测任务</h2>
+          <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+            <h2 className="text-lg md:text-xl font-semibold text-white mb-4">配置回测任务</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -553,9 +583,9 @@ export const Backtest: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* 任务列表 */}
           <div className="lg:col-span-1">
-            <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
+            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
               <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-semibold text-white">回测任务</h2>
+                <h2 className="text-lg md:text-xl font-semibold text-white">回测任务</h2>
                 <button
                   onClick={loadTasks}
                   className="text-sm text-primary-light hover:text-primary transition-colors"
@@ -638,37 +668,37 @@ export const Backtest: React.FC = () => {
                 <div className="text-center text-gray-500">加载中...</div>
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-4 md:space-y-6">
                 {/* 统计指标 */}
                 {result.metrics && (
-                  <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-                    <h2 className="text-xl font-semibold text-white mb-4">
+                  <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+                    <h2 className="text-lg md:text-xl font-semibold text-white mb-4">
                       回测结果{result.task_info?.name ? ` - ${result.task_info.name}` : ''}
                     </h2>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      <div className="text-center p-4 bg-dark-light rounded-lg border border-border">
-                        <div className="text-gray-400 text-sm mb-1">总收益率</div>
-                        <div className={`text-2xl font-bold ${
+                      <div className="text-center p-3 md:p-4 bg-dark-light rounded-lg border border-border">
+                        <div className="text-gray-400 text-xs md:text-sm mb-1">总收益率</div>
+                        <div className={`text-xl md:text-2xl font-bold ${
                           (result.metrics.total_return_pct || 0) >= 0 ? 'text-bull' : 'text-bear'
                         }`}>
                           {(result.metrics.total_return_pct || 0).toFixed(2)}%
                         </div>
                       </div>
-                      <div className="text-center p-4 bg-dark-light rounded-lg border border-border">
-                        <div className="text-gray-400 text-sm mb-1">夏普比率</div>
-                        <div className="text-2xl font-bold text-primary-light">
+                      <div className="text-center p-3 md:p-4 bg-dark-light rounded-lg border border-border">
+                        <div className="text-gray-400 text-xs md:text-sm mb-1">夏普比率</div>
+                        <div className="text-xl md:text-2xl font-bold text-primary-light">
                           {(result.metrics.sharpe_ratio || 0).toFixed(2)}
                         </div>
                       </div>
-                      <div className="text-center p-4 bg-dark-light rounded-lg border border-border">
-                        <div className="text-gray-400 text-sm mb-1">最大回撤</div>
-                        <div className="text-2xl font-bold text-bear">
+                      <div className="text-center p-3 md:p-4 bg-dark-light rounded-lg border border-border">
+                        <div className="text-gray-400 text-xs md:text-sm mb-1">最大回撤</div>
+                        <div className="text-xl md:text-2xl font-bold text-bear">
                           {(result.metrics.max_drawdown_pct || 0).toFixed(2)}%
                         </div>
                       </div>
-                      <div className="text-center p-4 bg-dark-light rounded-lg border border-border">
-                        <div className="text-gray-400 text-sm mb-1">胜率</div>
-                        <div className="text-2xl font-bold text-accent-cyan">
+                      <div className="text-center p-3 md:p-4 bg-dark-light rounded-lg border border-border">
+                        <div className="text-gray-400 text-xs md:text-sm mb-1">胜率</div>
+                        <div className="text-xl md:text-2xl font-bold text-accent-cyan">
                           {(result.metrics.win_rate || 0).toFixed(2)}%
                         </div>
                       </div>
@@ -676,27 +706,27 @@ export const Backtest: React.FC = () => {
 
                     {/* 额外指标 */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                      <div className="text-center p-4 bg-dark-light rounded-lg border border-border">
-                        <div className="text-gray-400 text-sm mb-1">总收益</div>
-                        <div className="text-xl font-semibold text-bull">
+                      <div className="text-center p-3 md:p-4 bg-dark-light rounded-lg border border-border">
+                        <div className="text-gray-400 text-xs md:text-sm mb-1">总收益</div>
+                        <div className="text-lg md:text-xl font-semibold text-bull">
                           ¥{(result.metrics.total_return || 0).toLocaleString()}
                         </div>
                       </div>
-                      <div className="text-center p-4 bg-dark-light rounded-lg border border-border">
-                        <div className="text-gray-400 text-sm mb-1">交易次数</div>
-                        <div className="text-xl font-semibold text-white">
+                      <div className="text-center p-3 md:p-4 bg-dark-light rounded-lg border border-border">
+                        <div className="text-gray-400 text-xs md:text-sm mb-1">交易次数</div>
+                        <div className="text-lg md:text-xl font-semibold text-white">
                           {result.metrics.total_trades || 0}笔
                         </div>
                       </div>
-                      <div className="text-center p-4 bg-dark-light rounded-lg border border-border">
-                        <div className="text-gray-400 text-sm mb-1">盈利因子</div>
-                        <div className="text-xl font-semibold text-primary-light">
+                      <div className="text-center p-3 md:p-4 bg-dark-light rounded-lg border border-border">
+                        <div className="text-gray-400 text-xs md:text-sm mb-1">盈利因子</div>
+                        <div className="text-lg md:text-xl font-semibold text-primary-light">
                           {(result.metrics.profit_factor || 0).toFixed(2)}
                         </div>
                       </div>
-                      <div className="text-center p-4 bg-dark-light rounded-lg border border-border">
-                        <div className="text-gray-400 text-sm mb-1">年化收益</div>
-                        <div className="text-xl font-semibold text-accent-cyan">
+                      <div className="text-center p-3 md:p-4 bg-dark-light rounded-lg border border-border">
+                        <div className="text-gray-400 text-xs md:text-sm mb-1">年化收益</div>
+                        <div className="text-lg md:text-xl font-semibold text-accent-cyan">
                           {(result.metrics.annual_return || 0).toFixed(2)}%
                         </div>
                       </div>
@@ -706,8 +736,8 @@ export const Backtest: React.FC = () => {
 
                 {/* 收益曲线 */}
                 {result.daily_records && Array.isArray(result.daily_records) && result.daily_records.length > 0 ? (
-                  <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-                    <h3 className="text-lg font-semibold text-white mb-4">💰 资产曲线</h3>
+                  <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+                    <h3 className="text-lg font-semibold text-white mb-4">资产曲线</h3>
                     <ResponsiveContainer width="100%" height={400}>
                       <LineChart
                         data={result.daily_records}
@@ -745,8 +775,8 @@ export const Backtest: React.FC = () => {
                     </ResponsiveContainer>
                   </div>
                 ) : (
-                  <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-                    <h3 className="text-lg font-semibold text-white mb-4">💰 资产曲线</h3>
+                  <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+                    <h3 className="text-lg font-semibold text-white mb-4">资产曲线</h3>
                     <div className="text-center text-gray-500 py-8">
                       暂无每日数据
                     </div>
@@ -754,49 +784,74 @@ export const Backtest: React.FC = () => {
                 )}
 
                 {/* 交易记录 */}
-                <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
+                <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
                   <h3 className="text-lg font-semibold text-white mb-4">
-                    📝 交易记录 ({result.metrics?.total_trades || 0}笔)
+                    交易记录 ({result.metrics?.total_trades || 0}笔)
                   </h3>
                   {result.trade_records && Array.isArray(result.trade_records) && result.trade_records.length > 0 ? (
-                    <div className="overflow-x-auto rounded-lg border border-border">
-                      <table className="w-full text-sm">
-                        <thead className="bg-dark-light text-gray-300 border-b border-border">
-                          <tr>
-                            <th className="px-4 py-3 text-left">日期</th>
-                            <th className="px-4 py-3 text-left">股票</th>
-                            <th className="px-4 py-3 text-center">方向</th>
-                            <th className="px-4 py-3 text-right">数量</th>
-                            <th className="px-4 py-3 text-right">价格</th>
-                            <th className="px-4 py-3 text-right">金额</th>
-                          </tr>
-                        </thead>
-                        <tbody className="text-gray-300">
-                          {result.trade_records.slice(0, 20).map((trade, idx) => trade && (
-                            <tr key={idx} className="border-b border-border hover:bg-dark-light transition-colors">
-                              <td className="px-4 py-3">{trade.date || '-'}</td>
-                              <td className="px-4 py-3 font-medium text-white">{trade.symbol || '-'}</td>
-                              <td className="px-4 py-3 text-center">
-                                <span className={`px-3 py-1 rounded-lg text-xs font-semibold ${
-                                  trade.action === 'BUY'
-                                    ? 'bg-bull/20 text-bull border border-bull/30'
-                                    : 'bg-bear/20 text-bear border border-bear/30'
-                                }`}>
-                                  {trade.action === 'BUY' ? '买入' : '卖出'}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-right">{trade.quantity || 0}</td>
-                              <td className="px-4 py-3 text-right text-primary-light">
-                                ¥{(trade.price || 0).toFixed(2)}
-                              </td>
-                              <td className="px-4 py-3 text-right">
-                                ¥{(trade.amount || 0).toFixed(2)}
-                              </td>
+                    <>
+                      {/* Desktop table */}
+                      <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
+                        <table className="w-full text-sm">
+                          <thead className="bg-dark-light text-gray-300 border-b border-border">
+                            <tr>
+                              <th className="px-4 py-3 text-left">日期</th>
+                              <th className="px-4 py-3 text-left">股票</th>
+                              <th className="px-4 py-3 text-center">方向</th>
+                              <th className="px-4 py-3 text-right">数量</th>
+                              <th className="px-4 py-3 text-right">价格</th>
+                              <th className="px-4 py-3 text-right">金额</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          </thead>
+                          <tbody className="text-gray-300">
+                            {result.trade_records.slice(0, 20).map((trade, idx) => trade && (
+                              <tr key={idx} className="border-b border-border hover:bg-dark-light transition-colors">
+                                <td className="px-4 py-3">{trade.date || '-'}</td>
+                                <td className="px-4 py-3 font-medium text-white">{trade.symbol || '-'}</td>
+                                <td className="px-4 py-3 text-center">
+                                  <span className={`px-3 py-1 rounded-lg text-xs font-semibold ${
+                                    trade.action === 'BUY'
+                                      ? 'bg-bull/20 text-bull border border-bull/30'
+                                      : 'bg-bear/20 text-bear border border-bear/30'
+                                  }`}>
+                                    {trade.action === 'BUY' ? '买入' : '卖出'}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-right">{trade.quantity || 0}</td>
+                                <td className="px-4 py-3 text-right text-primary-light">
+                                  ¥{(trade.price || 0).toFixed(2)}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  ¥{(trade.amount || 0).toFixed(2)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {/* Mobile cards */}
+                      <div className="md:hidden space-y-2">
+                        {result.trade_records.slice(0, 20).map((trade, idx) => trade && (
+                          <div key={idx} className="bg-dark-light rounded-lg p-3 border border-border">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs text-gray-400">{trade.date || '-'}</span>
+                              <span className={`px-2 py-0.5 rounded-lg text-xs font-semibold ${
+                                trade.action === 'BUY'
+                                  ? 'bg-bull/20 text-bull border border-bull/30'
+                                  : 'bg-bear/20 text-bear border border-bear/30'
+                              }`}>
+                                {trade.action === 'BUY' ? '买入' : '卖出'}
+                              </span>
+                            </div>
+                            <div className="text-sm font-medium text-white mb-1">{trade.symbol || '-'}</div>
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-gray-400">¥{(trade.price || 0).toFixed(2)} x {trade.quantity || 0}</span>
+                              <span className="font-mono text-white">¥{(trade.amount || 0).toFixed(2)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
                   ) : (
                     <div className="text-center text-gray-500 py-8">
                       暂无交易记录详情

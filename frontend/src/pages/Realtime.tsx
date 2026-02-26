@@ -30,6 +30,14 @@ function changeColor(val: number | null): string {
   return 'text-gray-400';
 }
 
+// 涨跌背景色（用于手机端卡片）
+function changeBg(val: number | null): string {
+  if (val === null || val === undefined) return '';
+  if (val > 0) return 'bg-red-500/10';
+  if (val < 0) return 'bg-green-500/10';
+  return '';
+}
+
 // 板块筛选
 type BoardFilter = 'all' | 'sh_main' | 'sz_main' | 'gem' | 'star';
 
@@ -209,22 +217,22 @@ export const Realtime: React.FC = () => {
   }, [filteredQuotes, currentPage]);
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-3 md:p-6 space-y-3 md:space-y-4 pb-20 md:pb-6">
       {/* 标题栏 */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">实时行情</h1>
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <h1 className="text-xl md:text-2xl font-bold text-white">实时行情</h1>
+        <div className="flex items-center gap-2 md:gap-3">
           {loading ? (
             <button
               onClick={cancelFetch}
-              className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+              className="px-3 py-1.5 md:px-5 md:py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors text-sm md:text-base"
             >
               取消获取
             </button>
           ) : (
             <button
               onClick={fetchData}
-              className="px-5 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg font-medium transition-colors"
+              className="px-3 py-1.5 md:px-5 md:py-2 bg-primary hover:bg-primary-dark text-white rounded-lg font-medium transition-colors text-sm md:text-base"
             >
               获取行情
             </button>
@@ -237,12 +245,12 @@ export const Realtime: React.FC = () => {
 
       {/* 进度条 */}
       {progress && (
-        <div className="bg-dark-card rounded-xl p-4 border border-border">
+        <div className="bg-dark-card rounded-xl p-3 md:p-4 border border-border">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-gray-300">{progress.status}</span>
-            <span className="text-sm text-primary font-mono">{progress.percent}%</span>
+            <span className="text-xs md:text-sm text-gray-300">{progress.status}</span>
+            <span className="text-xs md:text-sm text-primary font-mono">{progress.percent}%</span>
           </div>
-          <div className="w-full bg-dark rounded-full h-2.5 overflow-hidden">
+          <div className="w-full bg-dark rounded-full h-2 md:h-2.5 overflow-hidden">
             <div
               className="h-full bg-gradient-to-r from-primary to-blue-400 rounded-full transition-all duration-300 ease-out"
               style={{ width: `${progress.percent}%` }}
@@ -258,21 +266,21 @@ export const Realtime: React.FC = () => {
 
       {/* 大盘指数 */}
       {indices.length > 0 && (
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
           {indices.map(idx => (
-            <div key={idx.code} className="bg-dark-card rounded-xl p-4 border border-border">
-              <div className="text-sm text-gray-400 mb-1">{idx.name}</div>
-              <div className={`text-2xl font-bold ${changeColor(idx.change_pct)}`}>
+            <div key={idx.code} className="bg-dark-card rounded-xl p-3 md:p-4 border border-border">
+              <div className="text-xs md:text-sm text-gray-400 mb-1">{idx.name}</div>
+              <div className={`text-lg md:text-2xl font-bold ${changeColor(idx.change_pct)}`}>
                 {idx.price?.toFixed(2) ?? '-'}
               </div>
-              <div className="flex gap-3 mt-1 text-sm">
+              <div className="flex gap-2 md:gap-3 mt-1 text-xs md:text-sm">
                 <span className={changeColor(idx.change_pct)}>
                   {idx.change_pct != null ? (idx.change_pct > 0 ? '+' : '') + idx.change_pct.toFixed(2) + '%' : '-'}
                 </span>
                 <span className={changeColor(idx.change_amount)}>
                   {idx.change_amount != null ? (idx.change_amount > 0 ? '+' : '') + idx.change_amount.toFixed(2) : '-'}
                 </span>
-                <span className="text-gray-500">
+                <span className="text-gray-500 hidden md:inline">
                   {formatAmount(idx.amount)}
                 </span>
               </div>
@@ -283,88 +291,131 @@ export const Realtime: React.FC = () => {
 
       {/* 市场统计卡片 */}
       {statistics && (
-        <div className="grid grid-cols-5 gap-4">
-          <div className="bg-dark-card rounded-xl p-4 border border-border text-center">
-            <div className="text-sm text-gray-400">上涨</div>
-            <div className="text-2xl font-bold text-red-500">{statistics.up}</div>
+        <div className="grid grid-cols-5 gap-1.5 md:gap-4">
+          <div className="bg-dark-card rounded-xl p-2 md:p-4 border border-border text-center">
+            <div className="text-[10px] md:text-sm text-gray-400">上涨</div>
+            <div className="text-base md:text-2xl font-bold text-red-500">{statistics.up}</div>
           </div>
-          <div className="bg-dark-card rounded-xl p-4 border border-border text-center">
-            <div className="text-sm text-gray-400">下跌</div>
-            <div className="text-2xl font-bold text-green-500">{statistics.down}</div>
+          <div className="bg-dark-card rounded-xl p-2 md:p-4 border border-border text-center">
+            <div className="text-[10px] md:text-sm text-gray-400">下跌</div>
+            <div className="text-base md:text-2xl font-bold text-green-500">{statistics.down}</div>
           </div>
-          <div className="bg-dark-card rounded-xl p-4 border border-border text-center">
-            <div className="text-sm text-gray-400">平盘</div>
-            <div className="text-2xl font-bold text-gray-400">{statistics.flat}</div>
+          <div className="bg-dark-card rounded-xl p-2 md:p-4 border border-border text-center">
+            <div className="text-[10px] md:text-sm text-gray-400">平盘</div>
+            <div className="text-base md:text-2xl font-bold text-gray-400">{statistics.flat}</div>
           </div>
-          <div className="bg-dark-card rounded-xl p-4 border border-border text-center">
-            <div className="text-sm text-gray-400">涨停</div>
-            <div className="text-2xl font-bold text-red-400">{statistics.limit_up}</div>
+          <div className="bg-dark-card rounded-xl p-2 md:p-4 border border-border text-center">
+            <div className="text-[10px] md:text-sm text-gray-400">涨停</div>
+            <div className="text-base md:text-2xl font-bold text-red-400">{statistics.limit_up}</div>
           </div>
-          <div className="bg-dark-card rounded-xl p-4 border border-border text-center">
-            <div className="text-sm text-gray-400">跌停</div>
-            <div className="text-2xl font-bold text-green-400">{statistics.limit_down}</div>
+          <div className="bg-dark-card rounded-xl p-2 md:p-4 border border-border text-center">
+            <div className="text-[10px] md:text-sm text-gray-400">跌停</div>
+            <div className="text-base md:text-2xl font-bold text-green-400">{statistics.limit_down}</div>
           </div>
         </div>
       )}
 
       {/* 筛选工具栏 */}
       {quotes.length > 0 && (
-        <div className="flex items-center gap-4 bg-dark-card rounded-xl p-3 border border-border">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-4 bg-dark-card rounded-xl p-3 border border-border">
           {/* 搜索 */}
           <input
             type="text"
             placeholder="搜索代码或名称..."
             value={search}
             onChange={e => { setSearch(e.target.value); setCurrentPage(1); }}
-            className="px-3 py-2 bg-dark border border-border rounded-lg text-white text-sm w-48 focus:outline-none focus:border-primary"
+            className="px-3 py-2 bg-dark border border-border rounded-lg text-white text-sm w-full md:w-48 focus:outline-none focus:border-primary"
           />
 
-          {/* 板块 */}
-          <div className="flex gap-1">
-            {BOARD_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => { setBoard(opt.value); setCurrentPage(1); }}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
-                  board === opt.value
-                    ? 'bg-primary text-white'
-                    : 'text-gray-400 hover:bg-dark-light hover:text-white'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-
-          {/* 排序 */}
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="text-xs text-gray-500">排序:</span>
-            <select
-              value={sortBy}
-              onChange={e => setSortBy(e.target.value)}
-              className="px-2 py-1.5 bg-dark border border-border rounded-lg text-white text-xs focus:outline-none"
-            >
-              {SORT_OPTIONS.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
+          <div className="flex items-center gap-2 overflow-x-auto">
+            {/* 板块 */}
+            <div className="flex gap-1 flex-shrink-0">
+              {BOARD_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => { setBoard(opt.value); setCurrentPage(1); }}
+                  className={`px-2 md:px-3 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap ${
+                    board === opt.value
+                      ? 'bg-primary text-white'
+                      : 'text-gray-400 hover:bg-dark-light hover:text-white'
+                  }`}
+                >
+                  {opt.label}
+                </button>
               ))}
-            </select>
-            <button
-              onClick={() => setAscending(!ascending)}
-              className="px-2 py-1.5 bg-dark border border-border rounded-lg text-xs text-gray-400 hover:text-white"
-            >
-              {ascending ? '升序' : '降序'}
-            </button>
+            </div>
+
+            {/* 排序 */}
+            <div className="flex items-center gap-1 md:gap-2 ml-auto flex-shrink-0">
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                className="px-2 py-1.5 bg-dark border border-border rounded-lg text-white text-xs focus:outline-none"
+              >
+                {SORT_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setAscending(!ascending)}
+                className="px-2 py-1.5 bg-dark border border-border rounded-lg text-xs text-gray-400 hover:text-white"
+              >
+                {ascending ? '升序' : '降序'}
+              </button>
+            </div>
           </div>
 
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-gray-500 hidden md:inline">
             共 {filteredQuotes.length} 只
           </span>
         </div>
       )}
 
-      {/* 行情列表 */}
+      {/* ===== 手机端：卡片列表 ===== */}
       {quotes.length > 0 && (
-        <div className="bg-dark-card rounded-xl border border-border overflow-hidden">
+        <div className="md:hidden space-y-1.5">
+          {pagedQuotes.map((q, i) => (
+            <div
+              key={q.symbol || i}
+              className={`bg-dark-card rounded-lg p-3 border border-border/50 ${changeBg(q.change_pct)}`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-white font-medium text-sm">{q.name}</span>
+                  <span className="text-gray-500 text-xs ml-2 font-mono">{q.code}</span>
+                </div>
+                <div className="text-right">
+                  <div className={`font-bold text-sm ${changeColor(q.change_pct)}`}>
+                    {q.price?.toFixed(2) ?? '-'}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between mt-1.5">
+                <div className="flex gap-3 text-xs">
+                  <span className="text-gray-500">量 {formatVolume(q.volume)}</span>
+                  <span className="text-gray-500">额 {formatAmount(q.amount)}</span>
+                  {q.turnover != null && (
+                    <span className="text-yellow-400/80">换 {q.turnover.toFixed(1)}%</span>
+                  )}
+                </div>
+                <div className={`text-xs font-medium px-2 py-0.5 rounded ${
+                  (q.change_pct ?? 0) > 0
+                    ? 'bg-red-500/20 text-red-400'
+                    : (q.change_pct ?? 0) < 0
+                    ? 'bg-green-500/20 text-green-400'
+                    : 'bg-gray-500/20 text-gray-400'
+                }`}>
+                  {q.change_pct != null ? (q.change_pct > 0 ? '+' : '') + q.change_pct.toFixed(2) + '%' : '-'}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ===== 桌面端：表格 ===== */}
+      {quotes.length > 0 && (
+        <div className="hidden md:block bg-dark-card rounded-xl border border-border overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -419,7 +470,7 @@ export const Realtime: React.FC = () => {
             </table>
           </div>
 
-          {/* 分页 */}
+          {/* 分页 - 桌面端 */}
           {totalPages > 1 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-border">
               <span className="text-xs text-gray-500">
@@ -433,7 +484,6 @@ export const Realtime: React.FC = () => {
                 >
                   上一页
                 </button>
-                {/* 页码按钮 */}
                 {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
                   let page: number;
                   if (totalPages <= 7) {
@@ -472,11 +522,34 @@ export const Realtime: React.FC = () => {
         </div>
       )}
 
+      {/* 分页 - 手机端简化版 */}
+      {quotes.length > 0 && totalPages > 1 && (
+        <div className="md:hidden flex items-center justify-between bg-dark-card rounded-xl p-3 border border-border">
+          <button
+            onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+            disabled={currentPage === 1}
+            className="px-4 py-2 text-sm rounded-lg bg-dark border border-border text-gray-400 active:text-white disabled:opacity-30"
+          >
+            上一页
+          </button>
+          <span className="text-xs text-gray-500">
+            {currentPage} / {totalPages}
+          </span>
+          <button
+            onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+            disabled={currentPage === totalPages}
+            className="px-4 py-2 text-sm rounded-lg bg-dark border border-border text-gray-400 active:text-white disabled:opacity-30"
+          >
+            下一页
+          </button>
+        </div>
+      )}
+
       {/* 空状态 */}
       {!loading && quotes.length === 0 && (
         <div className="flex flex-col items-center justify-center py-20 text-gray-500">
           <div className="text-6xl mb-4">📊</div>
-          <div className="text-lg mb-2">点击「获取行情」加载当日全市场数据</div>
+          <div className="text-base md:text-lg mb-2">点击「获取行情」加载当日全市场数据</div>
           <div className="text-sm">数据来源：黑洞，一个未知的 Area</div>
         </div>
       )}

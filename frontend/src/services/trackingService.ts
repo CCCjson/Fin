@@ -62,7 +62,7 @@ export interface TrackedSignalsResponse {
   total: number;
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 export interface DataUpdateEvent {
   event: 'start' | 'progress' | 'complete' | 'error';

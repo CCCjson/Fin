@@ -114,9 +114,9 @@ export const SignalTracking: React.FC = () => {
   const strategies = strategyEntries.map(([name]) => name);
 
   const renderMetricCard = (label: string, value: string | number, subLabel?: string, color?: string) => (
-    <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
-      <div className="text-gray-400 text-sm mb-2">{label}</div>
-      <div className={`text-3xl font-bold ${color || 'text-primary-light'}`}>
+    <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+      <div className="text-gray-400 text-xs md:text-sm mb-2">{label}</div>
+      <div className={`text-2xl md:text-3xl font-bold ${color || 'text-primary-light'}`}>
         {value}
       </div>
       {subLabel && <div className="text-xs text-gray-500 mt-1">{subLabel}</div>}
@@ -126,16 +126,16 @@ export const SignalTracking: React.FC = () => {
   const overall = stats?.overall;
 
   return (
-    <div className="min-h-screen bg-gradient-dark p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6">
+      <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold text-white">信号追踪</h1>
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <h1 className="text-2xl md:text-3xl font-bold text-white">信号追踪</h1>
           <div className="flex items-center gap-3">
             <button
               onClick={handleUpdate}
               disabled={updating}
-              className="px-5 py-2 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl hover:from-violet-600 hover:to-purple-700 shadow-lg shadow-violet-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              className="px-3 py-1.5 md:px-5 md:py-2 text-sm md:text-base bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl hover:from-violet-600 hover:to-purple-700 shadow-lg shadow-violet-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {updating ? (
                 <>
@@ -166,7 +166,7 @@ export const SignalTracking: React.FC = () => {
 
         {/* Overview Stats Cards */}
         {overall && (
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {renderMetricCard(
               '总胜率',
               `${overall.win_rate}%`,
@@ -202,8 +202,8 @@ export const SignalTracking: React.FC = () => {
 
         {/* Strategy Comparison Table */}
         {strategyEntries.length > 0 && (
-          <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-            <h2 className="text-xl font-semibold text-white mb-4">策略对比</h2>
+          <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+            <h2 className="text-lg md:text-xl font-semibold text-white mb-4">策略对比</h2>
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">
                 <thead className="bg-dark-light text-gray-300 border-b border-border">
@@ -259,8 +259,8 @@ export const SignalTracking: React.FC = () => {
         )}
 
         {/* Filters */}
-        <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">策略</label>
               <select
@@ -326,16 +326,17 @@ export const SignalTracking: React.FC = () => {
         </div>
 
         {/* Signal Detail Table */}
-        <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
+        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-white">追踪明细</h2>
+            <h2 className="text-lg md:text-xl font-semibold text-white">追踪明细</h2>
             {totalSignals > 0 && (
               <span className="text-sm text-gray-400">
                 共 <span className="text-white font-medium">{totalSignals}</span> 条
               </span>
             )}
           </div>
-          <div className="overflow-x-auto rounded-lg border border-border">
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead className="bg-dark-light text-gray-300 border-b border-border">
                 <tr>
@@ -414,6 +415,55 @@ export const SignalTracking: React.FC = () => {
                 )}
               </tbody>
             </table>
+          </div>
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-2">
+            {signals.length === 0 ? (
+              <div className="text-center text-gray-500 py-8">
+                {loading ? '加载中...' : '暂无追踪数据，点击"更新追踪"开始'}
+              </div>
+            ) : (
+              signals.map((s) => (
+                <div key={s.id} className="bg-dark-light rounded-lg p-3 border border-border">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-white text-sm">{s.name}</span>
+                      <span className={`px-2 py-0.5 rounded-lg text-xs font-semibold ${
+                        s.signal_type === 'BUY'
+                          ? 'bg-bull/20 text-bull border border-bull/30'
+                          : 'bg-bear/20 text-bear border border-bear/30'
+                      }`}>
+                        {s.signal_type === 'BUY' ? '买' : '卖'}
+                      </span>
+                    </div>
+                    {getOutcomeBadge(s.outcome)}
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
+                    <span>{s.signal_date}</span>
+                    <span className="text-accent-purple">{s.strategy || '-'}</span>
+                    <span className="text-primary-light">{s.signal_price.toFixed(2)}</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-xs">
+                    <div className="text-center">
+                      <div className="text-gray-500">5日</div>
+                      <div className={`font-medium ${getReturnColor(s.return_5d)}`}>{formatReturn(s.return_5d)}</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-gray-500">10日</div>
+                      <div className={`font-medium ${getReturnColor(s.return_10d)}`}>{formatReturn(s.return_10d)}</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-gray-500">浮盈</div>
+                      <div className="text-bull">{s.max_gain !== null ? `+${s.max_gain.toFixed(1)}%` : '-'}</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-gray-500">浮亏</div>
+                      <div className="text-bear">{s.max_loss !== null ? `${s.max_loss.toFixed(1)}%` : '-'}</div>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
           {/* Pagination */}

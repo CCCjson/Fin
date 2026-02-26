@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 
-const API = 'http://localhost:8000';
+const API = '/api';
 
 // ── 类型 ──
 
@@ -113,19 +113,19 @@ export const DataPipeline: React.FC = () => {
   const successCount = progress ? progress.done - progress.failed : 0;
 
   return (
-    <div className="p-4 h-full flex flex-col gap-4 overflow-auto">
+    <div className="p-3 md:p-4 h-full flex flex-col gap-3 md:gap-4 overflow-auto pb-20 md:pb-4">
 
       {/* ── 顶栏 ── */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-2 md:gap-4">
           <div>
-            <h1 className="text-xl font-bold text-white">数据管道</h1>
+            <h1 className="text-lg md:text-xl font-bold text-white">数据管道</h1>
             <p className="text-gray-500 text-xs mt-0.5">C++ 多线程 · EastMoney API · SQLite WAL</p>
           </div>
           <button
             onClick={handleUpdateToday}
             disabled={loading || isRunning}
-            className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+            className="px-3 py-1.5 md:px-4 md:py-2 text-sm bg-green-600 hover:bg-green-500 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -134,7 +134,7 @@ export const DataPipeline: React.FC = () => {
           </button>
         </div>
         {globalStats && (
-          <div className="flex items-center gap-5 text-sm">
+          <div className="flex items-center gap-3 md:gap-5 text-xs md:text-sm">
             <Stat label="累计请求" value={globalStats.total_requests.toLocaleString()} />
             <Stat label="累计写入" value={globalStats.total_rows_written.toLocaleString()} />
             <Stat label="运行时长" value={formatDuration(globalStats.uptime_seconds)} />
@@ -147,10 +147,10 @@ export const DataPipeline: React.FC = () => {
       )}
 
       {/* ── 主体两列 ── */}
-      <div className="flex-1 grid grid-cols-12 gap-4 min-h-0">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 min-h-0">
 
         {/* 左列：配置面板 */}
-        <div className="col-span-4 bg-dark-card rounded-xl border border-border p-4 flex flex-col">
+        <div className="md:col-span-4 bg-dark-card rounded-xl border border-border p-3 md:p-4 flex flex-col">
           <h2 className="text-sm font-medium text-gray-400 mb-4">抓取配置</h2>
 
           <div className="space-y-3 flex-1">
@@ -223,10 +223,10 @@ export const DataPipeline: React.FC = () => {
         </div>
 
         {/* 右列：任务进度 */}
-        <div className="col-span-8 flex flex-col gap-4">
+        <div className="md:col-span-8 flex flex-col gap-3 md:gap-4">
 
           {/* 进度卡片 */}
-          <div className="bg-dark-card rounded-xl border border-border p-4 flex-1">
+          <div className="bg-dark-card rounded-xl border border-border p-3 md:p-4 flex-1">
             {!progress ? (
               <div className="h-full flex flex-col items-center justify-center text-gray-600">
                 <svg className="w-12 h-12 mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -249,7 +249,7 @@ export const DataPipeline: React.FC = () => {
                 {/* 进度条 */}
                 <div className="mb-5">
                   <div className="flex items-baseline justify-between mb-2">
-                    <span className="text-2xl font-bold text-white font-mono">{progressPct}%</span>
+                    <span className="text-xl md:text-2xl font-bold text-white font-mono">{progressPct}%</span>
                     <span className="text-sm text-gray-500">
                       {progress.done} / {progress.total} 只股票
                     </span>
@@ -268,7 +268,7 @@ export const DataPipeline: React.FC = () => {
                 </div>
 
                 {/* 指标网格 */}
-                <div className={`grid grid-cols-3 ${progress.proxy_switches != null ? 'md:grid-cols-7' : 'md:grid-cols-6'} gap-3`}>
+                <div className={`grid grid-cols-2 md:grid-cols-3 ${progress.proxy_switches != null ? 'lg:grid-cols-7' : 'lg:grid-cols-6'} gap-2 md:gap-3`}>
                   <MetricCard
                     label="当前" icon=">"
                     value={progress.current_symbol || '-'}
@@ -318,7 +318,7 @@ export const DataPipeline: React.FC = () => {
 
           {/* 底部统计条 */}
           {globalStats && (
-            <div className="bg-dark-card rounded-xl border border-border px-5 py-3 flex items-center gap-6 text-sm">
+            <div className="bg-dark-card rounded-xl border border-border px-3 md:px-5 py-3 flex flex-wrap items-center gap-3 md:gap-6 text-xs md:text-sm">
               <Stat label="平均速度" value={`${globalStats.avg_speed.toFixed(2)} 只/秒`} color="text-blue-400" />
               <Stat label="错误率" value={
                 globalStats.total_requests > 0

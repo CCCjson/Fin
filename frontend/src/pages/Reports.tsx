@@ -369,21 +369,21 @@ export const Reports: React.FC = () => {
   /* ==================== 列表视图 ==================== */
   if (view === 'list') {
     return (
-      <div className="min-h-screen bg-gradient-dark p-6">
-        <div className="max-w-5xl mx-auto space-y-6">
+      <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6">
+        <div className="max-w-5xl mx-auto space-y-4 md:space-y-6">
           {/* 头部 */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-400 to-purple-300 bg-clip-text text-transparent">
+              <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-violet-400 to-purple-300 bg-clip-text text-transparent">
                 AI 分析报告
               </h1>
               <p className="text-gray-500 text-sm mt-1">基于量化数据的智能投资分析</p>
             </div>
             <button
               onClick={handleGenerate}
-              className="group relative px-6 py-2.5 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl
+              className="group relative px-3 py-1.5 md:px-6 md:py-2.5 text-sm md:text-base bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl
                 hover:from-violet-600 hover:to-purple-700 shadow-lg shadow-purple-500/25
-                hover:shadow-purple-500/40 transition-all duration-300 flex items-center gap-2.5 font-medium"
+                hover:shadow-purple-500/40 transition-all duration-300 flex items-center gap-2.5 font-medium w-fit"
             >
               <svg className="h-5 w-5 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -393,7 +393,7 @@ export const Reports: React.FC = () => {
           </div>
 
           {/* 配置卡片 */}
-          <div className="bg-gradient-card border border-border shadow-card p-5 rounded-2xl">
+          <div className="bg-gradient-card border border-border shadow-card p-3 md:p-5 rounded-2xl">
             <div className="flex items-center gap-2 mb-4">
               <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -401,7 +401,7 @@ export const Reports: React.FC = () => {
               </svg>
               <span className="text-sm font-medium text-gray-400">报告配置</span>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wider">报告类型</label>
                 <select
@@ -441,7 +441,7 @@ export const Reports: React.FC = () => {
           {/* 报告列表 */}
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white">
+              <h2 className="text-lg md:text-xl font-semibold text-white">
                 历史报告
                 {totalReports > 0 && <span className="text-sm text-gray-500 font-normal ml-2">({totalReports})</span>}
               </h2>
@@ -467,7 +467,7 @@ export const Reports: React.FC = () => {
                   <div
                     key={r.report_id}
                     onClick={() => handleViewReport(r.report_id)}
-                    className="group bg-gradient-card border border-border rounded-2xl p-5
+                    className="group bg-gradient-card border border-border rounded-2xl p-3 md:p-5
                       hover:border-violet-500/30 hover:shadow-lg hover:shadow-violet-500/5
                       transition-all duration-300 cursor-pointer"
                   >
@@ -550,8 +550,8 @@ export const Reports: React.FC = () => {
 
   /* ==================== 查看 / 生成视图 ==================== */
   return (
-    <div className="min-h-screen bg-gradient-dark p-6">
-      <div className="max-w-4xl mx-auto space-y-5">
+    <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6">
+      <div className="max-w-4xl mx-auto space-y-4 md:space-y-5">
         {/* 顶部栏 */}
         <div className="flex items-center justify-between">
           <button
@@ -607,10 +607,10 @@ export const Reports: React.FC = () => {
         <div className="bg-gradient-card border border-border rounded-2xl overflow-hidden">
           {/* 渐变顶部条 */}
           <div className="h-1 bg-gradient-to-r from-violet-500 via-purple-500 to-accent-cyan" />
-          <div className="p-5">
-            <div className="flex items-start justify-between">
+          <div className="p-3 md:p-5">
+            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
               <div className="flex-1">
-                <h1 className="text-xl font-bold text-white mb-2">
+                <h1 className="text-lg md:text-xl font-bold text-white mb-2">
                   {displayTitle || (generating ? '正在生成报告...' : '加载中...')}
                 </h1>
                 <div className="flex items-center gap-4 text-sm text-gray-500">
@@ -701,7 +701,7 @@ export const Reports: React.FC = () => {
               </div>
 
               {/* 当前章节内容 */}
-              <div className="px-8 py-10 sm:px-10 sm:py-12">
+              <div className="px-4 py-6 md:px-8 md:py-10">
                 {currentChapter ? (
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                     {currentChapter.content}
@@ -746,7 +746,7 @@ export const Reports: React.FC = () => {
               </div>
             </>
           ) : (
-            <div className="px-8 py-10 sm:px-10 sm:py-12">
+            <div className="px-4 py-6 md:px-8 md:py-10">
               {!generating && !error && view === 'view' && !currentReport ? (
                 <div className="text-center py-16 text-gray-500">
                   <svg className="animate-spin h-8 w-8 mx-auto mb-3 text-gray-600" viewBox="0 0 24 24">

@@ -361,34 +361,34 @@ export const Portfolio: React.FC = () => {
   // ==================== RENDER ====================
 
   const renderStatCard = (label: string, value: string | number, sub?: string, color?: string) => (
-    <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
-      <div className="text-gray-400 text-sm mb-2">{label}</div>
-      <div className={`text-2xl font-bold ${color || 'text-primary-light'}`}>{value}</div>
+    <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+      <div className="text-gray-400 text-xs md:text-sm mb-2">{label}</div>
+      <div className={`text-xl md:text-2xl font-bold ${color || 'text-primary-light'}`}>{value}</div>
       {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-gradient-dark p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6">
+      <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold text-white">交易记录</h1>
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <h1 className="text-2xl md:text-3xl font-bold text-white">交易记录</h1>
           <div className="flex items-center gap-3">
             <button
               onClick={openImportModal}
-              className="px-5 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl hover:from-amber-600 hover:to-orange-700 shadow-lg shadow-amber-500/25 transition-all flex items-center gap-2"
+              className="px-3 py-1.5 md:px-5 md:py-2 text-sm md:text-base bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl hover:from-amber-600 hover:to-orange-700 shadow-lg shadow-amber-500/25 transition-all flex items-center gap-2"
             >
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="h-4 w-4 md:h-5 md:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
               从报告导入
             </button>
             <button
               onClick={() => openTradeModal()}
-              className="px-5 py-2 bg-gradient-to-r from-primary to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 shadow-lg shadow-primary/25 transition-all flex items-center gap-2"
+              className="px-3 py-1.5 md:px-5 md:py-2 text-sm md:text-base bg-gradient-to-r from-primary to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 shadow-lg shadow-primary/25 transition-all flex items-center gap-2"
             >
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="h-4 w-4 md:h-5 md:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
               录入交易
@@ -398,11 +398,11 @@ export const Portfolio: React.FC = () => {
 
         {/* Stats Cards */}
         {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {/* 总资金卡片（可编辑） */}
-            <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-gray-400 text-sm">总资金</span>
+                <span className="text-gray-400 text-xs md:text-sm">总资金</span>
                 <button
                   onClick={() => {
                     setCapitalInput(String(totalCapital));
@@ -438,7 +438,7 @@ export const Portfolio: React.FC = () => {
                   </button>
                 </div>
               ) : (
-                <div className="text-2xl font-bold text-primary-light">{formatMoney(totalCapital)}</div>
+                <div className="text-xl md:text-2xl font-bold text-primary-light">{formatMoney(totalCapital)}</div>
               )}
               <div className="text-xs text-gray-500 mt-1">
                 仓位: {stats.current_value > 0 && totalCapital > 0
@@ -452,9 +452,9 @@ export const Portfolio: React.FC = () => {
               formatMoney(stats.current_value),
               `持仓成本: ${formatMoney(stats.total_cost_holding)}`,
             )}
-            <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
-              <div className="text-gray-400 text-sm mb-2">总盈亏</div>
-              <div className={`text-2xl font-bold ${pnlColor(stats.total_pnl)}`}>
+            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+              <div className="text-gray-400 text-xs md:text-sm mb-2">总盈亏</div>
+              <div className={`text-xl md:text-2xl font-bold ${pnlColor(stats.total_pnl)}`}>
                 {stats.total_pnl >= 0 ? '+' : ''}{formatMoney(stats.total_pnl)}
               </div>
               <div className={`text-sm font-medium mt-0.5 ${pnlColor(stats.total_pnl_pct)}`}>
@@ -481,9 +481,10 @@ export const Portfolio: React.FC = () => {
         )}
 
         {/* Current Positions */}
-        <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
-          <h2 className="text-xl font-semibold text-white mb-4">当前持仓</h2>
-          <div className="overflow-x-auto rounded-lg border border-border">
+        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+          <h2 className="text-lg md:text-xl font-semibold text-white mb-4">当前持仓</h2>
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead className="bg-dark-light text-gray-300 border-b border-border">
                 <tr>
@@ -539,10 +540,63 @@ export const Portfolio: React.FC = () => {
               </tbody>
             </table>
           </div>
+          {/* Mobile card view for positions */}
+          <div className="md:hidden space-y-3">
+            {positions.length === 0 ? (
+              <div className="text-center text-gray-500 py-8">暂无持仓</div>
+            ) : (
+              positions.map(pos => (
+                <div key={pos.symbol} className="bg-dark-light rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <span className="font-medium text-white">{pos.name}</span>
+                      <span className="text-xs text-gray-500 ml-2">{pos.symbol}</span>
+                    </div>
+                    <button
+                      onClick={() => openTradeModal({ symbol: pos.symbol, name: pos.name, side: 'SELL' })}
+                      className="px-3 py-1 text-xs bg-bear/20 text-bear border border-bear/30 rounded-lg hover:bg-bear/30 transition-all"
+                    >
+                      卖出
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">持股</span>
+                      <span className="text-gray-300">{pos.quantity.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">现价</span>
+                      <span className="text-primary-light">{pos.current_price !== null ? pos.current_price.toFixed(2) : '-'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">均价</span>
+                      <span className="text-gray-300">{pos.avg_cost.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">浮盈亏</span>
+                      <span className={`font-medium ${pnlColor(pos.unrealized_pnl)}`}>
+                        {pos.unrealized_pnl !== null ? `${pos.unrealized_pnl >= 0 ? '+' : ''}${formatMoney(pos.unrealized_pnl)}` : '-'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">市值</span>
+                      <span className="text-gray-300">{formatMoney(pos.market_value)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">盈亏%</span>
+                      <span className={`font-medium ${pnlColor(pos.unrealized_pnl_pct)}`}>
+                        {formatPct(pos.unrealized_pnl_pct)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         {/* Filters */}
-        <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
+        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">股票代码</label>
@@ -595,16 +649,17 @@ export const Portfolio: React.FC = () => {
         </div>
 
         {/* Trade History Table */}
-        <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl">
+        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-white">交易记录</h2>
+            <h2 className="text-lg md:text-xl font-semibold text-white">交易记录</h2>
             {totalTrades > 0 && (
               <span className="text-sm text-gray-400">
                 共 <span className="text-white font-medium">{totalTrades}</span> 条
               </span>
             )}
           </div>
-          <div className="overflow-x-auto rounded-lg border border-border">
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead className="bg-dark-light text-gray-300 border-b border-border">
                 <tr>
@@ -699,14 +754,110 @@ export const Portfolio: React.FC = () => {
               </tbody>
             </table>
           </div>
+          {/* Mobile card view for trades */}
+          <div className="md:hidden space-y-3">
+            {trades.length === 0 ? (
+              <div className="text-center text-gray-500 py-8">
+                {loading ? '加载中...' : '暂无交易记录'}
+              </div>
+            ) : (
+              trades.map(t => {
+                const priceDiff = t.ai_recommended_price != null
+                  ? (t.side === 'BUY'
+                      ? t.price - t.ai_recommended_price
+                      : t.ai_recommended_price - t.price)
+                  : null;
+                return (
+                  <div key={t.id} className="bg-dark-light rounded-lg border border-border p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-lg text-xs font-semibold ${
+                          t.side === 'BUY'
+                            ? 'bg-bull/20 text-bull border border-bull/30'
+                            : 'bg-bear/20 text-bear border border-bear/30'
+                        }`}>
+                          {t.side === 'BUY' ? '买入' : '卖出'}
+                        </span>
+                        <span className="font-medium text-white">{t.name || t.symbol}</span>
+                        {t.name && <span className="text-xs text-gray-500">{t.symbol}</span>}
+                      </div>
+                      <span className="text-xs text-gray-500">{t.trade_date}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">价格</span>
+                        <span className="text-gray-300">{t.price.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">数量</span>
+                        <span className="text-gray-300">{t.quantity.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">金额</span>
+                        <span className="text-gray-300">{formatMoney(t.amount)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">佣金</span>
+                        <span className="text-gray-400">{t.commission > 0 ? formatMoney(t.commission) : '-'}</span>
+                      </div>
+                      {t.ai_recommended_price != null && (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">AI价</span>
+                            <span className="text-accent-cyan">{t.ai_recommended_price.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">差价</span>
+                            <span className={`font-medium ${
+                              priceDiff === null ? 'text-gray-500'
+                                : priceDiff < 0 ? 'text-bull'
+                                : priceDiff > 0 ? 'text-bear'
+                                : 'text-gray-400'
+                            }`}>
+                              {priceDiff !== null ? `${priceDiff >= 0 ? '+' : ''}${priceDiff.toFixed(2)}` : '-'}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                      {t.ai_composite_score != null && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">AI评分</span>
+                          <span className="text-accent-purple font-medium">{t.ai_composite_score.toFixed(1)}</span>
+                        </div>
+                      )}
+                    </div>
+                    {t.note && (
+                      <div className="text-xs text-gray-400 mt-2 truncate" title={t.note}>
+                        备注: {t.note}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-border">
+                      <button
+                        onClick={() => openEditModal(t)}
+                        className="px-3 py-1 text-xs bg-dark text-gray-300 border border-border rounded-lg hover:bg-border transition-all"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTrade(t.id)}
+                        className="px-3 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-all"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
 
           {/* Pagination */}
           {totalTrades > pageSize && (
-            <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
+            <div className="flex flex-col md:flex-row items-center justify-between mt-4 pt-4 border-t border-border gap-2">
               <span className="text-sm text-gray-400">
                 第 {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalTrades)} 条，共 {totalTrades} 条
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 md:gap-2 flex-wrap justify-center">
                 <button onClick={() => handlePageChange(1)} disabled={page === 1 || loading} className="px-3 py-1.5 text-sm bg-dark-light text-gray-300 rounded-lg border border-border hover:bg-border disabled:opacity-30 disabled:cursor-not-allowed transition-all">首页</button>
                 <button onClick={() => handlePageChange(page - 1)} disabled={page === 1 || loading} className="px-3 py-1.5 text-sm bg-dark-light text-gray-300 rounded-lg border border-border hover:bg-border disabled:opacity-30 disabled:cursor-not-allowed transition-all">上一页</button>
                 {(() => {
@@ -744,9 +895,9 @@ export const Portfolio: React.FC = () => {
       {/* ==================== Trade Modal ==================== */}
       {showTradeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-dark-card border border-border rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-bold text-white">
+          <div className="bg-dark-card border border-border rounded-2xl shadow-2xl w-full max-w-full md:max-w-lg mx-2 md:mx-4 p-4 md:p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4 md:mb-6">
+              <h3 className="text-lg md:text-xl font-bold text-white">
                 {editingTrade ? '编辑交易' : '录入交易'}
               </h3>
               <button onClick={() => setShowTradeModal(false)} className="text-gray-400 hover:text-white transition-colors">
@@ -910,9 +1061,9 @@ export const Portfolio: React.FC = () => {
       {/* ==================== Import Modal ==================== */}
       {showImportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-dark-card border border-border rounded-2xl shadow-2xl w-full max-w-2xl mx-4 p-6 max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-bold text-white">
+          <div className="bg-dark-card border border-border rounded-2xl shadow-2xl w-full max-w-full md:max-w-2xl mx-2 md:mx-4 p-4 md:p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4 md:mb-6">
+              <h3 className="text-lg md:text-xl font-bold text-white">
                 从 AI 报告导入交易
                 <span className="text-sm text-gray-400 ml-2">步骤 {importStep}/3</span>
               </h3>
