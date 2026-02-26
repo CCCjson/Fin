@@ -1,9 +1,9 @@
 """
 数据库连接管理模块
 """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, scoped_session, declarative_base
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 import os
 from pathlib import Path
 
@@ -20,13 +20,22 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_DEFAULT_DB}")
 # 确保数据目录存在
 _DEFAULT_DB.parent.mkdir(parents=True, exist_ok=True)
 
-# 创建引擎
+# 创建引擎（NullPool：每个 session 独立连接，彻底隔离并发写入冲突）
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
-    poolclass=StaticPool if "sqlite" in DATABASE_URL else None,
+    poolclass=NullPool if "sqlite" in DATABASE_URL else None,
     echo=False  # 设为 True 可以看到 SQL 语句
 )
+
+# SQLite 专用：开启 WAL 模式 + 等待锁超时 30s，允许多线程并发读写
+if "sqlite" in DATABASE_URL:
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragmas(dbapi_conn, _):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=30000")
+        cur.close()
 
 # 创建会话工厂
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

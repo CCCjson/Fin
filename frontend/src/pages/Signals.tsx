@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { signalService } from '../services/signalService';
-import type { ScanProgressEvent, DataFreshness } from '../services/signalService';
+import type { ScanProgressEvent, DataFreshness, TodayStatus } from '../services/signalService';
 import type { Signal, SignalStatistics } from '../types';
 
 interface ScanProgress {
@@ -36,6 +36,7 @@ export const Signals: React.FC = () => {
   const [freshness, setFreshness] = useState<DataFreshness | null>(null);
   const [showStaleAlert, setShowStaleAlert] = useState(false);
   const [checkingFreshness, setCheckingFreshness] = useState(false);
+  const [todayStatus, setTodayStatus] = useState<TodayStatus | null>(null);
 
   useEffect(() => {
     loadData();
@@ -91,6 +92,7 @@ export const Signals: React.FC = () => {
     try {
       setCheckingFreshness(true);
       setScanResult(null);
+      setTodayStatus(null);
       const data = await signalService.getDataFreshness();
       setFreshness(data);
       if (data.is_stale) {
@@ -98,7 +100,14 @@ export const Signals: React.FC = () => {
         setShowStaleAlert(true);
         return;
       }
-      // 数据新鲜，直接用 db_only 模式扫描
+      // 数据新鲜，检查今日是否已生成信号（防重复扫描）
+      const status = await signalService.getTodayStatus();
+      setTodayStatus(status);
+      if (status.has_today_signals) {
+        setScanResult(`今日信号已生成（${status.signal_count} 个），无需重复扫描`);
+        return;
+      }
+      // 今日尚无信号，执行扫描
       await startScan(true);
     } catch (error) {
       console.error('Failed to check data freshness:', error);
@@ -332,7 +341,13 @@ export const Signals: React.FC = () => {
 
         {/* 扫描结果提示 */}
         {scanResult && (
-          <div className={`p-4 rounded-xl border ${scanResult.includes('失败') || scanResult.includes('取消') ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-green-500/10 border-green-500/30 text-green-400'}`}>
+          <div className={`p-4 rounded-xl border ${
+            scanResult.includes('失败') || scanResult.includes('取消')
+              ? 'bg-red-500/10 border-red-500/30 text-red-400'
+              : scanResult.includes('无需重复')
+              ? 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+              : 'bg-green-500/10 border-green-500/30 text-green-400'
+          }`}>
             {scanResult}
           </div>
         )}

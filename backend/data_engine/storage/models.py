@@ -443,6 +443,54 @@ class DailyReview(Base):
         return f"<DailyReview(date={self.review_date}, composite={self.composite_score})>"
 
 
+class PredictionRecord(Base):
+    """股价预测记录表"""
+    __tablename__ = "prediction_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    prediction_date = Column(Date, nullable=False, index=True)
+    target_date = Column(Date, index=True)
+    forward_days = Column(Integer, default=5)
+    direction = Column(String(10))               # UP / DOWN
+    confidence = Column(Float)                   # 0~1
+    predicted_prices = Column(Text)              # JSON: [p1, p2, ..., pN]
+    predicted_return = Column(Float)
+    lstm_detail = Column(Text)                   # JSON
+    xgb_detail = Column(Text)                    # JSON
+    actual_prices = Column(Text)                 # JSON: 回填实际价格
+    actual_return = Column(Float)
+    outcome = Column(String(10))                 # WIN / LOSS
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_pred_symbol_date', 'symbol', 'prediction_date'),
+    )
+
+    def __repr__(self):
+        return f"<PredictionRecord(symbol={self.symbol}, date={self.prediction_date}, dir={self.direction})>"
+
+
+class TrainedModelRecord(Base):
+    """训练模型记录表"""
+    __tablename__ = "trained_models"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    model_type = Column(String(20))              # lstm / xgboost / ensemble
+    train_period = Column(String(20))
+    data_points = Column(Integer)
+    train_start = Column(Date)
+    train_end = Column(Date)
+    val_metrics = Column(Text)                   # JSON
+    model_path = Column(String(500))
+    status = Column(String(20), default="ready") # ready / training / failed
+    created_at = Column(DateTime, server_default=func.now())
+
+    def __repr__(self):
+        return f"<TrainedModelRecord(symbol={self.symbol}, type={self.model_type}, status={self.status})>"
+
+
 class UserSettings(Base):
     """用户设置表（键值对存储）"""
     __tablename__ = "user_settings"

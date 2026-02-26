@@ -12,7 +12,7 @@ from sqlalchemy import func
 
 from strategy.signal_generator import SignalGenerator
 from data_engine.storage.database import get_session
-from data_engine.storage.models import DailyQuote
+from data_engine.storage.models import DailyQuote, Signal
 
 router = APIRouter(prefix="/signals", tags=["信号生成"])
 
@@ -74,6 +74,32 @@ async def get_data_freshness():
         }
     except Exception as e:
         logger.error(f"查询数据新鲜度失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/today-status", summary="查询今日信号是否已生成")
+async def get_today_status():
+    """
+    查询今日是否已有信号记录，用于前端防止重复扫描。
+
+    返回:
+    - has_today_signals: 今日是否已有信号
+    - signal_count: 今日信号数量
+    - signal_date: 查询的日期
+    """
+    try:
+        today = date.today()
+        session = get_session()
+        count = session.query(func.count(Signal.id)).filter(Signal.date == today).scalar() or 0
+        session.close()
+
+        return {
+            "has_today_signals": count > 0,
+            "signal_count": count,
+            "signal_date": today.isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"查询今日信号状态失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

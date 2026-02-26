@@ -15,6 +15,12 @@ export interface DataFreshness {
   is_stale: boolean;
 }
 
+export interface TodayStatus {
+  has_today_signals: boolean;
+  signal_count: number;
+  signal_date: string;
+}
+
 export interface ScanMarketResult {
   total_signals: number;
   buy_signals: number;
@@ -54,6 +60,11 @@ export const signalService = {
   // 查询数据新鲜度
   getDataFreshness: async (): Promise<DataFreshness> => {
     return api.get('/signals/data-freshness');
+  },
+
+  // 查询今日信号是否已生成（防重复扫描）
+  getTodayStatus: async (): Promise<TodayStatus> => {
+    return api.get('/signals/today-status');
   },
 
   // 获取信号列表

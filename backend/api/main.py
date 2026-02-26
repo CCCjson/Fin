@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data_engine import init_db
-from api.routes import data, analysis, backtest, trading, monitor, history, signal_generation, realtime, report, tracking, portfolio, review, advisor, orderbook, backtest_cpp, pipeline
+from api.routes import data, analysis, backtest, trading, monitor, history, signal_generation, realtime, report, tracking, portfolio, review, advisor, orderbook, backtest_cpp, pipeline, prediction
 
 # 初始化数据库
 init_db()
@@ -50,6 +50,7 @@ app.include_router(advisor.router)
 app.include_router(orderbook.router)
 app.include_router(backtest_cpp.router)
 app.include_router(pipeline.router)
+app.include_router(prediction.router)
 
 
 # 全局异常处理
