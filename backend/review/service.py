@@ -4,6 +4,7 @@
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -63,6 +64,33 @@ BEGINNER_TEMPLATE = """## 今日复盘
 """
 
 
+def _get_proxy_manager():
+    """延迟导入并创建 ProxyManager"""
+    try:
+        import sys
+        scripts_dir = str(Path(__file__).resolve().parent.parent / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from proxy_manager import ProxyManager
+        return ProxyManager()
+    except Exception as e:
+        logger.debug(f"无法创建 ProxyManager: {e}")
+        return None
+
+
+def _make_session(proxies=None):
+    """创建 requests.Session，绕过系统代理，只用显式传入的快代理"""
+    s = requests.Session()
+    s.trust_env = False  # 绕过 Clash 等系统代理
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Referer": "https://finance.eastmoney.com/",
+    })
+    if proxies:
+        s.proxies.update(proxies)
+    return s
+
+
 class ReviewService:
     """每日复盘服务"""
 
@@ -76,7 +104,8 @@ class ReviewService:
         session = get_session()
         try:
             # 1. 大盘指数
-            indices = self._get_indices(session, review_date)
+            indices_data = self._get_indices(session, review_date)
+            indices = indices_data["items"]
 
             # 2. 持仓当日表现
             positions = self._get_positions_daily(session, review_date)
@@ -90,6 +119,18 @@ class ReviewService:
 
             # 5. 当日盈亏汇总
             daily_pnl = sum(p.get("daily_pnl", 0) or 0 for p in positions)
+
+            # 整体日盈亏百分比（加权）
+            total_base = 0.0
+            for p in positions:
+                pnl = p.get("daily_pnl") or 0
+                pct = p.get("daily_pnl_pct")
+                if pct is not None and pct != 0:
+                    total_base += abs(pnl / pct * 100)
+                elif pnl == 0 and pct is not None:
+                    # pnl=0 但有 base_value
+                    pass
+            daily_pnl_pct = round(daily_pnl / total_base * 100, 2) if total_base > 0 else None
 
             # 6. 复盘记录（笔记 + 评分）
             review = session.query(DailyReview).filter(
@@ -121,8 +162,12 @@ class ReviewService:
 
             return {
                 "date": str(review_date),
+                "a_share_closed": indices_data["a_share_closed"],
+                "hk_closed": indices_data["hk_closed"],
+                "us_closed": indices_data["us_closed"],
                 "indices": indices,
                 "daily_pnl": round(daily_pnl, 2),
+                "daily_pnl_pct": daily_pnl_pct,
                 "positions": positions,
                 "positions_count": len(positions),
                 "trades": day_trades,
@@ -154,15 +199,26 @@ class ReviewService:
                 day_signals = session.query(Signal).filter(
                     Signal.date == review_date
                 ).all()
-                calculator = PortfolioCalculator()
-                positions = calculator.get_current_positions()
+
+                # 正确计算当日盈亏
+                positions_daily = self._get_positions_daily(session, review_date)
+                daily_pnl = sum(p.get("daily_pnl", 0) or 0 for p in positions_daily)
+
+                # 获取指数快照
+                indices = self._fetch_indices_from_history(review_date)
+                if not indices and review_date == date.today():
+                    indices = self._fetch_indices_realtime()
+                index_snapshot_str = None
+                if indices and any(r.get("price") is not None for r in indices):
+                    index_snapshot_str = json.dumps(indices, ensure_ascii=False)
 
                 review = DailyReview(
                     review_date=review_date,
-                    daily_pnl=0,
-                    positions_count=len(positions),
+                    daily_pnl=round(daily_pnl, 2),
+                    positions_count=len(positions_daily),
                     trades_count=len(day_trades),
                     signals_count=len(day_signals),
+                    index_snapshot=index_snapshot_str,
                     template_used=template_used,
                 )
                 session.add(review)
@@ -336,69 +392,227 @@ class ReviewService:
 
     # ==================== 内部方法 ====================
 
-    def _get_indices(self, session, review_date: date) -> List[Dict[str, Any]]:
-        """
-        获取大盘指数表现
+    # 固定顺序和名称
+    INDEX_ORDER = ["000001", "399001", "399006", "HSI", "SPX"]
+    INDEX_NAMES = {
+        "000001": "上证指数",
+        "399001": "深证成指",
+        "399006": "创业板指",
+        "HSI": "恒生指数",
+        "SPX": "标普500",
+    }
+    # 东方财富历史 K 线 secid
+    INDEX_SECIDS = {
+        "000001": "1.000001",
+        "399001": "0.399001",
+        "399006": "0.399006",
+        "HSI": "100.HSI",
+        "SPX": "100.SPX",
+    }
 
-        A股指数从东方财富 API 实时拉取（不依赖 DailyQuote），
-        恒生/标普从 EastMoney 全球指数接口获取。
+    # 市场分组: 哪些指数属于哪个市场
+    MARKET_GROUPS = {
+        "a_share": ["000001", "399001", "399006"],
+        "hk": ["HSI"],
+        "us": ["SPX"],
+    }
+
+    def _get_indices(self, session, review_date: date) -> Dict[str, Any]:
         """
-        # A股 + 恒生 + 标普 一次性从东方财富获取
-        # secid 格式: 市场.代码  (1=沪, 0=深, 100=港/美/全球)
-        secids = "1.000001,0.399001,0.399006,100.HSI,100.SPX"
-        name_map = {
-            "000001": "上证指数",
-            "399001": "深证成指",
-            "399006": "创业板指",
-            "HSI": "恒生指数",
-            "SPX": "标普500",
+        获取大盘指数表现（按 review_date）
+
+        返回:
+        {
+            "a_share_closed": bool,
+            "hk_closed": bool,
+            "us_closed": bool,
+            "items": [...]
         }
+        """
+        # 1) 尝试读取已有快照
+        review = session.query(DailyReview).filter(
+            DailyReview.review_date == review_date
+        ).first()
+        if review and review.index_snapshot:
+            try:
+                cached = json.loads(review.index_snapshot)
+                if isinstance(cached, dict) and "a_share_closed" in cached:
+                    return cached
+                # 兼容旧格式 → 作废，重新拉取
+            except json.JSONDecodeError:
+                pass
 
-        url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+        # 2) 周末：全部休市
+        if review_date.weekday() >= 5:
+            result = self._build_indices_result(self._empty_indices(self.INDEX_NAMES), all_closed=True)
+            self._save_index_snapshot(session, review, review_date, result)
+            return result
+
+        # 3) 从东方财富历史 K 线获取
+        items = self._fetch_indices_from_history(review_date)
+
+        # 4) 当天且历史无数据 → 降级到实时
+        if not items and review_date == date.today():
+            items = self._fetch_indices_realtime()
+
+        if items:
+            result = self._build_indices_result(items)
+        else:
+            result = self._build_indices_result(self._empty_indices(self.INDEX_NAMES), all_closed=True)
+
+        self._save_index_snapshot(session, review, review_date, result)
+        return result
+
+    def _build_indices_result(self, items: List[Dict[str, Any]], all_closed: bool = False) -> Dict[str, Any]:
+        """根据 items 中各指数是否有数据，判断各市场休市状态"""
+        if all_closed:
+            return {"a_share_closed": True, "hk_closed": True, "us_closed": True, "items": items}
+
+        prices_by_symbol = {it["symbol"]: it.get("price") for it in items}
+        closed = {}
+        for market, codes in self.MARKET_GROUPS.items():
+            closed[f"{market}_closed"] = all(prices_by_symbol.get(c) is None for c in codes)
+
+        return {**closed, "items": items}
+
+    def _save_index_snapshot(self, session, review, review_date: date, result: Dict[str, Any]):
+        """把指数数据快照到 DailyReview，没有记录则创建"""
+        snapshot_json = json.dumps(result, ensure_ascii=False)
+        try:
+            if review:
+                if not review.index_snapshot:
+                    review.index_snapshot = snapshot_json
+                    session.commit()
+            else:
+                review = DailyReview(review_date=review_date, index_snapshot=snapshot_json)
+                session.add(review)
+                session.commit()
+        except Exception:
+            session.rollback()
+
+    def _fetch_one_index_kline(self, sess, code: str, date_str: str) -> Dict[str, Any]:
+        """拉单个指数的历史 K 线（供并发调用）"""
+        secid = self.INDEX_SECIDS[code]
+        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
         params = {
-            "fltt": 2,
-            "invt": 2,
-            "fields": "f2,f3,f4,f6,f12,f14",
-            "secids": secids,
+            "secid": secid,
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+            "klt": 101,
+            "fqt": 1,
+            "beg": date_str,
+            "end": date_str,
             "ut": "bd1d9ddb04089700cf9c27f6f7426281",
             "_": str(int(time.time() * 1000)),
         }
+        resp = sess.get(url, params=params, timeout=8)
+        data = resp.json()
+        klines = data.get("data", {}).get("klines", [])
+        if klines:
+            fields = klines[0].split(",")
+            return {
+                "symbol": code,
+                "name": self.INDEX_NAMES[code],
+                "price": float(fields[2]),
+                "change_pct": float(fields[8]) if len(fields) > 8 else None,
+            }
+        return {"symbol": code, "name": self.INDEX_NAMES[code], "price": None, "change_pct": None}
 
-        try:
-            resp = requests.get(url, params=params, timeout=10, headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                "Referer": "https://finance.eastmoney.com/",
-            })
-            data = resp.json()
+    def _fetch_indices_from_history(self, review_date: date, max_retries: int = 3) -> List[Dict[str, Any]]:
+        """从东方财富历史 K 线接口并发获取指定日期的 5 个指数（超时换代理重试）"""
+        date_str = review_date.strftime("%Y%m%d")
+        proxy_mgr = _get_proxy_manager()
 
-            if data.get("rc") != 0 or not data.get("data"):
-                logger.warning(f"指数行情请求失败: rc={data.get('rc')}")
-                return self._empty_indices(name_map)
+        for attempt in range(max_retries):
+            proxies = None
+            if proxy_mgr:
+                p = proxy_mgr.fetch_one_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
+                if p:
+                    proxies = p.to_requests_proxies()
+            sess = _make_session(proxies)
 
-            result = []
-            for item in data["data"].get("diff", []):
-                code = item.get("f12", "")
-                result.append({
-                    "symbol": code,
-                    "name": name_map.get(code, item.get("f14", code)),
-                    "price": item.get("f2"),
-                    "change_pct": item.get("f3"),
-                })
+            try:
+                results_map: Dict[str, Dict[str, Any]] = {}
+                failed = False
+                with ThreadPoolExecutor(max_workers=5) as pool:
+                    futures = {
+                        pool.submit(self._fetch_one_index_kline, sess, code, date_str): code
+                        for code in self.INDEX_ORDER
+                    }
+                    for fut in as_completed(futures):
+                        code = futures[fut]
+                        try:
+                            results_map[code] = fut.result()
+                        except Exception as e:
+                            logger.warning(f"历史K线获取失败 {code} (第{attempt+1}轮): {e}")
+                            failed = True
 
-            # 确保 5 个指数都有，缺的补空
-            returned_codes = {r["symbol"] for r in result}
-            for code, name in name_map.items():
-                if code not in returned_codes:
-                    result.append({"symbol": code, "name": name, "price": None, "change_pct": None})
+                result = [results_map.get(c, {"symbol": c, "name": self.INDEX_NAMES[c], "price": None, "change_pct": None})
+                          for c in self.INDEX_ORDER]
 
-            # 按固定顺序排
-            order = ["000001", "399001", "399006", "HSI", "SPX"]
-            result.sort(key=lambda x: order.index(x["symbol"]) if x["symbol"] in order else 99)
-            return result
+                if not failed and any(r["price"] is not None for r in result):
+                    return result
+                if not failed:
+                    return []  # 全部成功但无数据 → 休市
+                logger.info(f"第{attempt+1}轮代理超时，换 IP 重试...")
+            finally:
+                sess.close()
 
-        except requests.RequestException as e:
-            logger.error(f"指数行情请求异常: {e}")
-            return self._empty_indices(name_map)
+        return []
+
+    def _fetch_indices_realtime(self, max_retries: int = 3) -> List[Dict[str, Any]]:
+        """从东方财富实时接口获取当前指数数据（降级方案，超时换代理重试）"""
+        proxy_mgr = _get_proxy_manager()
+        secids = ",".join(self.INDEX_SECIDS[c] for c in self.INDEX_ORDER)
+
+        for attempt in range(max_retries):
+            proxies = None
+            if proxy_mgr:
+                p = proxy_mgr.fetch_one_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
+                if p:
+                    proxies = p.to_requests_proxies()
+            sess = _make_session(proxies)
+
+            url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+            params = {
+                "fltt": 2,
+                "invt": 2,
+                "fields": "f2,f3,f4,f6,f12,f14",
+                "secids": secids,
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                "_": str(int(time.time() * 1000)),
+            }
+            try:
+                resp = sess.get(url, params=params, timeout=10)
+                data = resp.json()
+                if data.get("rc") != 0 or not data.get("data"):
+                    sess.close()
+                    continue
+
+                fetched = {}
+                for item in data["data"].get("diff", []):
+                    code = item.get("f12", "")
+                    fetched[code] = {
+                        "symbol": code,
+                        "name": self.INDEX_NAMES.get(code, item.get("f14", code)),
+                        "price": item.get("f2"),
+                        "change_pct": item.get("f3"),
+                    }
+
+                result = []
+                for code in self.INDEX_ORDER:
+                    if code in fetched:
+                        result.append(fetched[code])
+                    else:
+                        result.append({"symbol": code, "name": self.INDEX_NAMES[code], "price": None, "change_pct": None})
+                sess.close()
+                return result
+
+            except requests.RequestException as e:
+                logger.warning(f"实时指数请求失败 (第{attempt+1}轮): {e}")
+                sess.close()
+
+        return []
 
     @staticmethod
     def _empty_indices(name_map: Dict[str, str]) -> List[Dict[str, Any]]:
@@ -406,42 +620,157 @@ class ReviewService:
                 for code, name in name_map.items()]
 
     def _get_positions_daily(self, session, review_date: date) -> List[Dict[str, Any]]:
-        """获取持仓在当日的表现（只回放截止 review_date 的交易）"""
+        """
+        获取持仓在当日的表现
+
+        日盈亏 = 昨持有还在的部分 + 当日卖出部分 + 当日新买还在的部分
+        """
         calculator = PortfolioCalculator()
-        positions = calculator.get_current_positions(as_of_date=review_date)
+        # 日初持仓（截止前一天）
+        pos_yesterday = {p["symbol"]: p for p in calculator.get_current_positions(as_of_date=review_date - __import__('datetime').timedelta(days=1))}
+        # 日终持仓（截止今天）
+        pos_today = {p["symbol"]: p for p in calculator.get_current_positions(as_of_date=review_date)}
+
+        # 当日交易按 symbol 汇总
+        day_trades = session.query(ManualTrade).filter(ManualTrade.trade_date == review_date).all()
+        day_buys: Dict[str, int] = {}   # symbol → 当日买入总量
+        day_sells: Dict[str, List] = {}  # symbol → [(qty, price), ...]
+        for t in day_trades:
+            if t.side == "BUY":
+                day_buys[t.symbol] = day_buys.get(t.symbol, 0) + t.quantity
+            elif t.side == "SELL":
+                day_sells.setdefault(t.symbol, []).append((t.quantity, t.price))
+
+        # 涉及的所有 symbol（日初有 or 日终有 or 当日交易过）
+        all_syms = set(pos_yesterday) | set(pos_today) | {t.symbol for t in day_trades}
 
         result = []
-        for pos in positions:
-            sym = pos["symbol"]
+        for sym in all_syms:
+            yesterday = pos_yesterday.get(sym)
+            today = pos_today.get(sym)
+            qty_yesterday = yesterday["quantity"] if yesterday else 0
+            qty_today = today["quantity"] if today else 0
 
             # 当日收盘价
             today_quote = session.query(DailyQuote).filter(
-                DailyQuote.symbol == sym,
-                DailyQuote.date == review_date,
+                DailyQuote.symbol == sym, DailyQuote.date == review_date,
             ).first()
+            today_close = today_quote.close if today_quote else None
 
             # 前一日收盘价
             prev_quote = session.query(DailyQuote).filter(
-                DailyQuote.symbol == sym,
-                DailyQuote.date < review_date,
+                DailyQuote.symbol == sym, DailyQuote.date < review_date,
             ).order_by(DailyQuote.date.desc()).first()
-
-            today_close = today_quote.close if today_quote else pos.get("current_price")
             prev_close = prev_quote.close if prev_quote else None
 
-            daily_change_pct = None
-            daily_pnl = None
-            if today_close and prev_close and prev_close > 0:
-                daily_change_pct = round((today_close - prev_close) / prev_close * 100, 2)
-                daily_pnl = round((today_close - prev_close) * pos["quantity"], 2)
+            daily_pnl = 0.0
+            has_data = False
 
-            result.append({
-                **pos,
-                "today_close": today_close,
-                "prev_close": prev_close,
-                "daily_change_pct": daily_change_pct,
-                "daily_pnl": daily_pnl,
-            })
+            # 1) 卖出部分：(sell_price - prev_close) × qty
+            for sell_qty, sell_price in day_sells.get(sym, []):
+                if prev_close is not None:
+                    daily_pnl += (sell_price - prev_close) * sell_qty
+                    has_data = True
+                elif yesterday is None and day_buys.get(sym, 0) > 0:
+                    # T+0: 当日买入又卖出，用买入均价做基准
+                    buy_trades_t0 = [t for t in day_trades if t.symbol == sym and t.side == "BUY"]
+                    total_cost_t0 = sum(t.price * t.quantity for t in buy_trades_t0)
+                    total_qty_t0 = sum(t.quantity for t in buy_trades_t0)
+                    avg_buy_t0 = total_cost_t0 / total_qty_t0 if total_qty_t0 > 0 else sell_price
+                    daily_pnl += (sell_price - avg_buy_t0) * sell_qty
+                    has_data = True
+
+            # 2) 昨天持有、今天还在的部分：(close - prev_close) × qty
+            bought_today = day_buys.get(sym, 0)
+            total_sold = sum(qty for qty, _ in day_sells.get(sym, []))
+            held_from_yesterday = max(0, qty_yesterday - total_sold)
+            new_buy_remaining = qty_today - held_from_yesterday
+
+            if held_from_yesterday > 0 and today_close is not None and prev_close is not None:
+                daily_pnl += (today_close - prev_close) * held_from_yesterday
+                has_data = True
+
+            # 3) 当日新买且还在的部分：(close - avg_buy_price) × qty
+            if new_buy_remaining > 0 and today_close is not None and bought_today > 0:
+                # 当日买入均价（从交易记录算）
+                buy_trades = [t for t in day_trades if t.symbol == sym and t.side == "BUY"]
+                total_cost = sum(t.price * t.quantity for t in buy_trades)
+                total_qty = sum(t.quantity for t in buy_trades)
+                avg_buy = total_cost / total_qty if total_qty > 0 else 0
+                daily_pnl += (today_close - avg_buy) * new_buy_remaining
+                has_data = True
+
+            daily_pnl = round(daily_pnl, 2) if has_data else None
+
+            # 日盈亏百分比
+            # 分母 = 昨日持有市值(prev_close × held_from_yesterday) + 当日新买成本(avg_buy × new_buy_remaining)
+            daily_pnl_pct = None
+            if daily_pnl is not None:
+                base_value = 0.0
+                if held_from_yesterday > 0 and prev_close is not None:
+                    base_value += prev_close * held_from_yesterday
+                # 卖出部分也要算进基底（基于 prev_close 或买入均价）
+                for sell_qty, _ in day_sells.get(sym, []):
+                    if prev_close is not None and qty_yesterday > 0:
+                        base_value += prev_close * sell_qty
+                    elif yesterday is None and day_buys.get(sym, 0) > 0:
+                        buy_trades_base = [t for t in day_trades if t.symbol == sym and t.side == "BUY"]
+                        tc = sum(t.price * t.quantity for t in buy_trades_base)
+                        tq = sum(t.quantity for t in buy_trades_base)
+                        base_value += (tc / tq if tq > 0 else 0) * sell_qty
+                if new_buy_remaining > 0 and bought_today > 0:
+                    buy_trades_nb = [t for t in day_trades if t.symbol == sym and t.side == "BUY"]
+                    tc_nb = sum(t.price * t.quantity for t in buy_trades_nb)
+                    tq_nb = sum(t.quantity for t in buy_trades_nb)
+                    avg_buy_nb = tc_nb / tq_nb if tq_nb > 0 else 0
+                    base_value += avg_buy_nb * new_buy_remaining
+                if base_value > 0:
+                    daily_pnl_pct = round(daily_pnl / base_value * 100, 2)
+
+            # 涨跌幅（基于 prev_close 或买入均价）
+            daily_change_pct = None
+            base_price = prev_close if qty_yesterday > 0 else (today.get("avg_cost") if today else None)
+            if today_close is not None and base_price is not None and base_price > 0:
+                daily_change_pct = round((today_close - base_price) / base_price * 100, 2)
+
+            # 只返回日终仍有持仓的，但 daily_pnl 包含了卖出部分
+            if today:
+                result.append({
+                    **today,
+                    "today_close": today_close,
+                    "prev_close": prev_close if qty_yesterday > 0 else today.get("avg_cost"),
+                    "daily_change_pct": daily_change_pct,
+                    "daily_pnl": daily_pnl,
+                    "daily_pnl_pct": daily_pnl_pct,
+                })
+            elif has_data:
+                # 当日全部卖出 — 不在持仓列表里，但盈亏要计入汇总
+                name = yesterday["name"] if yesterday else sym
+                # 从日终持仓算 realized_pnl；如果没有则用昨日的加上今日卖出盈亏
+                if yesterday:
+                    realized = yesterday.get("realized_pnl", 0)
+                    # 把今天卖出的盈亏也加到 realized
+                    for sq, sp in day_sells.get(sym, []):
+                        realized += (sp - yesterday["avg_cost"]) * sq
+                else:
+                    realized = 0
+                result.append({
+                    "symbol": sym,
+                    "name": name,
+                    "quantity": 0,
+                    "avg_cost": yesterday["avg_cost"] if yesterday else 0,
+                    "current_price": None,
+                    "market_value": 0,
+                    "total_cost": 0,
+                    "unrealized_pnl": 0,
+                    "unrealized_pnl_pct": 0,
+                    "realized_pnl": round(realized, 2),
+                    "today_close": today_close,
+                    "prev_close": prev_close,
+                    "daily_change_pct": None,
+                    "daily_pnl": daily_pnl,
+                    "daily_pnl_pct": daily_pnl_pct,
+                })
 
         return result
 

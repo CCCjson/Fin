@@ -88,7 +88,7 @@ struct FetchRequest {
     std::vector<std::string> symbols;   // 空 = 全部活跃 A 股
     std::string begin_date;             // "20250101"
     std::string end_date;               // "20250201"
-    int thread_count = 4;
+    int thread_count = 8;
     int batch_size = 500;
     std::string proxy_api_url;          // 快代理 API URL，空=不使用代理
     int switch_ip_every = 800;          // 每 N 次请求主动换 IP

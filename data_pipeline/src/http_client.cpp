@@ -62,30 +62,56 @@ std::pair<std::string, bool> HttpClient::fetch_kline(const std::string& secid,
     };
 
     if (use_proxy_) {
-        // ── 代理模式：只请求一次，不重试 ──
-        try {
-            httplib::Client cli("https://push2his.eastmoney.com");
-            cli.set_proxy(proxy_host_.c_str(), proxy_port_);
-            if (!proxy_user_.empty()) {
-                cli.set_proxy_basic_auth(proxy_user_, proxy_pass_);
+        // ── 代理模式：区分真封禁（换IP）和网络抖动（重试） ──
+        for (int attempt = 0; attempt < proxy_max_retries_; ++attempt) {
+            try {
+                httplib::Client cli("https://push2his.eastmoney.com");
+                cli.set_proxy(proxy_host_.c_str(), proxy_port_);
+                if (!proxy_user_.empty()) {
+                    cli.set_proxy_basic_auth(proxy_user_, proxy_pass_);
+                }
+                cli.enable_server_certificate_verification(false);
+                cli.set_connection_timeout(timeout_sec_);
+                cli.set_read_timeout(timeout_sec_);
+                cli.set_write_timeout(timeout_sec_);
+
+                auto res = cli.Get(path, headers);
+
+                // 成功
+                if (res && res->status == 200 && !res->body.empty()) {
+                    return {res->body, false};
+                }
+
+                // 真封禁 → 立即返回，需要换 IP
+                if (res && (res->status == 403 || res->status == 429)) {
+                    return {"", true};
+                }
+
+                // 连接失败/超时/空响应/其他状态码 → 重试
+                if (res) {
+                    std::cerr << "Proxy HTTP " << res->status
+                              << (res->body.empty() ? " (empty body)" : "")
+                              << " for secid=" << secid
+                              << " (attempt " << attempt + 1 << "/" << proxy_max_retries_ << ")" << std::endl;
+                } else {
+                    std::cerr << "Proxy connection failed for secid=" << secid
+                              << " (attempt " << attempt + 1 << "/" << proxy_max_retries_ << ")" << std::endl;
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Proxy request error for secid=" << secid
+                          << " (attempt " << attempt + 1 << "/" << proxy_max_retries_ << "): "
+                          << e.what() << std::endl;
             }
-            cli.enable_server_certificate_verification(false);
-            cli.set_connection_timeout(timeout_sec_);
-            cli.set_read_timeout(timeout_sec_);
-            cli.set_write_timeout(timeout_sec_);
 
-            auto res = cli.Get(path, headers);
-
-            if (!res)                                       return {"", true};   // 连接失败
-            if (res->status == 429)                         return {"", true};   // 限流
-            if (res->status == 403)                         return {"", true};   // 封禁
-            if (res->status == 200 && res->body.empty())    return {"", true};   // 空响应
-            if (res->status == 200)                         return {res->body, false};  // 成功
-            return {"", true};  // 其他错误
-        } catch (const std::exception& e) {
-            std::cerr << "Proxy request error for secid=" << secid << ": " << e.what() << std::endl;
-            return {"", true};
+            // 重试前短暂等待（递增延迟）
+            if (attempt < proxy_max_retries_ - 1) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(proxy_retry_delay_ms_ * (attempt + 1)));
+            }
         }
+
+        // 所有重试均失败，但不标记为 banned（不触发换 IP）
+        return {"", false};
     } else {
         // ── 无代理模式：保留原有 3 次重试逻辑 ──
         for (int attempt = 0; attempt < max_retries_; ++attempt) {

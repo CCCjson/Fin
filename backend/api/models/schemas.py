@@ -164,6 +164,11 @@ class AccountResponse(BaseModel):
     total_value: float
     available_cash: float
     frozen_cash: float
+    initial_cash: float
+    unrealized_pnl: float
+    total_commission: float
+    total_trades: int
+    return_pct: float
     positions: List[PositionResponse]
 
 

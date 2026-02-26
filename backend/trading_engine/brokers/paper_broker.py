@@ -31,6 +31,7 @@ class PaperBroker(BaseBroker):
         self.initial_cash = initial_cash
         self.cash = initial_cash
         self.commission_rate = commission_rate
+        self.stamp_tax_rate = 0.001  # A股卖出印花税 千分之一
         self.slippage = slippage
 
         # 持仓
@@ -72,7 +73,9 @@ class PaperBroker(BaseBroker):
             "unrealized_pnl": total_pnl,
             "total_commission": self.total_commission,
             "total_trades": self.total_trades,
-            "return_pct": ((total_value - self.initial_cash) / self.initial_cash) * 100
+            "initial_cash": self.initial_cash,
+            "return_pct": ((total_value - self.initial_cash) / self.initial_cash) * 100,
+            "positions": self.positions,
         }
 
     def get_positions(self) -> List[BrokerPosition]:
@@ -130,8 +133,10 @@ class PaperBroker(BaseBroker):
         else:
             filled_price *= (1 - self.slippage)
 
-        # 计算手续费
+        # 计算手续费（卖出额外加印花税）
         commission = quantity * filled_price * self.commission_rate
+        if action == "SELL":
+            commission += quantity * filled_price * self.stamp_tax_rate
         total_cost = quantity * filled_price + commission
 
         # 创建订单
@@ -203,13 +208,15 @@ class PaperBroker(BaseBroker):
         """增加持仓"""
         if symbol not in self.positions:
             # 新建持仓
+            cur_price = self.market_prices.get(symbol, price)
+            mkt_value = quantity * cur_price
             self.positions[symbol] = BrokerPosition(
                 symbol=symbol,
                 quantity=quantity,
                 avg_cost=price,
-                current_price=self.market_prices.get(symbol, price),
-                market_value=quantity * self.market_prices.get(symbol, price),
-                unrealized_pnl=0.0,
+                current_price=cur_price,
+                market_value=mkt_value,
+                unrealized_pnl=mkt_value - quantity * price,
                 available=quantity  # Paper Trading 没有 T+1 限制
             )
         else:

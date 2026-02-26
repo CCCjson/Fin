@@ -36,8 +36,10 @@ private:
 
     static const std::vector<std::string> USER_AGENTS;
     std::mt19937 rng_;
-    int max_retries_ = 3;
-    int retry_delay_ms_ = 500;
+    int max_retries_ = 3;           // 无代理模式重试次数
+    int retry_delay_ms_ = 500;      // 无代理模式重试间隔
+    int proxy_max_retries_ = 3;     // 代理模式重试次数（区分网络抖动和真封禁）
+    int proxy_retry_delay_ms_ = 200; // 代理模式重试间隔
     int timeout_sec_ = 10;
 
     // 代理

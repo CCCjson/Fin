@@ -2,6 +2,7 @@
 #include "pipeline/http_client.h"
 #include "pipeline/kline_parser.h"
 #include "pipeline/symbol_mapper.h"
+#include "pipeline/proxy_provider.h"
 #include "pipeline/thread_pool.h"
 #include <thread>
 #include <iostream>
@@ -34,37 +35,35 @@ void PipelineTask::run() {
             return;
         }
 
-        // 2. 创建代理提供者（如果有 proxy_api_url）
         if (!req_.proxy_api_url.empty()) {
-            proxy_provider_ = std::make_unique<ProxyProvider>(req_.proxy_api_url);
-            proxy_provider_->set_switch_every(req_.switch_ip_every);
-            std::cout << "[PipelineTask] 代理模式已启用, 每 "
+            std::cout << "[PipelineTask] 多IP并行模式: "
+                      << req_.thread_count << " 线程 × 独立代理IP, 每 "
                       << req_.switch_ip_every << " 次请求换 IP" << std::endl;
         }
 
-        // 3. 加载增量日期
+        // 2. 加载增量日期
         auto latest_dates = storage_.load_symbol_latest_dates();
 
-        // 4. 启动消费者线程
+        // 3. 启动消费者线程
         std::thread consumer_thread([this] { consumer_work(); });
 
-        // 5. 启动生产者线程池
+        // 4. 启动生产者线程池（每个线程独立持有代理IP + HTTP连接）
         producer_work(symbols, latest_dates);
 
-        // 6. 关闭队列，等待消费者完成
+        // 5. 关闭队列，等待消费者完成
         bar_queue_.close();
         consumer_thread.join();
 
-        // 7. 设置最终状态
+        // 6. 设置最终状态
         if (stop_requested_) {
             state_ = TaskState::STOPPED;
         } else {
             state_ = TaskState::COMPLETED;
         }
 
-        if (proxy_provider_) {
-            std::cout << "[PipelineTask] 代理切换次数: "
-                      << proxy_provider_->switch_count() << std::endl;
+        int switches = proxy_switches_.load();
+        if (switches > 0) {
+            std::cout << "[PipelineTask] 代理切换总次数: " << switches << std::endl;
         }
     } catch (const std::exception& e) {
         error_message_ = e.what();
@@ -77,64 +76,121 @@ void PipelineTask::producer_work(const std::vector<std::string>& symbols,
                                   const std::unordered_map<std::string, std::string>& latest_dates) {
     ThreadPool pool(req_.thread_count);
 
+    // 每个工作线程独立持有 ProxyProvider + HttpClient
+    // thread_local 保证同一线程复用连接，不同线程独立 IP
+    auto fetch_one = [this, &latest_dates](const std::string& symbol, bool is_retry) {
+        if (stop_requested_) return;
+
+        current_symbol_ = symbol;
+        std::string secid = SymbolMapper::build_secid(symbol);
+        std::string begin = calc_begin_date(symbol, latest_dates);
+        std::string end = req_.end_date;
+
+        // 已经是最新数据，跳过
+        if (!begin.empty() && !end.empty() && begin > end) {
+            done_++;
+            return;
+        }
+
+        // ── 线程级持久化：ProxyProvider + HttpClient ──
+        // 每个工作线程首次进入时初始化，后续复用（连接复用 + IP 复用）
+        thread_local std::unique_ptr<ProxyProvider> tl_proxy;
+        thread_local std::unique_ptr<HttpClient> tl_client;
+        thread_local std::string tl_proxy_host;
+
+        if (!tl_client) {
+            tl_client = std::make_unique<HttpClient>();
+        }
+        if (!tl_proxy && !req_.proxy_api_url.empty()) {
+            tl_proxy = std::make_unique<ProxyProvider>(req_.proxy_api_url);
+            tl_proxy->set_switch_every(req_.switch_ip_every);
+            auto pi = tl_proxy->get_proxy();
+            if (!pi.empty()) {
+                tl_client->set_proxy(pi.host, pi.port, pi.username, pi.password);
+                tl_proxy_host = pi.host;
+                proxy_switches_++;
+            }
+        }
+
+        // 检查是否需要定期刷新代理（达到 switch_every 阈值）
+        if (tl_proxy) {
+            auto pi = tl_proxy->get_proxy();
+            if (!pi.empty() && pi.host != tl_proxy_host) {
+                tl_client->set_proxy(pi.host, pi.port, pi.username, pi.password);
+                tl_proxy_host = pi.host;
+                proxy_switches_++;
+            }
+        }
+
+        auto [json_str, banned] = tl_client->fetch_kline(secid, begin, end);
+        global_stats_.add_requests();
+        if (tl_proxy) {
+            tl_proxy->add_request_count();
+        }
+
+        if (banned && tl_proxy) {
+            // IP 被封 → 切换本线程的代理 IP（不影响其他线程）
+            auto new_pi = tl_proxy->switch_proxy(tl_proxy_host);
+            if (!new_pi.empty()) {
+                tl_client->set_proxy(new_pi.host, new_pi.port, new_pi.username, new_pi.password);
+                tl_proxy_host = new_pi.host;
+            }
+            proxy_switches_++;
+
+            // 第一轮失败 → 加入重试队列
+            if (!is_retry) {
+                std::lock_guard<std::mutex> lock(failed_mutex_);
+                failed_symbols_.push_back(symbol);
+            }
+            failed_++;
+            global_stats_.add_errors();
+            return;
+        }
+
+        if (json_str.empty()) {
+            // 网络抖动导致失败（http_client 已重试过），加入重试队列
+            if (!is_retry) {
+                std::lock_guard<std::mutex> lock(failed_mutex_);
+                failed_symbols_.push_back(symbol);
+            }
+            failed_++;
+            global_stats_.add_errors();
+            return;
+        }
+
+        auto bars = KlineParser::parse(json_str, symbol);
+        if (!bars.empty()) {
+            bar_queue_.push(std::move(bars));
+        }
+        done_++;
+    };
+
+    // ── 第一轮：抓取所有股票 ──
     for (const auto& symbol : symbols) {
         if (stop_requested_) break;
+        pool.submit([&fetch_one, symbol] { fetch_one(symbol, false); });
+    }
+    pool.wait_all();
 
-        pool.submit([this, symbol, &latest_dates] {
-            if (stop_requested_) return;
-
-            current_symbol_ = symbol;
-            std::string code = SymbolMapper::symbol_to_code(symbol);
-            std::string secid = SymbolMapper::build_secid(symbol);
-            std::string begin = calc_begin_date(symbol, latest_dates);
-            std::string end = req_.end_date;
-
-            // 如果 begin > end，说明已经是最新数据，跳过
-            if (!begin.empty() && !end.empty() && begin > end) {
-                done_++;
-                return;
-            }
-
-            // 每个线程自己的 HttpClient（SSLClient 非线程安全）
-            HttpClient client;
-
-            // 设置代理
-            if (proxy_provider_) {
-                auto pi = proxy_provider_->get_proxy();
-                if (!pi.empty()) {
-                    client.set_proxy(pi.host, pi.port, pi.username, pi.password);
-                }
-            }
-
-            auto [json_str, banned] = client.fetch_kline(secid, begin, end);
-            global_stats_.add_requests();
-            if (proxy_provider_) {
-                proxy_provider_->add_request_count();
-            }
-
-            if (banned && proxy_provider_) {
-                // IP 被封 → 切换代理，不重试当前 symbol
-                proxy_provider_->switch_proxy(client.proxy_host());
-                failed_++;
-                global_stats_.add_errors();
-                return;
-            }
-
-            if (json_str.empty()) {
-                failed_++;
-                global_stats_.add_errors();
-                return;
-            }
-
-            auto bars = KlineParser::parse(json_str, symbol);
-            if (!bars.empty()) {
-                bar_queue_.push(std::move(bars));
-            }
-            done_++;
-        });
+    // ── 第二轮：补抓失败的股票（最多 1 轮） ──
+    std::vector<std::string> retry_symbols;
+    {
+        std::lock_guard<std::mutex> lock(failed_mutex_);
+        retry_symbols.swap(failed_symbols_);
     }
 
-    pool.wait_all();
+    if (!retry_symbols.empty() && !stop_requested_) {
+        int retry_count = static_cast<int>(retry_symbols.size());
+        std::cout << "[PipelineTask] 补抓 " << retry_count << " 只失败股票..." << std::endl;
+        // 这些股票会被重新尝试，先扣除 failed 计数
+        failed_ -= retry_count;
+
+        for (const auto& symbol : retry_symbols) {
+            if (stop_requested_) break;
+            pool.submit([&fetch_one, symbol] { fetch_one(symbol, true); });
+        }
+        pool.wait_all();
+    }
 }
 
 void PipelineTask::consumer_work() {
@@ -218,9 +274,7 @@ TaskProgress PipelineTask::progress() const {
     p.current_symbol = current_symbol_;
     p.error_message = error_message_;
 
-    if (proxy_provider_) {
-        p.proxy_switches = proxy_provider_->switch_count();
-    }
+    p.proxy_switches = proxy_switches_.load();
 
     auto now = std::chrono::steady_clock::now();
     p.elapsed_seconds = std::chrono::duration<double>(now - start_time_).count();

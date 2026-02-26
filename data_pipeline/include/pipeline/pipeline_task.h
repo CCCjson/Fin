@@ -4,9 +4,9 @@
 #include "pipeline/blocking_queue.h"
 #include "pipeline/sqlite_storage.h"
 #include "pipeline/stats_tracker.h"
-#include "pipeline/proxy_provider.h"
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -48,9 +48,6 @@ private:
     SqliteStorage& storage_;
     StatsTracker& global_stats_;
 
-    // 代理
-    std::unique_ptr<ProxyProvider> proxy_provider_;
-
     // 状态
     std::atomic<TaskState> state_{TaskState::PENDING};
     std::atomic<bool> stop_requested_{false};
@@ -58,9 +55,14 @@ private:
     std::atomic<int> done_{0};
     std::atomic<int> failed_{0};
     std::atomic<int> rows_written_{0};
+    std::atomic<int> proxy_switches_{0};  // 各线程累计代理切换次数
     std::string current_symbol_;
     std::string error_message_;
     std::chrono::steady_clock::time_point start_time_;
+
+    // 失败股票重试队列
+    std::mutex failed_mutex_;
+    std::vector<std::string> failed_symbols_;
 
     // 生产者-消费者队列
     BlockingQueue<std::vector<Bar>> bar_queue_{20};

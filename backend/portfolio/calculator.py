@@ -80,7 +80,7 @@ class PortfolioCalculator:
                 if pos["quantity"] <= 0:
                     continue
 
-                current_price = self._get_latest_price(session, sym)
+                current_price = self._get_price_as_of(session, sym, as_of_date)
 
                 market_value = current_price * pos["quantity"] if current_price else None
                 unrealized_pnl = (market_value - pos["total_cost"]) if market_value is not None else None
@@ -101,6 +101,8 @@ class PortfolioCalculator:
                     "realized_pnl": round(pos["realized_pnl"], 2),
                 })
 
+            # 按市值降序排列，无市值的放最后
+            result.sort(key=lambda p: p["market_value"] if p["market_value"] is not None else -1, reverse=True)
             return result
 
         except Exception as e:
@@ -174,11 +176,12 @@ class PortfolioCalculator:
                 if pos["quantity"] <= 0:
                     continue
                 total_cost_holding += pos["total_cost"]
-                price = self._get_latest_price(session, sym)
+                price = self._get_price_as_of(session, sym)
                 if price:
                     current_value += price * pos["quantity"]
                 else:
-                    current_value += pos["total_cost"]  # 无报价用成本代替
+                    # 无报价：用成本计入，与持仓表口径一致（视为不赚不赔）
+                    current_value += pos["total_cost"]
 
             # 未实现盈亏
             unrealized_pnl = current_value - total_cost_holding
@@ -188,12 +191,12 @@ class PortfolioCalculator:
             total_invested = total_buy_amount
             total_pnl_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0
 
-            # 胜率统计（基于已平仓交易）
+            # 胜率统计（基于已平仓交易，pnl=0 算平局计入总数但不算胜负）
             win_trades = [ct for ct in closed_trades if ct["pnl"] > 0]
             loss_trades = [ct for ct in closed_trades if ct["pnl"] < 0]
             win_count = len(win_trades)
             loss_count = len(loss_trades)
-            total_closed = win_count + loss_count
+            total_closed = len(closed_trades)  # 包含 pnl=0 的平仓交易
             win_rate = (win_count / total_closed * 100) if total_closed > 0 else 0
 
             avg_win = (sum(ct["pnl"] for ct in win_trades) / win_count) if win_count > 0 else 0
@@ -225,14 +228,12 @@ class PortfolioCalculator:
         finally:
             session.close()
 
-    def _get_latest_price(self, session, symbol: str) -> float | None:
-        """获取最新收盘价"""
-        quote = (
-            session.query(DailyQuote)
-            .filter(DailyQuote.symbol == symbol)
-            .order_by(DailyQuote.date.desc())
-            .first()
-        )
+    def _get_price_as_of(self, session, symbol: str, as_of_date: date | None = None) -> float | None:
+        """获取截止 as_of_date 的最新收盘价（None 则取全局最新）"""
+        query = session.query(DailyQuote).filter(DailyQuote.symbol == symbol)
+        if as_of_date is not None:
+            query = query.filter(DailyQuote.date <= as_of_date)
+        quote = query.order_by(DailyQuote.date.desc()).first()
         return quote.close if quote else None
 
     def _empty_stats(self) -> Dict[str, Any]:

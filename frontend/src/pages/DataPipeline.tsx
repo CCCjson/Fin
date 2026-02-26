@@ -32,7 +32,7 @@ export const DataPipeline: React.FC = () => {
   const [symbols, setSymbols] = useState('');
   const [beginDate, setBeginDate] = useState('20250101');
   const [endDate, setEndDate] = useState('20260225');
-  const [threadCount, setThreadCount] = useState(4);
+  const [threadCount, setThreadCount] = useState(8);
   const [batchSize, setBatchSize] = useState(500);
   const [useProxy, setUseProxy] = useState(true);
   const [switchIpEvery, setSwitchIpEvery] = useState(800);

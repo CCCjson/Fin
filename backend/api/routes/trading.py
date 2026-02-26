@@ -163,7 +163,12 @@ async def get_account():
             total_value=account_info["total_value"],
             available_cash=account_info["cash"],  # Paper Trading中所有现金都可用
             frozen_cash=0.0,  # Paper Trading中没有冻结资金
-            positions=positions
+            initial_cash=account_info["initial_cash"],
+            unrealized_pnl=account_info["unrealized_pnl"],
+            total_commission=account_info["total_commission"],
+            total_trades=account_info["total_trades"],
+            return_pct=account_info["return_pct"],
+            positions=positions,
         )
 
     except Exception as e:
@@ -218,6 +223,7 @@ async def get_orders(symbol: Optional[str] = None):
 
         orders_list = []
         for order in orders:
+            is_filled = order.status.value == "FILLED" or order.filled_quantity > 0
             orders_list.append({
                 "order_id": order.order_id,
                 "symbol": order.symbol,
@@ -225,10 +231,10 @@ async def get_orders(symbol: Optional[str] = None):
                 "quantity": order.quantity,
                 "price": order.price,
                 "status": order.status.value,
-                "filled_price": order.filled_price,
+                "filled_price": order.filled_price if is_filled else None,
                 "filled_quantity": order.filled_quantity,
                 "commission": order.commission,
-                "submit_time": order.submit_time.isoformat()
+                "submit_time": order.submit_time.isoformat() if order.submit_time else None,
             })
 
         return {

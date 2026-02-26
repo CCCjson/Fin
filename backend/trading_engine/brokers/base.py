@@ -10,13 +10,13 @@ from typing import List, Optional
 
 class OrderStatus(Enum):
     """订单状态"""
-    PENDING = "pending"          # 待提交
-    SUBMITTED = "submitted"      # 已提交
-    PARTIAL_FILLED = "partial"   # 部分成交
-    FILLED = "filled"            # 完全成交
-    CANCELLED = "cancelled"      # 已撤销
-    REJECTED = "rejected"        # 已拒绝
-    FAILED = "failed"            # 失败
+    PENDING = "PENDING"              # 待提交
+    SUBMITTED = "SUBMITTED"          # 已提交
+    PARTIAL_FILLED = "PARTIAL_FILLED"  # 部分成交
+    FILLED = "FILLED"                # 完全成交
+    CANCELLED = "CANCELLED"          # 已撤销
+    REJECTED = "REJECTED"            # 已拒绝
+    FAILED = "FAILED"                # 失败
 
 
 @dataclass
@@ -46,6 +46,19 @@ class BrokerPosition:
     market_value: float      # 市值
     unrealized_pnl: float    # 未实现盈亏
     available: int           # 可用数量（T+1）
+
+    @property
+    def unrealized_pnl_pct(self) -> float:
+        """未实现盈亏百分比"""
+        cost_basis = self.quantity * self.avg_cost
+        if cost_basis == 0:
+            return 0.0
+        return (self.unrealized_pnl / cost_basis) * 100
+
+    @property
+    def available_quantity(self) -> int:
+        """可用数量（别名）"""
+        return self.available
 
 
 class BaseBroker(ABC):

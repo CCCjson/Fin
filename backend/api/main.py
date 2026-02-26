@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data_engine import init_db
-from api.routes import data, analysis, backtest, trading, monitor, history, signal_generation, realtime, report, tracking, portfolio, review, advisor, orderbook, backtest_cpp, pipeline, prediction
+from api.routes import data, analysis, backtest, trading, monitor, history, signal_generation, realtime, report, tracking, portfolio, review, advisor, orderbook, backtest_cpp, pipeline, prediction, news
 
 # 初始化数据库
 init_db()
@@ -21,7 +21,7 @@ init_db()
 app = FastAPI(
     title="量化交易系统API",
     description="个人量化交易工具 - 支持A股、港股、美股",
-    version="1.0.0"
+    version="1.4.0"
 )
 
 # 配置CORS（本地开发用）
@@ -51,6 +51,7 @@ app.include_router(orderbook.router)
 app.include_router(backtest_cpp.router)
 app.include_router(pipeline.router)
 app.include_router(prediction.router)
+app.include_router(news.router)
 
 
 # 全局异常处理
@@ -73,7 +74,7 @@ async def root():
     """根路径"""
     return {
         "name": "量化交易系统API",
-        "version": "1.0.0",
+        "version": "1.4.0",
         "status": "running",
         "docs": "/docs",
         "redoc": "/redoc"

@@ -16,6 +16,7 @@ const Advisor = React.lazy(() => import('../../pages/Advisor').then(m => ({ defa
 const OrderBook = React.lazy(() => import('../../pages/OrderBook').then(m => ({ default: m.OrderBook })));
 const DataPipeline = React.lazy(() => import('../../pages/DataPipeline').then(m => ({ default: m.DataPipeline })));
 const Prediction = React.lazy(() => import('../../pages/Prediction').then(m => ({ default: m.Prediction })));
+const News = React.lazy(() => import('../../pages/News').then(m => ({ default: m.News })));
 
 const routeConfig: { path: string; Component: React.LazyExoticComponent<React.FC> }[] = [
   { path: '/dashboard', Component: Dashboard },
@@ -32,6 +33,7 @@ const routeConfig: { path: string; Component: React.LazyExoticComponent<React.FC
   { path: '/orderbook', Component: OrderBook },
   { path: '/pipeline', Component: DataPipeline },
   { path: '/prediction', Component: Prediction },
+  { path: '/news', Component: News },
 ];
 
 const PageLoader: React.FC = () => (
@@ -74,6 +76,7 @@ export const Layout: React.FC = () => {
     { path: '/orderbook', label: '订单簿', icon: '📊' },
     { path: '/pipeline', label: '数据管道', icon: '🚀' },
     { path: '/prediction', label: '股价预测', icon: '🔮' },
+    { path: '/news', label: '新闻分析', icon: '📰' },
   ];
 
   const isActive = (path: string) => currentPath === path;

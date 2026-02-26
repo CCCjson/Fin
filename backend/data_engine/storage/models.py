@@ -424,6 +424,7 @@ class DailyReview(Base):
     positions_count = Column(Integer)
     trades_count = Column(Integer)
     signals_count = Column(Integer)
+    index_snapshot = Column(Text, nullable=True)  # JSON: 5个指数的 price/change_pct
 
     # 评分系统
     self_score = Column(Integer, nullable=True)       # 自评 1-10
@@ -502,3 +503,69 @@ class UserSettings(Base):
 
     def __repr__(self):
         return f"<UserSettings(key={self.key}, value={self.value})>"
+
+
+# ==================== 新闻分析模块 ====================
+
+class NewsArticle(Base):
+    """新闻原文表"""
+    __tablename__ = "news_articles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    article_id = Column(String(64), unique=True, nullable=False, index=True)  # hash(source+url) 去重
+    symbol = Column(String(20), nullable=True, index=True)  # 关联股票，通用新闻为 null
+    market = Column(String(10), nullable=False)  # a_share / general
+    title = Column(String(500), nullable=False)
+    content = Column(Text)  # 正文（A股有，Finnhub 仅 summary）
+    summary = Column(Text)  # 摘要
+    source = Column(String(100))  # 来源
+    url = Column(String(1000))  # 原文链接
+    image_url = Column(String(1000))  # 配图
+    language = Column(String(5), default="zh")  # zh / en
+    published_at = Column(DateTime, index=True)  # 发布时间
+    fetched_at = Column(DateTime, server_default=func.now())  # 抓取时间
+
+    __table_args__ = (
+        Index('idx_news_symbol_published', 'symbol', 'published_at'),
+        Index('idx_news_market_published', 'market', 'published_at'),
+    )
+
+    def __repr__(self):
+        return f"<NewsArticle(id={self.article_id}, title={self.title[:30]})>"
+
+
+class NewsSentiment(Base):
+    """BERT 情感分析结果表"""
+    __tablename__ = "news_sentiments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    article_id = Column(String(64), ForeignKey("news_articles.article_id"), unique=True, nullable=False, index=True)
+    sentiment = Column(String(10), nullable=False)  # positive / negative / neutral
+    confidence = Column(Float, nullable=False)  # 置信度 0-1
+    prob_positive = Column(Float)
+    prob_negative = Column(Float)
+    prob_neutral = Column(Float)
+    model_used = Column(String(100))  # 模型名
+    analyzed_at = Column(DateTime, server_default=func.now())
+
+    def __repr__(self):
+        return f"<NewsSentiment(article={self.article_id}, sentiment={self.sentiment}, conf={self.confidence})>"
+
+
+class NewsAnalysis(Base):
+    """OpenAI 新闻深度分析结果表"""
+    __tablename__ = "news_analyses"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(String(50), unique=True, nullable=False, index=True)
+    analysis_type = Column(String(20), nullable=False)  # single / report
+    article_id = Column(String(64), nullable=True)  # 单篇关联，报告为 null
+    symbol = Column(String(20), nullable=True)  # 关联股票
+    content = Column(Text)  # Markdown 分析内容
+    model_used = Column(String(50))  # gpt-4o 等
+    token_count = Column(Integer)  # token 用量
+    status = Column(String(20), nullable=False, default="generating")  # generating / completed / failed
+    created_at = Column(DateTime, server_default=func.now())
+
+    def __repr__(self):
+        return f"<NewsAnalysis(id={self.analysis_id}, type={self.analysis_type}, status={self.status})>"

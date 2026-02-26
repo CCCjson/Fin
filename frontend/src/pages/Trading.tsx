@@ -157,20 +157,30 @@ export const Trading: React.FC = () => {
                       </td>
                       <td className="px-4 py-2 text-right">{order.quantity}</td>
                       <td className="px-4 py-2 text-right">
-                        ¥{order.filled_price?.toFixed(2) || '-'}
+                        {order.filled_price != null ? `¥${order.filled_price.toFixed(2)}` : '-'}
                       </td>
-                      <td className="px-4 py-2 text-right">¥{order.commission.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right">
+                        {order.commission > 0 ? `¥${order.commission.toFixed(2)}` : '-'}
+                      </td>
                       <td className="px-4 py-2 text-center">
                         <span
                           className={`px-2 py-1 rounded text-xs ${
                             order.status === 'FILLED'
                               ? 'bg-bull/20 text-bull border border-bull/30'
-                              : order.status === 'REJECTED'
+                              : order.status === 'REJECTED' || order.status === 'FAILED'
                               ? 'bg-bear/20 text-bear border border-bear/30'
-                              : 'bg-dark-light text-gray-300 border-b border-border'
+                              : order.status === 'CANCELLED'
+                              ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                              : order.status === 'PENDING' || order.status === 'SUBMITTED'
+                              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                              : 'bg-dark-light text-gray-300 border border-border'
                           }`}
                         >
-                          {order.status}
+                          {{
+                            FILLED: '已成交', REJECTED: '已拒绝', FAILED: '失败',
+                            CANCELLED: '已撤销', PENDING: '待提交', SUBMITTED: '已提交',
+                            PARTIAL_FILLED: '部分成交',
+                          }[order.status] ?? order.status}
                         </span>
                       </td>
                     </tr>

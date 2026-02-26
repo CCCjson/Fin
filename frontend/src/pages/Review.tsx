@@ -169,7 +169,7 @@ export const Review: React.FC = () => {
     try {
       const result = await reviewService.saveNote(currentDate, {
         note: noteContent,
-        self_score: score || undefined,
+        self_score: score ?? undefined,
       });
       setSaveStatus('已保存');
       // 更新本地 data
@@ -333,23 +333,75 @@ export const Review: React.FC = () => {
           <div className="text-center py-20 text-gray-500">加载中...</div>
         ) : data ? (
           <>
-            {/* Index Cards (5) */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              {data.indices.map(idx => (
-                <div key={idx.symbol} className="bg-gradient-card p-4 rounded-xl border border-border shadow-card">
-                  <div className="text-gray-400 text-sm mb-1">{idx.name}</div>
-                  <div className="text-xl font-bold text-white">
-                    {idx.price !== null ? idx.price.toLocaleString() : '-'}
+            {/* Index Cards — 按市场分组，休市的合并显示 */}
+            {data.a_share_closed && data.hk_closed && data.us_closed ? (
+              <div className="bg-gradient-card p-5 rounded-xl border border-border shadow-card text-center">
+                <span className="text-gray-400 text-lg">今日休市</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                {/* A股：休市时 3 合 1 */}
+                {data.a_share_closed ? (
+                  <div className="bg-gradient-card p-4 rounded-xl border border-border shadow-card col-span-2 md:col-span-3 flex items-center justify-center">
+                    <span className="text-gray-500">A股休市</span>
                   </div>
-                  <div className={`text-sm font-medium mt-1 ${pnlColor(idx.change_pct)}`}>
-                    {idx.change_pct !== null
-                      ? `${idx.change_pct >= 0 ? '+' : ''}${idx.change_pct.toFixed(2)}% ${idx.change_pct >= 0 ? '\u25B2' : '\u25BC'}`
-                      : '-'
-                    }
+                ) : (
+                  data.indices.filter(idx => ['000001', '399001', '399006'].includes(idx.symbol)).map(idx => (
+                    <div key={idx.symbol} className="bg-gradient-card p-4 rounded-xl border border-border shadow-card">
+                      <div className="text-gray-400 text-sm mb-1">{idx.name}</div>
+                      <div className="text-xl font-bold text-white">
+                        {idx.price !== null ? idx.price.toLocaleString() : '-'}
+                      </div>
+                      <div className={`text-sm font-medium mt-1 ${pnlColor(idx.change_pct)}`}>
+                        {idx.change_pct !== null
+                          ? `${idx.change_pct >= 0 ? '+' : ''}${idx.change_pct.toFixed(2)}% ${idx.change_pct >= 0 ? '\u25B2' : '\u25BC'}`
+                          : '-'}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {/* 港股 */}
+                {data.hk_closed ? (
+                  <div className="bg-gradient-card p-4 rounded-xl border border-border shadow-card flex items-center justify-center">
+                    <span className="text-gray-500">港股休市</span>
                   </div>
-                </div>
-              ))}
-            </div>
+                ) : (
+                  data.indices.filter(idx => idx.symbol === 'HSI').map(idx => (
+                    <div key={idx.symbol} className="bg-gradient-card p-4 rounded-xl border border-border shadow-card">
+                      <div className="text-gray-400 text-sm mb-1">{idx.name}</div>
+                      <div className="text-xl font-bold text-white">
+                        {idx.price !== null ? idx.price.toLocaleString() : '-'}
+                      </div>
+                      <div className={`text-sm font-medium mt-1 ${pnlColor(idx.change_pct)}`}>
+                        {idx.change_pct !== null
+                          ? `${idx.change_pct >= 0 ? '+' : ''}${idx.change_pct.toFixed(2)}% ${idx.change_pct >= 0 ? '\u25B2' : '\u25BC'}`
+                          : '-'}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {/* 美股 */}
+                {data.us_closed ? (
+                  <div className="bg-gradient-card p-4 rounded-xl border border-border shadow-card flex items-center justify-center">
+                    <span className="text-gray-500">美股休市</span>
+                  </div>
+                ) : (
+                  data.indices.filter(idx => idx.symbol === 'SPX').map(idx => (
+                    <div key={idx.symbol} className="bg-gradient-card p-4 rounded-xl border border-border shadow-card">
+                      <div className="text-gray-400 text-sm mb-1">{idx.name}</div>
+                      <div className="text-xl font-bold text-white">
+                        {idx.price !== null ? idx.price.toLocaleString() : '-'}
+                      </div>
+                      <div className={`text-sm font-medium mt-1 ${pnlColor(idx.change_pct)}`}>
+                        {idx.change_pct !== null
+                          ? `${idx.change_pct >= 0 ? '+' : ''}${idx.change_pct.toFixed(2)}% ${idx.change_pct >= 0 ? '\u25B2' : '\u25BC'}`
+                          : '-'}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
 
             {/* Daily Overview Cards (4) */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -358,6 +410,11 @@ export const Review: React.FC = () => {
                 <div className={`text-2xl font-bold ${pnlColor(data.daily_pnl)}`}>
                   {pnlSign(data.daily_pnl)}
                 </div>
+                {data.daily_pnl_pct != null && (
+                  <div className={`text-sm mt-1 ${pnlColor(data.daily_pnl_pct)}`}>
+                    {pctStr(data.daily_pnl_pct)}
+                  </div>
+                )}
               </div>
               <div className="bg-gradient-card p-5 rounded-xl border border-border shadow-card">
                 <div className="text-gray-400 text-sm mb-2">持仓数</div>
@@ -374,12 +431,7 @@ export const Review: React.FC = () => {
               </div>
               <div className="bg-gradient-card p-5 rounded-xl border border-border shadow-card">
                 <div className="text-gray-400 text-sm mb-2">当日信号</div>
-                <div className="text-2xl font-bold text-accent-purple">{data.signals_count} 个</div>
-                {data.signals_count > 0 && (
-                  <div className="text-xs text-gray-500 mt-1">
-                    {data.signals.filter(s => s.signal_type === 'BUY').length}买 {data.signals.filter(s => s.signal_type === 'SELL').length}卖
-                  </div>
-                )}
+                <div className="text-2xl font-bold text-accent-purple">{data.signals_total} 个</div>
               </div>
             </div>
 
@@ -418,6 +470,9 @@ export const Review: React.FC = () => {
                             </td>
                             <td className={`px-3 py-2.5 text-right font-medium ${pnlColor(p.daily_pnl)}`}>
                               {pnlSign(p.daily_pnl)}
+                              {p.daily_pnl_pct != null && (
+                                <span className="text-xs text-gray-500 ml-1">({pctStr(p.daily_pnl_pct)})</span>
+                              )}
                             </td>
                             <td className={`px-3 py-2.5 text-right ${pnlColor(p.unrealized_pnl)}`}>
                               {pnlSign(p.unrealized_pnl)}

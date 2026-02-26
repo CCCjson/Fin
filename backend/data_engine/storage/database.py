@@ -48,6 +48,17 @@ def init_db():
     """初始化数据库，创建所有表"""
     from data_engine.storage import models  # 导入模型
     Base.metadata.create_all(bind=engine)
+
+    # 自动迁移：为已有 daily_reviews 表添加 index_snapshot 列
+    from sqlalchemy import text, inspect
+    insp = inspect(engine)
+    if "daily_reviews" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("daily_reviews")}
+        if "index_snapshot" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE daily_reviews ADD COLUMN index_snapshot TEXT"))
+            print("✓ daily_reviews 表已添加 index_snapshot 列")
+
     print("✓ 数据库初始化完成")
 
 

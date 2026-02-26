@@ -326,11 +326,11 @@ export const Portfolio: React.FC = () => {
           quantity,
           commission: calcCommission('BUY', price * quantity),
           trade_date: todayStr(),
-          ai_recommended_price: rec.price || undefined,
-          ai_stop_loss: rec.stop_loss || undefined,
-          ai_take_profit: rec.take_profit || undefined,
-          ai_composite_score: rec.score || undefined,
-          ai_strategy: rec.strategy || undefined,
+          ai_recommended_price: rec.price ?? undefined,
+          ai_stop_loss: rec.stop_loss ?? undefined,
+          ai_take_profit: rec.take_profit ?? undefined,
+          ai_composite_score: rec.score ?? undefined,
+          ai_strategy: rec.strategy ?? undefined,
         };
       });
 
@@ -444,7 +444,7 @@ export const Portfolio: React.FC = () => {
                 仓位: {stats.current_value > 0 && totalCapital > 0
                   ? `${(stats.current_value / totalCapital * 100).toFixed(1)}%`
                   : '0%'}
-                {' '}| 投入: {formatMoney(stats.total_invested)}
+                {' '}| 投入: {formatMoney(stats.total_cost_holding)}
               </div>
             </div>
             {renderStatCard(
@@ -452,12 +452,18 @@ export const Portfolio: React.FC = () => {
               formatMoney(stats.current_value),
               `持仓成本: ${formatMoney(stats.total_cost_holding)}`,
             )}
-            {renderStatCard(
-              '总盈亏',
-              `${stats.total_pnl >= 0 ? '+' : ''}${formatMoney(stats.total_pnl)}`,
-              `已实现: ${formatMoney(stats.realized_pnl)} | 未实现: ${formatMoney(stats.unrealized_pnl)}`,
-              pnlColor(stats.total_pnl),
-            )}
+            <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+              <div className="text-gray-400 text-sm mb-2">总盈亏</div>
+              <div className={`text-2xl font-bold ${pnlColor(stats.total_pnl)}`}>
+                {stats.total_pnl >= 0 ? '+' : ''}{formatMoney(stats.total_pnl)}
+              </div>
+              <div className={`text-sm font-medium mt-0.5 ${pnlColor(stats.total_pnl_pct)}`}>
+                {formatPct(stats.total_pnl_pct)}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                已实现: {formatMoney(stats.realized_pnl)} | 未实现: {formatMoney(stats.unrealized_pnl)}
+              </div>
+            </div>
             {renderStatCard(
               '胜率',
               stats.total_closed_trades > 0 ? `${stats.win_rate}%` : '-',
@@ -625,8 +631,11 @@ export const Portfolio: React.FC = () => {
                   </tr>
                 ) : (
                   trades.map(t => {
-                    const priceDiff = t.ai_recommended_price && t.side === 'BUY'
-                      ? t.price - t.ai_recommended_price
+                    // 差价：买入时实际价-AI价（正=买贵了），卖出时AI价-实际价（正=卖便宜了）
+                    const priceDiff = t.ai_recommended_price != null
+                      ? (t.side === 'BUY'
+                          ? t.price - t.ai_recommended_price
+                          : t.ai_recommended_price - t.price)
                       : null;
                     return (
                       <tr key={t.id} className="border-b border-border hover:bg-dark-light transition-colors">
@@ -652,7 +661,7 @@ export const Portfolio: React.FC = () => {
                           {t.note || '-'}
                         </td>
                         <td className="px-3 py-3 text-right text-accent-cyan">
-                          {t.ai_recommended_price ? t.ai_recommended_price.toFixed(2) : '-'}
+                          {t.ai_recommended_price != null ? t.ai_recommended_price.toFixed(2) : '-'}
                         </td>
                         <td className={`px-3 py-3 text-right font-medium ${
                           priceDiff === null ? 'text-gray-500'
@@ -663,7 +672,7 @@ export const Portfolio: React.FC = () => {
                           {priceDiff !== null ? `${priceDiff >= 0 ? '+' : ''}${priceDiff.toFixed(2)}` : '-'}
                         </td>
                         <td className="px-3 py-3 text-center">
-                          {t.ai_composite_score ? (
+                          {t.ai_composite_score != null ? (
                             <span className="text-accent-purple font-medium">{t.ai_composite_score.toFixed(1)}</span>
                           ) : '-'}
                         </td>

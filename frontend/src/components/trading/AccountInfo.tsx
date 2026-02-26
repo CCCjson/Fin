@@ -10,33 +10,53 @@ export const AccountInfo: React.FC<AccountInfoProps> = ({ account }) => {
     return <div className="text-gray-400">加载中...</div>;
   }
 
-  const profit = account.total_value - (account.cash + account.market_value - account.total_value);
-  const profitPct = (profit / account.cash) * 100;
+  const initialCash = account.initial_cash ?? account.total_value;
+  const profit = account.total_value - initialCash;
+  const returnPct = account.return_pct ?? (initialCash > 0 ? (profit / initialCash) * 100 : 0);
+  const profitColor = profit >= 0 ? 'text-bull' : 'text-bear';
 
   return (
     <div className="bg-gradient-card rounded-xl p-6 border border-border shadow-card">
       <h2 className="text-2xl font-bold text-white mb-6">账户信息</h2>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <div className="bg-dark-light p-4 rounded-lg border border-border">
           <div className="text-gray-400 text-sm mb-1">总资产</div>
-          <div className="text-3xl font-bold text-primary-light">
+          <div className="text-2xl font-bold text-primary-light">
             ¥{account.total_value.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
           </div>
         </div>
 
         <div className="bg-dark-light p-4 rounded-lg border border-border">
           <div className="text-gray-400 text-sm mb-1">可用资金</div>
-          <div className="text-2xl font-semibold text-white">
+          <div className="text-xl font-semibold text-white">
             ¥{account.cash.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
           </div>
         </div>
 
         <div className="bg-dark-light p-4 rounded-lg border border-border">
           <div className="text-gray-400 text-sm mb-1">持仓市值</div>
-          <div className="text-2xl font-semibold text-accent-cyan">
+          <div className="text-xl font-semibold text-accent-cyan">
             ¥{account.market_value.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
           </div>
+        </div>
+
+        <div className="bg-dark-light p-4 rounded-lg border border-border">
+          <div className="text-gray-400 text-sm mb-1">总盈亏</div>
+          <div className={`text-xl font-semibold ${profitColor}`}>
+            {profit >= 0 ? '+' : ''}{profit.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+          </div>
+          <div className={`text-sm ${profitColor}`}>
+            {returnPct >= 0 ? '+' : ''}{returnPct.toFixed(2)}%
+          </div>
+        </div>
+
+        <div className="bg-dark-light p-4 rounded-lg border border-border">
+          <div className="text-gray-400 text-sm mb-1">累计手续费</div>
+          <div className="text-xl font-semibold text-yellow-400">
+            ¥{(account.total_commission ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-sm text-gray-500">{account.total_trades ?? 0} 笔交易</div>
         </div>
       </div>
 

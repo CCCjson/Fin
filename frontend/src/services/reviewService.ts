@@ -24,6 +24,7 @@ export interface PositionDaily {
   prev_close: number | null;
   daily_change_pct: number | null;
   daily_pnl: number | null;
+  daily_pnl_pct: number | null;
 }
 
 export interface DayTrade {
@@ -82,8 +83,12 @@ export interface ReviewRecord {
 
 export interface ReviewData {
   date: string;
+  a_share_closed: boolean;
+  hk_closed: boolean;
+  us_closed: boolean;
   indices: IndexData[];
   daily_pnl: number;
+  daily_pnl_pct: number | null;
   positions: PositionDaily[];
   positions_count: number;
   trades: DayTrade[];

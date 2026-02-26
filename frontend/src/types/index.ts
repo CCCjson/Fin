@@ -13,6 +13,11 @@ export interface Account {
   total_value: number;
   available_cash: number;
   frozen_cash: number;
+  initial_cash: number;
+  unrealized_pnl: number;
+  total_commission: number;
+  total_trades: number;
+  return_pct: number;
   positions: Position[];
 }
 

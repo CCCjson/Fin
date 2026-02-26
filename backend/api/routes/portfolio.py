@@ -82,6 +82,20 @@ async def create_trade(req: TradeCreate):
     """录入一笔手动交易"""
     session = get_session()
     try:
+        # 卖出时校验持仓是否足够
+        if req.side.upper() == "SELL":
+            calculator = PortfolioCalculator()
+            current_positions = {
+                p["symbol"]: p["quantity"]
+                for p in calculator.get_current_positions()
+            }
+            held_qty = current_positions.get(req.symbol, 0)
+            if req.quantity > held_qty:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"持仓不足: {req.symbol} 当前持有 {held_qty} 股，卖出 {req.quantity} 股"
+                )
+
         # 自动计算金额
         amount = req.amount if req.amount is not None else req.price * req.quantity
 
