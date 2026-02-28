@@ -162,6 +162,9 @@ void PipelineTask::producer_work(const std::vector<std::string>& symbols,
         if (!bars.empty()) {
             bar_queue_.push(std::move(bars));
         }
+        if (is_retry) {
+            failed_--;  // 重试成功，扣回之前的 failed 计数
+        }
         done_++;
     };
 
@@ -182,8 +185,6 @@ void PipelineTask::producer_work(const std::vector<std::string>& symbols,
     if (!retry_symbols.empty() && !stop_requested_) {
         int retry_count = static_cast<int>(retry_symbols.size());
         std::cout << "[PipelineTask] 补抓 " << retry_count << " 只失败股票..." << std::endl;
-        // 这些股票会被重新尝试，先扣除 failed 计数
-        failed_ -= retry_count;
 
         for (const auto& symbol : retry_symbols) {
             if (stop_requested_) break;

@@ -6,7 +6,7 @@ import json
 import queue
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Query
@@ -335,4 +335,80 @@ async def get_indices(
     return {
         "success": True,
         "data": indices,
+    }
+
+
+def _is_a_share_trading() -> bool:
+    """判断 A 股是否在交易日的交易时间范围内（含午休）"""
+    tz = timezone(timedelta(hours=8))
+    now = datetime.now(tz)
+    if now.weekday() >= 5:
+        return False
+    t = now.hour * 100 + now.minute
+    # 9:15 ~ 15:00 整个交易日（含集合竞价和午休）
+    return 915 <= t <= 1500
+
+
+# ======== Ticker 缓存 ========
+_ticker_cache: dict = {"data": [], "is_trading": False, "updated_at": None}
+
+
+def _refresh_ticker_cache() -> None:
+    """刷新 ticker 缓存"""
+    try:
+        indices = fetch_index_realtime()
+        is_trading = _is_a_share_trading()
+        tz = timezone(timedelta(hours=8))
+        _ticker_cache["data"] = indices or []
+        _ticker_cache["is_trading"] = is_trading
+        _ticker_cache["updated_at"] = datetime.now(tz).isoformat()
+        logger.info(f"Ticker 缓存已刷新，{len(indices or [])} 条指数数据")
+    except Exception as e:
+        logger.error(f"Ticker 缓存刷新失败: {e}")
+
+
+async def _ticker_scheduler() -> None:
+    """后台定时任务：9:30 / 11:30 / 15:00 刷新 ticker"""
+    tz = timezone(timedelta(hours=8))
+    schedule_times = [(9, 30), (11, 30), (15, 0)]
+
+    while True:
+        now = datetime.now(tz)
+        # 找到今天下一个触发时间
+        next_run = None
+        for h, m in schedule_times:
+            candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            if candidate > now:
+                next_run = candidate
+                break
+        # 今天的都过了，排到明天第一个
+        if next_run is None:
+            tomorrow = now + timedelta(days=1)
+            h, m = schedule_times[0]
+            next_run = tomorrow.replace(hour=h, minute=m, second=0, microsecond=0)
+
+        wait_seconds = (next_run - now).total_seconds()
+        logger.info(f"Ticker 下次刷新: {next_run.strftime('%Y-%m-%d %H:%M')}（{wait_seconds:.0f}s 后）")
+        await asyncio.sleep(wait_seconds)
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _refresh_ticker_cache)
+
+
+@router.on_event("startup")
+async def _start_ticker_scheduler():
+    """启动时立即拉一次，然后启动定时任务"""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _refresh_ticker_cache)
+    asyncio.create_task(_ticker_scheduler())
+
+
+@router.get("/ticker")
+async def get_ticker():
+    """首页行情滚动条 — 直接读缓存，秒返回"""
+    return {
+        "success": True,
+        "is_trading": _ticker_cache["is_trading"],
+        "updated_at": _ticker_cache["updated_at"],
+        "data": _ticker_cache["data"],
     }

@@ -231,7 +231,7 @@ class AdvisorContextCollector:
             "kdj_d": _val("kdj_d"),
             "kdj_j": _val("kdj_j"),
             "boll_upper": _val("boll_upper"),
-            "boll_middle": _val("boll_middle"),
+            "boll_middle": _val("boll_mid"),
             "boll_lower": _val("boll_lower"),
             "atr": _val("atr"),
             "volume_ratio": _val("volume_ratio"),

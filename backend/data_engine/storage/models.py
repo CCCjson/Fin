@@ -570,3 +570,122 @@ class NewsAnalysis(Base):
 
     def __repr__(self):
         return f"<NewsAnalysis(id={self.analysis_id}, type={self.analysis_type}, status={self.status})>"
+
+
+# ==================== 自动化交易模块 ====================
+
+class PendingOrder(Base):
+    """待确认订单表 — 自动化流水线产生的待用户确认订单"""
+    __tablename__ = "pending_orders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(String(50), unique=True, nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    name = Column(String(100))
+    signal_type = Column(String(10), nullable=False)  # BUY / SELL
+    strategy = Column(String(50))
+    strength = Column(Float)
+
+    # 建议交易参数
+    suggested_price = Column(Float)
+    suggested_quantity = Column(Integer)
+    stop_loss = Column(Float)
+    take_profit = Column(Float)
+    reasons = Column(Text)  # JSON: [{indicator, detail}, ...]
+
+    # 订单状态: PENDING → CONFIRMED → EXECUTING → FILLED / REJECTED / EXPIRED / FAILED
+    status = Column(String(20), nullable=False, default="PENDING", index=True)
+    broker_type = Column(String(20), default="paper")  # paper / easytrader
+
+    # 执行结果
+    actual_price = Column(Float)
+    actual_quantity = Column(Integer)
+    commission = Column(Float)
+    reject_reason = Column(Text)
+
+    # 风控
+    risk_check_passed = Column(Integer, default=0)  # 0/1
+    risk_check_detail = Column(Text)  # JSON
+
+    # 来源与过期
+    scan_source = Column(String(30))  # daily / intraday / position_check
+    expire_at = Column(DateTime)
+    order_expire_minutes = Column(Integer, default=30)
+
+    # 时间戳
+    confirmed_at = Column(DateTime)
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index('idx_pending_symbol_status', 'symbol', 'status'),
+        Index('idx_pending_created', 'created_at'),
+    )
+
+    def __repr__(self):
+        return f"<PendingOrder(order_id={self.order_id}, symbol={self.symbol}, signal={self.signal_type}, status={self.status})>"
+
+
+class AutomationConfig(Base):
+    """自动化配置表 — 定义扫描任务参数"""
+    __tablename__ = "automation_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    config_id = Column(String(50), unique=True, nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    enabled = Column(Integer, default=1)  # 0/1
+
+    # 扫描类型
+    scan_type = Column(String(30), nullable=False)  # daily / intraday / position_check
+    frequency_minutes = Column(Integer, default=5)
+
+    # 策略与股票池
+    strategies = Column(Text)  # JSON: ["MACD", "KDJ", ...]
+    watchlist = Column(Text)   # JSON: ["600519", "000858", ...]
+    min_strength = Column(Float, default=0.6)
+
+    # 交易参数
+    broker_type = Column(String(20), default="paper")  # paper / easytrader
+    position_size_pct = Column(Float, default=0.10)  # 每笔仓位占比
+    order_expire_minutes = Column(Integer, default=30)
+
+    # 运行状态
+    last_run_at = Column(DateTime)
+    next_run_at = Column(DateTime)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<AutomationConfig(config_id={self.config_id}, name={self.name}, enabled={self.enabled})>"
+
+
+class AutomationLog(Base):
+    """自动化运行日志表 — 每次扫描执行的记录"""
+    __tablename__ = "automation_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    config_id = Column(String(50), nullable=False, index=True)
+    run_type = Column(String(30))  # daily / intraday / position_check
+    status = Column(String(20), nullable=False, default="running")  # running / completed / failed
+
+    # 统计
+    symbols_scanned = Column(Integer, default=0)
+    signals_found = Column(Integer, default=0)
+    orders_created = Column(Integer, default=0)
+    duration_seconds = Column(Float)
+
+    # 详情
+    error_message = Column(Text)
+    detail = Column(Text)  # JSON
+
+    started_at = Column(DateTime, server_default=func.now())
+    completed_at = Column(DateTime)
+
+    __table_args__ = (
+        Index('idx_autolog_config', 'config_id'),
+        Index('idx_autolog_started', 'started_at'),
+    )
+
+    def __repr__(self):
+        return f"<AutomationLog(config_id={self.config_id}, run_type={self.run_type}, status={self.status})>"

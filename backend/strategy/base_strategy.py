@@ -72,9 +72,13 @@ class BaseStrategy(ABC):
         """
         pass
 
-    def _calculate_strength(self, conditions: List[bool]) -> float:
+    def _calculate_strength(self, conditions) -> float:
         """
-        根据满足的条件数量计算信号强度
+        根据满足的条件计算信号强度。
+
+        支持两种模式：
+        - List[bool]：等权模式（向后兼容）
+        - List[Tuple[bool, float]]：加权模式，每个条件带权重
 
         Args:
             conditions: 条件列表
@@ -85,5 +89,14 @@ class BaseStrategy(ABC):
         if not conditions:
             return 0.0
 
-        satisfied = sum(1 for c in conditions if c)
-        return min(satisfied / len(conditions), 1.0)
+        # 检测是否为加权模式
+        if isinstance(conditions[0], tuple):
+            total_weight = sum(w for _, w in conditions)
+            if total_weight == 0:
+                return 0.0
+            satisfied_weight = sum(w for cond, w in conditions if cond)
+            return min(satisfied_weight / total_weight, 1.0)
+        else:
+            # 等权模式（向后兼容）
+            satisfied = sum(1 for c in conditions if c)
+            return min(satisfied / len(conditions), 1.0)

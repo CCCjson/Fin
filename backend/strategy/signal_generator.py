@@ -234,6 +234,87 @@ class SignalGenerator:
 
         return symbols, start_date, end_date
 
+    def scan_intraday(
+        self,
+        symbols: List[str],
+        bar_count: int = 240,
+        period: int = 1,
+        save_to_db: bool = True,
+    ) -> dict:
+        """
+        盘中扫描：基于 pytdx 分钟线数据生成信号
+
+        Args:
+            symbols: 股票代码列表
+            bar_count: 拉取 K 线根数，默认 240（≈1 个交易日的 1 分钟线）
+            period: K 线周期（分钟），支持 1/5/15/30/60
+            save_to_db: 是否保存信号到数据库
+
+        Returns:
+            与 scan_market() 一致的 result dict
+        """
+        from data_engine.fetchers.pytdx_fetcher import PytdxFetcher
+
+        logger.info(f"盘中扫描开始: {len(symbols)} 只股票, {period}分钟线, {bar_count}根")
+
+        fetcher = PytdxFetcher()
+        try:
+            bars_dict = fetcher.fetch_minute_bars_batch(symbols, period=period, count=bar_count)
+        finally:
+            fetcher.close()
+
+        total_signals = 0
+        buy_signals = 0
+        sell_signals = 0
+        results = {}
+
+        for symbol in symbols:
+            df = bars_dict.get(symbol)
+            if df is None or df.empty:
+                results[symbol] = {"count": 0, "buy": 0, "sell": 0}
+                continue
+
+            try:
+                df = self.indicators.calculate_all_indicators(df)
+
+                all_signals: List[Signal] = []
+                for strategy in self.strategies:
+                    signals = strategy.generate_signals(df, symbol)
+                    if signals:
+                        all_signals.extend(signals)
+
+                if save_to_db and all_signals:
+                    for signal in all_signals:
+                        try:
+                            self.repo.save_signal(**signal.to_dict())
+                        except Exception as e:
+                            logger.error(f"保存信号失败: {e}")
+
+                sym_buy = sum(1 for s in all_signals if s.signal_type.upper() == "BUY")
+                sym_sell = sum(1 for s in all_signals if s.signal_type.upper() == "SELL")
+
+                results[symbol] = {"count": len(all_signals), "buy": sym_buy, "sell": sym_sell}
+                total_signals += len(all_signals)
+                buy_signals += sym_buy
+                sell_signals += sym_sell
+
+            except Exception as e:
+                logger.error(f"盘中扫描处理 {symbol} 失败: {e}")
+                results[symbol] = {"count": 0, "buy": 0, "sell": 0, "error": str(e)}
+
+        logger.success(
+            f"盘中扫描完成: 扫描 {len(symbols)} 只，数据获取 {len(bars_dict)} 只，"
+            f"信号 {total_signals} 个 (买入 {buy_signals}, 卖出 {sell_signals})"
+        )
+
+        return {
+            "total_signals": total_signals,
+            "buy_signals": buy_signals,
+            "sell_signals": sell_signals,
+            "symbols_scanned": len(symbols),
+            "results": results,
+        }
+
     def scan_market(self,
                    symbols: Optional[List[str]] = None,
                    lookback_days: int = 60,

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, Suspense } from 'react';
-import { Link, useLocation, Navigate } from 'react-router-dom';
+import { Link, useLocation, Navigate, useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../../stores/authStore';
+import { RiskToastContainer } from '../RiskToast';
 
 // 路由懒加载 — 按页面拆分 chunk，首屏只加载当前页面的代码
 const Dashboard = React.lazy(() => import('../../pages/Dashboard').then(m => ({ default: m.Dashboard })));
@@ -17,23 +19,22 @@ const OrderBook = React.lazy(() => import('../../pages/OrderBook').then(m => ({ 
 const DataPipeline = React.lazy(() => import('../../pages/DataPipeline').then(m => ({ default: m.DataPipeline })));
 const Prediction = React.lazy(() => import('../../pages/Prediction').then(m => ({ default: m.Prediction })));
 const News = React.lazy(() => import('../../pages/News').then(m => ({ default: m.News })));
-
 const routeConfig: { path: string; Component: React.LazyExoticComponent<React.FC> }[] = [
-  { path: '/dashboard', Component: Dashboard },
-  { path: '/realtime', Component: Realtime },
-  { path: '/market', Component: Market },
-  { path: '/trading', Component: Trading },
-  { path: '/signals', Component: Signals },
-  { path: '/tracking', Component: SignalTracking },
-  { path: '/backtest', Component: Backtest },
-  { path: '/reports', Component: Reports },
-  { path: '/portfolio', Component: Portfolio },
-  { path: '/review', Component: Review },
-  { path: '/advisor', Component: Advisor },
-  { path: '/orderbook', Component: OrderBook },
-  { path: '/pipeline', Component: DataPipeline },
-  { path: '/prediction', Component: Prediction },
-  { path: '/news', Component: News },
+  { path: '/app/dashboard', Component: Dashboard },
+  { path: '/app/realtime', Component: Realtime },
+  { path: '/app/market', Component: Market },
+  { path: '/app/trading', Component: Trading },
+  { path: '/app/signals', Component: Signals },
+  { path: '/app/tracking', Component: SignalTracking },
+  { path: '/app/backtest', Component: Backtest },
+  { path: '/app/reports', Component: Reports },
+  { path: '/app/portfolio', Component: Portfolio },
+  { path: '/app/review', Component: Review },
+  { path: '/app/advisor', Component: Advisor },
+  { path: '/app/orderbook', Component: OrderBook },
+  { path: '/app/pipeline', Component: DataPipeline },
+  { path: '/app/prediction', Component: Prediction },
+  { path: '/app/news', Component: News },
 ];
 
 const PageLoader: React.FC = () => (
@@ -70,27 +71,27 @@ export const Layout: React.FC = () => {
   }, [currentPath]);
 
   const navItems = [
-    { path: '/realtime', label: '实时行情', icon: '⚡' },
-    { path: '/market', label: 'K线分析', icon: '📈' },
-    { path: '/portfolio', label: '交易记录', icon: '📒' },
-    { path: '/review', label: '每日复盘', icon: '📝' },
-    { path: '/signals', label: '信号分析', icon: '🎯' },
-    { path: '/tracking', label: '信号追踪', icon: '📋' },
-    { path: '/backtest', label: '策略回测', icon: '🔬' },
-    { path: '/reports', label: 'AI 报告', icon: '🤖' },
-    { path: '/advisor', label: 'AI 顾问', icon: '💬' },
-    { path: '/orderbook', label: '订单簿', icon: '📊' },
-    { path: '/pipeline', label: '数据管道', icon: '🚀' },
-    { path: '/prediction', label: '股价预测', icon: '🔮' },
-    { path: '/news', label: '新闻分析', icon: '📰' },
+    { path: '/app/realtime', label: '实时行情', icon: '⚡' },
+    { path: '/app/market', label: 'K线分析', icon: '📈' },
+    { path: '/app/portfolio', label: '交易记录', icon: '📒' },
+    { path: '/app/review', label: '每日复盘', icon: '📝' },
+    { path: '/app/signals', label: '信号分析', icon: '🎯' },
+    { path: '/app/tracking', label: '信号追踪', icon: '📋' },
+    { path: '/app/backtest', label: '策略回测', icon: '🔬' },
+    { path: '/app/reports', label: 'AI 报告', icon: '🤖' },
+    { path: '/app/advisor', label: 'AI 顾问', icon: '💬' },
+    { path: '/app/orderbook', label: '订单簿', icon: '📊' },
+    { path: '/app/pipeline', label: '数据管道', icon: '🚀' },
+    { path: '/app/prediction', label: '股价预测', icon: '🔮' },
+    { path: '/app/news', label: '新闻分析', icon: '📰' },
   ];
 
   // 底部 Tab 栏固定显示的 4 个 + 更多
   const mobileTabItems = [
-    { path: '/realtime', label: '行情', icon: '⚡' },
-    { path: '/market', label: 'K线', icon: '📈' },
-    { path: '/signals', label: '信号', icon: '🎯' },
-    { path: '/advisor', label: '顾问', icon: '💬' },
+    { path: '/app/realtime', label: '行情', icon: '⚡' },
+    { path: '/app/market', label: 'K线', icon: '📈' },
+    { path: '/app/signals', label: '信号', icon: '🎯' },
+    { path: '/app/advisor', label: '顾问', icon: '💬' },
   ];
 
   // 「更多」抽屉里的其他页面
@@ -101,28 +102,49 @@ export const Layout: React.FC = () => {
   const isActive = (path: string) => currentPath === path;
   const isInMore = moreItems.some((item) => item.path === currentPath);
 
-  // Redirect / to /realtime
-  if (currentPath === '/') {
-    return <Navigate to="/realtime" replace />;
+  const nav = useNavigate();
+  const logout = useAuthStore((s) => s.logout);
+
+  // /app 根路径重定向到实时行情
+  if (currentPath === '/app' || currentPath === '/app/') {
+    return <Navigate to="/app/realtime" replace />;
   }
 
   return (
-    <div className="flex h-screen bg-dark">
+    <div className="flex h-screen bg-dark" style={{ animation: 'layout-enter 0.3s ease both' }}>
+      {/* 风控 Toast 通知 */}
+      <RiskToastContainer />
+
       {/* ========== 桌面端侧边栏 ========== */}
       <aside className="hidden md:flex group/sidebar flex-shrink-0 h-full z-30 flex-col bg-dark-card border-r border-border w-16 hover:w-64 transition-all duration-300 overflow-hidden">
-        {/* Logo */}
+        {/* Logo + 返回主页 */}
         <div className="border-b border-border p-3 group-hover/sidebar:p-6 transition-all duration-300">
-          <div className="group-hover/sidebar:hidden text-2xl text-center text-primary-light font-bold">Q</div>
-          <div className="hidden group-hover/sidebar:block">
-            <h1 className="text-2xl font-bold text-white mb-2 bg-gradient-to-r from-primary-light to-accent-cyan bg-clip-text text-transparent whitespace-nowrap">
-              量化交易系统
+          <div
+            className="group-hover/sidebar:hidden text-2xl text-center cursor-pointer"
+            onClick={() => nav('/')}
+            title="返回主页"
+          >
+            🇨🇳
+          </div>
+          <div className="hidden group-hover/sidebar:flex items-center gap-3">
+            <span className="text-3xl cursor-pointer" onClick={() => nav('/')} title="返回主页">🇨🇳</span>
+            <h1
+              className="text-2xl font-bold text-white bg-gradient-to-r from-primary-light to-accent-cyan bg-clip-text text-transparent whitespace-nowrap cursor-pointer"
+              onClick={() => nav('/')}
+              title="返回主页"
+            >
+              Fin · A 股
             </h1>
-            <p className="text-gray-400 text-sm whitespace-nowrap">Quantitative Trading</p>
+            <p className="text-gray-400 text-sm whitespace-nowrap">
+              <span className="cursor-pointer hover:text-primary-light transition-colors" onClick={() => nav('/')}>
+                ← 返回主页
+              </span>
+            </p>
           </div>
         </div>
 
         {/* 导航 */}
-        <nav className="flex-1 py-4 space-y-2 overflow-y-auto px-1.5 group-hover/sidebar:px-3 transition-all duration-300">
+        <nav className="flex-1 py-4 space-y-2 overflow-y-auto scrollbar-hide px-1.5 group-hover/sidebar:px-3 transition-all duration-300">
           {navItems.map((item) => (
             <Link
               key={item.path}
@@ -140,10 +162,28 @@ export const Layout: React.FC = () => {
           ))}
         </nav>
 
-        {/* 底部版本号 */}
+        {/* 底部：退出登录 + 版本号 */}
         <div className="p-4 border-t border-border">
+          <button
+            onClick={() => { logout(); nav('/'); }}
+            className="w-full hidden group-hover/sidebar:flex items-center justify-center gap-2 px-3 py-2 mb-2 rounded-xl text-gray-400 hover:text-red-400 hover:bg-red-400/10 transition-colors text-sm"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            <span className="whitespace-nowrap">退出登录</span>
+          </button>
+          <button
+            onClick={() => { logout(); nav('/'); }}
+            title="退出登录"
+            className="group-hover/sidebar:hidden w-full flex items-center justify-center py-2 text-gray-500 hover:text-red-400 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
           <div className="text-xs text-gray-500 text-center hidden group-hover/sidebar:block whitespace-nowrap">
-            Version 1.4.0
+            Version 2.0.0
           </div>
         </div>
       </aside>

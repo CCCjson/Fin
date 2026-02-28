@@ -115,8 +115,8 @@ class TechnicalIndicators:
             RSI Series
         """
         delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        gain = (delta.where(delta > 0, 0)).ewm(alpha=1 / period, adjust=False).mean()
+        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1 / period, adjust=False).mean()
 
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
@@ -187,7 +187,7 @@ class TechnicalIndicators:
         Returns:
             量比Series
         """
-        avg_volume = df['volume'].rolling(window=period).mean()
+        avg_volume = df['volume'].rolling(window=period).mean().shift(1)
         volume_ratio = df['volume'] / avg_volume
 
         return volume_ratio
@@ -229,7 +229,7 @@ class TechnicalIndicators:
         # 布林带
         boll_dict = TechnicalIndicators.calculate_boll(df)
         result['boll_upper'] = boll_dict['upper']
-        result['boll_middle'] = boll_dict['middle']
+        result['boll_mid'] = boll_dict['middle']
         result['boll_lower'] = boll_dict['lower']
 
         # 量比
@@ -237,5 +237,9 @@ class TechnicalIndicators:
 
         # ATR
         result['atr'] = TechnicalIndicators.calculate_atr(df, 14)
+
+        # ADX/DMI（趋势强度）
+        from analysis_engine.indicators.trend import TrendIndicators
+        result = TrendIndicators.dmi(result)
 
         return result

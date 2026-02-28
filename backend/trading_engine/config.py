@@ -18,29 +18,22 @@ OPENCTP_CONFIG = {
     "td_address": "tcp://180.168.146.187:10130",  # 交易服务器
 }
 
-# 风险控制配置
+# 风险控制配置（对标 CLAUDE.md 风控要求）
 RISK_CONFIG = {
-    # 单笔订单限制
-    "max_order_value": 50000,  # 单笔最大金额
-    "max_order_quantity": 1000,  # 单笔最大数量
+    # 单个品种最大持仓比例 ≤ 总资金 20%
+    "max_position_pct": 0.20,
 
-    # 持仓限制
-    "max_position_value": 200000,  # 最大持仓市值
-    "max_position_pct": 0.3,  # 单个品种最大持仓比例
+    # 总仓位不超过 80%，保留 20% 现金
+    "max_total_position_pct": 0.80,
 
-    # 损失限制
-    "max_daily_loss": 5000,  # 最大单日亏损
-
-    # 最低现金保留
-    "min_cash": 10000,  # 最低现金保留
+    # 单日最大亏损 ≤ 总资金 3%（按 20 万总资金计算 = 6000）
+    "max_daily_loss": 6000,
 
     # 止损止盈
-    "stop_loss_pct": 0.05,  # 止损 5%
-    "take_profit_pct": 0.10,  # 止盈 10%
+    "stop_loss_pct": 0.05,   # 每笔交易必须设置止损 -5%
+    "take_profit_pct": 0.15,  # 止盈 15%
 
-    # 交易时间限制（可选，Paper Trading 可不启用）
-    # "allow_trading_hours": [
-    #     ("09:00", "11:30"),  # 上午
-    #     ("13:00", "15:00"),  # 下午
-    # ],
+    # 连续亏损 3 次后暂停交易 1 天
+    "max_consecutive_losses": 3,
+    "consecutive_loss_pause_days": 1,
 }

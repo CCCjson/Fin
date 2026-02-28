@@ -21,6 +21,7 @@ class VolumeIndicators(BaseIndicator):
         df = self.volume_ma(df)
         df = self.vwap(df)
         df = self.mfi(df)
+        df = self.volume_ratio(df)
 
         return df
 
@@ -136,7 +137,7 @@ class VolumeIndicators(BaseIndicator):
         if len(df) < period:
             return df
 
-        # 量比 = 当前成交量 / 过去N日平均成交量
-        df["volume_ratio"] = df["volume"] / df["volume"].rolling(window=period).mean()
+        # 量比 = 当前成交量 / 过去N日平均成交量（排除当天）
+        df["volume_ratio"] = df["volume"] / df["volume"].rolling(window=period).mean().shift(1)
 
         return df

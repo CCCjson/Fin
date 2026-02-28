@@ -2,12 +2,16 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { portfolioService } from '../services/portfolioService';
 import { reportService } from '../services/reportService';
+import { useRiskToastStore } from '../components/RiskToast';
 import type {
   ManualTrade,
   PortfolioPosition,
   PortfolioStats,
   ReportRecommendation,
   TradeCreateParams,
+  RiskAlert,
+  RiskOverview,
+  PositionRisk,
 } from '../services/portfolioService';
 import type { ReportSummary } from '../services/reportService';
 
@@ -91,6 +95,11 @@ export const Portfolio: React.FC = () => {
   const [importStep, setImportStep] = useState<1 | 2 | 3>(1);
   const [importing, setImporting] = useState(false);
 
+  // --- risk monitor ---
+  const [riskAlerts, setRiskAlerts] = useState<RiskAlert[]>([]);
+  const [riskOverview, setRiskOverview] = useState<RiskOverview | null>(null);
+  const [positionRisks, setPositionRisks] = useState<PositionRisk[]>([]);
+
   // --- load data ---
   const loadSettings = useCallback(async () => {
     try {
@@ -121,6 +130,17 @@ export const Portfolio: React.FC = () => {
     }
   }, []);
 
+  const loadRiskAlerts = useCallback(async () => {
+    try {
+      const data = await portfolioService.getRiskMonitor();
+      setRiskAlerts(data.alerts || []);
+      if (data.overview) setRiskOverview(data.overview);
+      if (data.position_risks) setPositionRisks(data.position_risks);
+    } catch (e) {
+      console.error('Failed to load risk alerts:', e);
+    }
+  }, []);
+
   const loadTrades = useCallback(async (targetPage?: number) => {
     try {
       setLoading(true);
@@ -146,11 +166,12 @@ export const Portfolio: React.FC = () => {
     loadSettings();
     loadStats();
     loadPositions();
+    loadRiskAlerts();
     loadTrades();
   }, []);
 
   const refreshAll = async () => {
-    await Promise.all([loadStats(), loadPositions(), loadTrades(1)]);
+    await Promise.all([loadStats(), loadPositions(), loadRiskAlerts(), loadTrades(1)]);
     setPage(1);
   };
 
@@ -215,6 +236,8 @@ export const Portfolio: React.FC = () => {
     });
   };
 
+  const addRiskToast = useRiskToastStore((s) => s.addToast);
+
   const handleSubmitTrade = async () => {
     const price = parseFloat(tradeForm.price);
     const quantity = parseInt(tradeForm.quantity);
@@ -234,7 +257,7 @@ export const Portfolio: React.FC = () => {
           note: tradeForm.note || undefined,
         });
       } else {
-        await portfolioService.createTrade({
+        const result = await portfolioService.createTrade({
           symbol: tradeForm.symbol,
           name: tradeForm.name || undefined,
           side: tradeForm.side,
@@ -244,6 +267,12 @@ export const Portfolio: React.FC = () => {
           trade_date: tradeForm.trade_date,
           note: tradeForm.note || undefined,
         });
+        // 弹出风控警告
+        if (result.risk_warnings?.length) {
+          for (const w of result.risk_warnings) {
+            addRiskToast({ rule: w.rule, message: w.message, severity: w.severity });
+          }
+        }
       }
       setShowTradeModal(false);
       await refreshAll();
@@ -480,6 +509,220 @@ export const Portfolio: React.FC = () => {
           </div>
         )}
 
+        {/* Risk Overview */}
+        {riskOverview && (
+          <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+            <h2 className="text-lg md:text-xl font-semibold text-white mb-4 flex items-center gap-2">
+              风控监控
+              {riskAlerts.length === 0
+                ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30 font-normal">全部正常</span>
+                : <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30 font-normal">{riskAlerts.length} 条预警</span>
+              }
+            </h2>
+
+            {/* 总览仪表盘 */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+              {/* 总仓位 — 环形仪表 */}
+              <div className="bg-dark-light rounded-xl p-4 border border-border flex flex-col items-center">
+                <svg viewBox="0 0 80 80" className="w-16 h-16 md:w-20 md:h-20">
+                  <circle cx="40" cy="40" r="32" fill="none" stroke="currentColor" strokeWidth="6" className="text-dark" />
+                  <circle cx="40" cy="40" r="32" fill="none" strokeWidth="6" strokeLinecap="round"
+                    className={riskOverview.total_position_pct > 80 ? 'text-red-500' : riskOverview.total_position_pct > 60 ? 'text-yellow-500' : 'text-emerald-500'}
+                    stroke="currentColor"
+                    strokeDasharray={`${Math.min(riskOverview.total_position_pct / riskOverview.max_total_position_pct, 1) * 201} 201`}
+                    transform="rotate(-90 40 40)"
+                    style={{ transition: 'stroke-dasharray 0.6s ease' }}
+                  />
+                  <text x="40" y="37" textAnchor="middle" className="fill-white text-[13px] font-bold">{riskOverview.total_position_pct}%</text>
+                  <text x="40" y="50" textAnchor="middle" className="fill-gray-500 text-[8px]">/ {riskOverview.max_total_position_pct}%</text>
+                </svg>
+                <div className="text-xs text-gray-400 mt-2">总仓位</div>
+              </div>
+
+              {/* 可用现金 */}
+              <div className="bg-dark-light rounded-xl p-4 border border-border flex flex-col items-center justify-center">
+                <div className="text-2xl md:text-3xl font-bold text-primary-light">
+                  {(riskOverview.cash / 10000).toFixed(1)}<span className="text-sm font-normal text-gray-500 ml-0.5">万</span>
+                </div>
+                <div className="text-xs text-gray-400 mt-1">可用现金</div>
+                <div className="text-[10px] text-gray-600 mt-0.5">
+                  总资金 {(riskOverview.total_capital / 10000).toFixed(1)}万
+                </div>
+              </div>
+
+              {/* 连续亏损 */}
+              <div className="bg-dark-light rounded-xl p-4 border border-border flex flex-col items-center justify-center">
+                <div className="flex items-end gap-1">
+                  {[...Array(riskOverview.max_consecutive_losses)].map((_, i) => (
+                    <div key={i} className={`w-4 md:w-5 rounded-sm transition-all ${
+                      i < riskOverview.consecutive_losses
+                        ? 'h-6 md:h-8 bg-red-500'
+                        : 'h-3 md:h-4 bg-dark'
+                    }`} />
+                  ))}
+                </div>
+                <div className="text-xs text-gray-400 mt-2">连续亏损</div>
+                <div className={`text-[10px] mt-0.5 ${riskOverview.consecutive_loss_ok ? 'text-gray-600' : 'text-red-400 font-medium'}`}>
+                  {riskOverview.consecutive_losses} / {riskOverview.max_consecutive_losses} 笔
+                </div>
+              </div>
+
+              {/* 持仓数量 */}
+              <div className="bg-dark-light rounded-xl p-4 border border-border flex flex-col items-center justify-center">
+                <div className="text-2xl md:text-3xl font-bold text-white">
+                  {positionRisks.length}<span className="text-sm font-normal text-gray-500 ml-0.5">只</span>
+                </div>
+                <div className="text-xs text-gray-400 mt-1">持仓数量</div>
+                <div className="text-[10px] text-gray-600 mt-0.5">
+                  市值 {(riskOverview.market_value / 10000).toFixed(1)}万
+                </div>
+              </div>
+            </div>
+
+            {/* 逐只持仓风控 */}
+            {positionRisks.length > 0 && (<>
+              <div className="text-xs text-gray-500 mb-3">持仓风控明细</div>
+
+              {/* Desktop: 表格 */}
+              <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
+                <table className="w-full text-sm">
+                  <thead className="bg-dark text-gray-500 text-xs">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left font-medium">股票</th>
+                      <th className="px-4 py-2.5 text-right font-medium">盈亏</th>
+                      <th className="px-4 py-2.5 text-center font-medium">风险区间</th>
+                      <th className="px-4 py-2.5 text-right font-medium">距止损</th>
+                      <th className="px-4 py-2.5 text-right font-medium">距止盈</th>
+                      <th className="px-4 py-2.5 text-right font-medium">仓位</th>
+                      <th className="px-4 py-2.5 text-center font-medium">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positionRisks.map((pr) => {
+                      const levelCfg: Record<string, { dot: string; label: string; labelCls: string }> = {
+                        danger:      { dot: 'bg-red-500',    label: '止损',   labelCls: 'text-red-400 bg-red-500/15' },
+                        warning:     { dot: 'bg-yellow-500', label: '警戒',   labelCls: 'text-yellow-400 bg-yellow-500/15' },
+                        take_profit: { dot: 'bg-blue-500',   label: '止盈',   labelCls: 'text-blue-400 bg-blue-500/15' },
+                        near_tp:     { dot: 'bg-cyan-400',   label: '近止盈', labelCls: 'text-cyan-400 bg-cyan-500/15' },
+                        safe:        { dot: 'bg-emerald-500', label: '安全',  labelCls: 'text-emerald-400 bg-emerald-500/15' },
+                      };
+                      const c = levelCfg[pr.level] || levelCfg.safe;
+                      // 迷你刻度条
+                      const range = pr.take_profit_pct - pr.stop_loss_pct;
+                      const ratio = Math.max(0, Math.min(1, (pr.pnl_pct - pr.stop_loss_pct) / range));
+
+                      return (
+                        <tr key={pr.symbol} className="border-t border-border/50 hover:bg-dark-light/50 transition-colors">
+                          <td className="px-4 py-2.5">
+                            <span className="text-white font-medium">{pr.name}</span>
+                            <span className="text-gray-600 text-xs ml-1.5">{pr.symbol}</span>
+                          </td>
+                          <td className={`px-4 py-2.5 text-right font-bold tabular-nums ${pr.pnl_pct >= 0 ? 'text-bull' : 'text-bear'}`}>
+                            {pr.pnl_pct >= 0 ? '+' : ''}{pr.pnl_pct}%
+                          </td>
+                          <td className="px-4 py-2.5">
+                            {(() => {
+                              const range = pr.take_profit_pct - pr.stop_loss_pct; // e.g. 15 - (-5) = 20
+                              const zeroPos = (0 - pr.stop_loss_pct) / range * 100; // 0点在轨道上的位置%
+                              const curPos = Math.max(0, Math.min(100, (pr.pnl_pct - pr.stop_loss_pct) / range * 100));
+                              return (
+                              <div className="flex items-center justify-center gap-1.5">
+                                <span className="text-[10px] text-red-400/70 w-8 text-right">{pr.stop_loss_pct}%</span>
+                                <div className="relative w-28 h-4">
+                                  {/* 轨道 */}
+                                  <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-1.5 bg-dark rounded-full" />
+                                  {/* 止损端点 */}
+                                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-red-500/60" />
+                                  {/* 止盈端点 */}
+                                  <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-blue-500/60" />
+                                  {/* 0 点基线 */}
+                                  <div
+                                    className="absolute top-0 bottom-0 w-px bg-gray-500/50"
+                                    style={{ left: `${zeroPos}%` }}
+                                  />
+                                  <div
+                                    className="absolute -top-0.5 text-[8px] text-gray-500 -translate-x-1/2"
+                                    style={{ left: `${zeroPos}%` }}
+                                  >0</div>
+                                  {/* 当前位置圆点 */}
+                                  <div
+                                    className={`absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full border-2 border-dark-light shadow-sm ${c.dot}`}
+                                    style={{ left: `calc(${curPos}% - 5px)`, transition: 'left 0.4s ease' }}
+                                  />
+                                </div>
+                                <span className="text-[10px] text-blue-400/70 w-8">+{pr.take_profit_pct}%</span>
+                              </div>
+                              );
+                            })()}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">
+                            <span className={pr.dist_stop_loss < 3 ? 'text-yellow-400' : 'text-gray-500'}>{pr.dist_stop_loss.toFixed(1)}%</span>
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">
+                            <span className={pr.dist_take_profit < 3 ? 'text-cyan-400' : 'text-gray-500'}>{pr.dist_take_profit.toFixed(1)}%</span>
+                          </td>
+                          <td className={`px-4 py-2.5 text-right tabular-nums ${pr.position_overweight ? 'text-red-400 font-bold' : 'text-gray-400'}`}>
+                            {pr.position_pct}%
+                          </td>
+                          <td className="px-4 py-2.5 text-center">
+                            <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium ${c.labelCls}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
+                              {c.label}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile: 卡片列表 */}
+              <div className="md:hidden space-y-2">
+                {positionRisks.map((pr) => {
+                  const levelCfg: Record<string, { dot: string; label: string; labelCls: string }> = {
+                    danger:      { dot: 'bg-red-500',     label: '止损',   labelCls: 'text-red-400 bg-red-500/15' },
+                    warning:     { dot: 'bg-yellow-500',  label: '警戒',   labelCls: 'text-yellow-400 bg-yellow-500/15' },
+                    take_profit: { dot: 'bg-blue-500',    label: '止盈',   labelCls: 'text-blue-400 bg-blue-500/15' },
+                    near_tp:     { dot: 'bg-cyan-400',    label: '近止盈', labelCls: 'text-cyan-400 bg-cyan-500/15' },
+                    safe:        { dot: 'bg-emerald-500', label: '安全',   labelCls: 'text-emerald-400 bg-emerald-500/15' },
+                  };
+                  const c = levelCfg[pr.level] || levelCfg.safe;
+
+                  return (
+                    <div key={pr.symbol} className="bg-dark-light rounded-lg border border-border p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${c.dot}`} />
+                          <span className="text-white font-medium text-sm">{pr.name}</span>
+                          <span className="text-gray-600 text-[10px]">{pr.symbol}</span>
+                        </div>
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${c.labelCls}`}>{c.label}</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-xs">
+                        <div>
+                          <div className="text-gray-600">盈亏</div>
+                          <div className={`font-bold ${pr.pnl_pct >= 0 ? 'text-bull' : 'text-bear'}`}>
+                            {pr.pnl_pct >= 0 ? '+' : ''}{pr.pnl_pct}%
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-600">距止损</div>
+                          <div className={pr.dist_stop_loss < 3 ? 'text-yellow-400' : 'text-gray-400'}>{pr.dist_stop_loss.toFixed(1)}%</div>
+                        </div>
+                        <div>
+                          <div className="text-gray-600">距止盈</div>
+                          <div className={pr.dist_take_profit < 3 ? 'text-cyan-400' : 'text-gray-400'}>{pr.dist_take_profit.toFixed(1)}%</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>)}
+          </div>
+        )}
+
         {/* Current Positions */}
         <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
           <h2 className="text-lg md:text-xl font-semibold text-white mb-4">当前持仓</h2>
@@ -507,10 +750,27 @@ export const Portfolio: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  positions.map(pos => (
+                  positions.map(pos => {
+                    const alerts = riskAlerts.filter(a => a.symbol === pos.symbol);
+                    return (
                     <tr key={pos.symbol} className="border-b border-border hover:bg-dark-light transition-colors">
                       <td className="px-4 py-3">
-                        <div className="font-medium text-white">{pos.name}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-white">{pos.name}</span>
+                          {alerts.map((a, i) => (
+                            <span
+                              key={i}
+                              title={a.message}
+                              className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                                a.severity === 'ERROR'
+                                  ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                  : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                              }`}
+                            >
+                              {a.rule === '止损规则' ? '止损' : a.rule === '止盈规则' ? '止盈' : a.rule}
+                            </span>
+                          ))}
+                        </div>
                         <div className="text-xs text-gray-500">{pos.symbol}</div>
                       </td>
                       <td className="px-4 py-3 text-right">{pos.quantity.toLocaleString()}</td>
@@ -535,7 +795,7 @@ export const Portfolio: React.FC = () => {
                         </button>
                       </td>
                     </tr>
-                  ))
+                  );})
                 )}
               </tbody>
             </table>
@@ -545,12 +805,26 @@ export const Portfolio: React.FC = () => {
             {positions.length === 0 ? (
               <div className="text-center text-gray-500 py-8">暂无持仓</div>
             ) : (
-              positions.map(pos => (
+              positions.map(pos => {
+                const alerts = riskAlerts.filter(a => a.symbol === pos.symbol);
+                return (
                 <div key={pos.symbol} className="bg-dark-light rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between mb-2">
-                    <div>
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-white">{pos.name}</span>
-                      <span className="text-xs text-gray-500 ml-2">{pos.symbol}</span>
+                      <span className="text-xs text-gray-500">{pos.symbol}</span>
+                      {alerts.map((a, i) => (
+                        <span
+                          key={i}
+                          className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                            a.severity === 'ERROR'
+                              ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                              : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                          }`}
+                        >
+                          {a.rule === '止损规则' ? '止损' : a.rule === '止盈规则' ? '止盈' : a.rule}
+                        </span>
+                      ))}
                     </div>
                     <button
                       onClick={() => openTradeModal({ symbol: pos.symbol, name: pos.name, side: 'SELL' })}
@@ -590,7 +864,7 @@ export const Portfolio: React.FC = () => {
                     </div>
                   </div>
                 </div>
-              ))
+              );})
             )}
           </div>
         </div>

@@ -13,6 +13,9 @@ from loguru import logger
 from data_engine.storage.database import get_session
 from data_engine.storage.models import ManualTrade, AnalysisReport, StockInfo
 from portfolio.calculator import PortfolioCalculator
+from trading_engine.risk.manager import RiskManager
+from trading_engine.risk.adapter import build_broker_info
+from trading_engine.config import RISK_CONFIG
 
 # A股代码格式: 6位数字 + .SH 或 .SZ
 _A_SHARE_PATTERN = re.compile(r'^\d{6}\.(SH|SZ)$')
@@ -129,8 +132,35 @@ async def create_trade(req: TradeCreate):
         session.refresh(trade)
 
         logger.info(f"录入交易: {trade.side} {trade.symbol} x{trade.quantity} @{trade.price}")
-        return _trade_to_dict(trade)
 
+        # --- 风控检查（不阻断录入，仅产生警告） ---
+        risk_warnings = []
+        try:
+            broker_info = build_broker_info()
+            rm = RiskManager(config=RISK_CONFIG)
+            _, results = rm.check_order(
+                symbol=trade.symbol,
+                action=trade.side,
+                quantity=trade.quantity,
+                price=trade.price,
+                broker_info=broker_info,
+            )
+            for r in results:
+                if not r.passed:
+                    risk_warnings.append({
+                        "rule": r.rule_name,
+                        "message": r.message,
+                        "severity": r.severity,
+                    })
+        except Exception as e:
+            logger.warning(f"风控检查异常（不影响录入）: {e}")
+
+        result = _trade_to_dict(trade)
+        result["risk_warnings"] = risk_warnings
+        return result
+
+    except HTTPException:
+        raise
     except Exception as e:
         session.rollback()
         logger.error(f"录入交易失败: {e}")
@@ -245,6 +275,150 @@ async def get_stats():
     calculator = PortfolioCalculator()
     stats = calculator.get_performance_stats()
     return stats
+
+
+@router.get("/risk-monitor", summary="风控监控")
+async def get_risk_monitor():
+    """全面的风控监控：总体概览 + 每只持仓的风控指标"""
+    try:
+        rm = RiskManager(config=RISK_CONFIG)
+        broker_info = build_broker_info()
+        total_capital = broker_info["total_value"]
+        market_value = broker_info["market_value"]
+        positions = broker_info["positions"]
+        recent_pnls = broker_info.get("recent_closed_pnls", [])
+        last_loss_date = broker_info.get("last_loss_date")
+
+        stop_loss_pct = RISK_CONFIG.get("stop_loss_pct", 0.05)
+        take_profit_pct = RISK_CONFIG.get("take_profit_pct", 0.15)
+        max_pos_pct = RISK_CONFIG.get("max_position_pct", 0.20)
+        max_total_pct = RISK_CONFIG.get("max_total_position_pct", 0.80)
+
+        # --- 总体概览 ---
+        total_position_pct = (market_value / total_capital) if total_capital > 0 else 0
+        cash = broker_info["cash"]
+
+        # 连续亏损
+        consecutive_losses = 0
+        for p in recent_pnls:
+            if p < 0:
+                consecutive_losses += 1
+            else:
+                break
+
+        overview = {
+            "total_capital": total_capital,
+            "market_value": round(market_value, 2),
+            "cash": round(cash, 2),
+            "total_position_pct": round(total_position_pct * 100, 1),
+            "max_total_position_pct": max_total_pct * 100,
+            "total_position_ok": total_position_pct <= max_total_pct,
+            "consecutive_losses": consecutive_losses,
+            "max_consecutive_losses": RISK_CONFIG.get("max_consecutive_losses", 3),
+            "consecutive_loss_ok": consecutive_losses < RISK_CONFIG.get("max_consecutive_losses", 3),
+            "last_loss_date": last_loss_date,
+        }
+
+        # --- 每只持仓的风控指标 ---
+        position_risks = []
+        alerts = []
+
+        for sym, pos in positions.items():
+            cur = pos.get("current_price")
+            avg = pos.get("avg_cost", 0)
+            mv = pos.get("market_value") or 0
+
+            if cur is None or avg <= 0:
+                continue
+
+            # 直接复用 PortfolioCalculator 已算好的百分比，保证和持仓表一致
+            pnl_pct_display = pos.get("unrealized_pnl_pct")
+            if pnl_pct_display is None:
+                pnl_pct_display = round((cur - avg) / avg * 100, 2)
+
+            pnl_ratio = pnl_pct_display / 100  # 转回小数做比较
+            pos_pct = mv / total_capital if total_capital > 0 else 0
+
+            stop_loss_display = round(stop_loss_pct * 100, 2)   # 5.0
+            take_profit_display = round(take_profit_pct * 100, 2)  # 15.0
+
+            # 距止损/止盈的距离（百分点）
+            dist_stop_loss = pnl_pct_display - (-stop_loss_display)
+            dist_take_profit = take_profit_display - pnl_pct_display
+
+            # 风控级别
+            if pnl_ratio <= -stop_loss_pct:
+                level = "danger"
+            elif pnl_ratio <= -stop_loss_pct * 0.6:
+                level = "warning"
+            elif pnl_ratio >= take_profit_pct:
+                level = "take_profit"
+            elif pnl_ratio >= take_profit_pct * 0.8:
+                level = "near_tp"
+            else:
+                level = "safe"
+
+            # 仓位是否超限
+            pos_overweight = pos_pct > max_pos_pct
+
+            entry = {
+                "symbol": sym,
+                "name": pos.get("name", sym),
+                "pnl_pct": pnl_pct_display,
+                "position_pct": round(pos_pct * 100, 1),
+                "max_position_pct": max_pos_pct * 100,
+                "position_overweight": pos_overweight,
+                "stop_loss_pct": -stop_loss_display,
+                "take_profit_pct": take_profit_display,
+                "dist_stop_loss": round(dist_stop_loss, 2),
+                "dist_take_profit": round(dist_take_profit, 2),
+                "level": level,
+            }
+            position_risks.append(entry)
+
+            # 生成 alerts（兼容原来的前端逻辑）
+            if level == "danger":
+                alerts.append({
+                    "symbol": sym, "name": pos.get("name", sym),
+                    "rule": "止损规则",
+                    "message": f"亏损 {abs(pnl_pct_display):.2f}% 触发止损（止损线 {stop_loss_display:.0f}%）",
+                    "severity": "ERROR",
+                })
+            elif level == "warning":
+                alerts.append({
+                    "symbol": sym, "name": pos.get("name", sym),
+                    "rule": "接近止损",
+                    "message": f"亏损 {abs(pnl_pct_display):.2f}%，接近止损线 {stop_loss_display:.0f}%",
+                    "severity": "WARNING",
+                })
+            elif level == "take_profit":
+                alerts.append({
+                    "symbol": sym, "name": pos.get("name", sym),
+                    "rule": "止盈规则",
+                    "message": f"盈利 {pnl_pct_display:.2f}% 触发止盈（止盈线 {take_profit_display:.0f}%）",
+                    "severity": "WARNING",
+                })
+            if pos_overweight:
+                alerts.append({
+                    "symbol": sym, "name": pos.get("name", sym),
+                    "rule": "仓位超限",
+                    "message": f"仓位 {pos_pct*100:.1f}% 超过单股限制 {max_pos_pct*100:.0f}%",
+                    "severity": "ERROR",
+                })
+
+        # 按风险级别排序：danger > warning > take_profit > near_tp > safe
+        level_order = {"danger": 0, "warning": 1, "take_profit": 2, "near_tp": 3, "safe": 4}
+        position_risks.sort(key=lambda x: (level_order.get(x["level"], 9), -abs(x["pnl_pct"])))
+
+        return {
+            "overview": overview,
+            "position_risks": position_risks,
+            "alerts": alerts,
+        }
+
+    except Exception as e:
+        logger.error(f"风控监控异常: {e}")
+        return {"overview": {}, "position_risks": [], "alerts": [], "error": str(e)}
 
 
 @router.get("/reports/{report_id}/recommendations", summary="获取报告推荐列表")

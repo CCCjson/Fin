@@ -79,4 +79,60 @@ body {
   .shadow-card {
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
   }
+
+  .animate-jelly {
+    animation: jelly 0.6s ease;
+  }
+}
+
+@keyframes jelly {
+  0%   { transform: scale(1, 1); }
+  15%  { transform: scale(0.94, 1.06); }
+  30%  { transform: scale(1.06, 0.94); }
+  45%  { transform: scale(0.98, 1.02); }
+  60%  { transform: scale(1.02, 0.98); }
+  75%  { transform: scale(0.99, 1.01); }
+  100% { transform: scale(1, 1); }
+}
+
+@keyframes fade-up {
+  0%   { opacity: 0; transform: translateY(30px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes card-enter {
+  0%   { opacity: 0; transform: translateY(40px) scale(0.95); }
+  60%  { opacity: 1; transform: translateY(-4px) scale(1.01); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+@keyframes layout-enter {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes flash-pulse {
+  0%   { opacity: 0; }
+  20%  { opacity: 0.5; }
+  100% { opacity: 0; }
+}
+
+.animate-ticker {
+  animation: ticker-scroll 30s linear infinite;
+}
+.animate-ticker:hover {
+  animation-play-state: paused;
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out both;
 }

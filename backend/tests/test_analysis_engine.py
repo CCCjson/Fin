@@ -83,7 +83,7 @@ def main():
         logger.info(f"  MA5: {latest.get('ma5', 0):.2f} | MA10: {latest.get('ma10', 0):.2f} | MA20: {latest.get('ma20', 0):.2f}")
         logger.info(f"  RSI: {latest.get('rsi', 0):.2f}")
         logger.info(f"  KDJ: K={latest.get('kdj_k', 0):.2f}, D={latest.get('kdj_d', 0):.2f}, J={latest.get('kdj_j', 0):.2f}")
-        logger.info(f"  MACD: {latest.get('macd', 0):.2f} | Signal: {latest.get('macd_signal', 0):.2f}")
+        logger.info(f"  MACD: {latest.get('macd', 0):.2f} | DEA: {latest.get('macd_dea', 0):.2f}")
         logger.info(f"  布林带: 上轨={latest.get('boll_upper', 0):.2f}, 中轨={latest.get('boll_mid', 0):.2f}, 下轨={latest.get('boll_lower', 0):.2f}")
 
     except Exception as e:

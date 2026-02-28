@@ -83,13 +83,10 @@ async def health():
 async def fetch(req: PipelineFetchRequest):
     """提交数据抓取任务"""
     body = req.model_dump()
-    # 注入代理 API URL（密钥只存在 .env 中，前端只传 use_proxy: true/false）
-    if req.use_proxy:
-        body["proxy_api_url"] = os.getenv("kuaidaili_api", "")
-        if not body["proxy_api_url"]:
-            logger.warning("use_proxy=True 但 .env 中未配置 kuaidaili_api，将直连")
-    else:
-        body["proxy_api_url"] = ""
+    # 强制走快代理（Clash TUN 会劫持 eastmoney 直连请求导致失败）
+    body["proxy_api_url"] = os.getenv("kuaidaili_api", "")
+    if not body["proxy_api_url"]:
+        logger.warning("未配置 kuaidaili_api，将直连（可能因 Clash 而失败）")
     # 移除前端专用字段，C++ 不需要
     body.pop("use_proxy", None)
     result = await _proxy("POST", "/api/pipeline/fetch", body)

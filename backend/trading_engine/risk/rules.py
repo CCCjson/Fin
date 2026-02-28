@@ -288,6 +288,9 @@ class StopLossRule(RiskRule):
         if not self.enabled:
             return RiskCheckResult(True, self.name, "规则已禁用", "INFO")
 
+        if avg_cost <= 0:
+            return RiskCheckResult(True, self.name, "无持仓成本，跳过", "INFO")
+
         loss_pct = (current_price - avg_cost) / avg_cost
 
         if loss_pct < -self.stop_loss_pct:
@@ -323,6 +326,9 @@ class TakeProfitRule(RiskRule):
         if not self.enabled:
             return RiskCheckResult(True, self.name, "规则已禁用", "INFO")
 
+        if avg_cost <= 0:
+            return RiskCheckResult(True, self.name, "无持仓成本，跳过", "INFO")
+
         profit_pct = (current_price - avg_cost) / avg_cost
 
         if profit_pct > self.take_profit_pct:
@@ -337,5 +343,98 @@ class TakeProfitRule(RiskRule):
             True,
             self.name,
             f"未触发止盈",
+            "INFO"
+        )
+
+
+class MaxTotalPositionPercentRule(RiskRule):
+    """总仓位比例限制（保留现金）"""
+
+    def __init__(self, max_percent: float, enabled: bool = True):
+        super().__init__("总仓位比例限制", enabled)
+        self.max_percent = max_percent  # 0.0 - 1.0，如 0.8 表示总仓位不超过 80%
+
+    def check(
+        self,
+        order_value: float,
+        current_market_value: float,
+        total_value: float,
+        action: str,
+        **kwargs
+    ) -> RiskCheckResult:
+        if not self.enabled:
+            return RiskCheckResult(True, self.name, "规则已禁用", "INFO")
+
+        if action == "BUY":
+            new_market_value = current_market_value + order_value
+            position_pct = new_market_value / total_value if total_value > 0 else 1.0
+
+            if position_pct > self.max_percent:
+                return RiskCheckResult(
+                    False,
+                    self.name,
+                    f"买入后总仓位 {position_pct*100:.1f}% 将超过限制 {self.max_percent*100:.0f}%（需保留 {(1-self.max_percent)*100:.0f}% 现金）",
+                    "WARNING"
+                )
+
+        return RiskCheckResult(
+            True,
+            self.name,
+            f"总仓位在限制内",
+            "INFO"
+        )
+
+
+class ConsecutiveLossRule(RiskRule):
+    """连续亏损暂停交易规则"""
+
+    def __init__(self, max_consecutive: int = 3, pause_days: int = 1, enabled: bool = True):
+        super().__init__("连续亏损暂停交易", enabled)
+        self.max_consecutive = max_consecutive
+        self.pause_days = pause_days
+
+    def check(self, recent_closed_pnls: list = None, last_loss_date: str = None, **kwargs) -> RiskCheckResult:
+        if not self.enabled:
+            return RiskCheckResult(True, self.name, "规则已禁用", "INFO")
+
+        if not recent_closed_pnls:
+            return RiskCheckResult(True, self.name, "无平仓记录", "INFO")
+
+        # 从最近的平仓记录中检查连续亏损次数
+        consecutive_losses = 0
+        for pnl in recent_closed_pnls:
+            if pnl < 0:
+                consecutive_losses += 1
+            else:
+                break
+
+        if consecutive_losses >= self.max_consecutive:
+            # 检查最后一笔亏损日期，判断是否还在暂停期
+            if last_loss_date:
+                from datetime import date as date_type
+                try:
+                    loss_date = date_type.fromisoformat(last_loss_date) if isinstance(last_loss_date, str) else last_loss_date
+                    days_since = (date_type.today() - loss_date).days
+                    if days_since < self.pause_days:
+                        return RiskCheckResult(
+                            False,
+                            self.name,
+                            f"已连续亏损 {consecutive_losses} 笔，建议暂停交易 {self.pause_days} 天（距上次亏损仅 {days_since} 天）",
+                            "WARNING"
+                        )
+                except (ValueError, TypeError):
+                    pass
+
+            return RiskCheckResult(
+                False,
+                self.name,
+                f"已连续亏损 {consecutive_losses} 笔，建议暂停交易并复盘",
+                "WARNING"
+            )
+
+        return RiskCheckResult(
+            True,
+            self.name,
+            f"连续亏损 {consecutive_losses} 笔，未触发暂停",
             "INFO"
         )

@@ -16,6 +16,8 @@ from .rules import (
     MinCashRule,
     StopLossRule,
     TakeProfitRule,
+    MaxTotalPositionPercentRule,
+    ConsecutiveLossRule,
 )
 
 
@@ -71,6 +73,17 @@ class RiskManager:
 
         if "take_profit_pct" in self.config:
             self.add_rule(TakeProfitRule(self.config["take_profit_pct"]))
+
+        # 总仓位限制
+        if "max_total_position_pct" in self.config:
+            self.add_rule(MaxTotalPositionPercentRule(self.config["max_total_position_pct"]))
+
+        # 连续亏损暂停
+        if "max_consecutive_losses" in self.config:
+            self.add_rule(ConsecutiveLossRule(
+                max_consecutive=self.config["max_consecutive_losses"],
+                pause_days=self.config.get("consecutive_loss_pause_days", 1),
+            ))
 
     def add_rule(self, rule: RiskRule):
         """添加风险规则"""
@@ -143,16 +156,26 @@ class RiskManager:
                     "current_market_value": broker_info.get("market_value", 0),
                     "total_value": broker_info.get("total_value", 0),
                     "current_pnl": broker_info.get("unrealized_pnl", 0),
+                    "recent_closed_pnls": broker_info.get("recent_closed_pnls", []),
+                    "last_loss_date": broker_info.get("last_loss_date"),
                 }
 
                 # 如果是针对特定持仓的检查，添加持仓信息
                 if "positions" in broker_info and symbol in broker_info["positions"]:
                     pos = broker_info["positions"][symbol]
-                    kwargs.update({
-                        "current_position_value": pos.market_value,
-                        "avg_cost": pos.avg_cost,
-                        "current_price": pos.current_price,
-                    })
+                    # 支持字典和对象两种访问方式
+                    if isinstance(pos, dict):
+                        kwargs.update({
+                            "current_position_value": pos.get("market_value", 0) or 0,
+                            "avg_cost": pos.get("avg_cost", 0),
+                            "current_price": pos.get("current_price", price),
+                        })
+                    else:
+                        kwargs.update({
+                            "current_position_value": pos.market_value,
+                            "avg_cost": pos.avg_cost,
+                            "current_price": pos.current_price,
+                        })
                 else:
                     kwargs.update({
                         "current_position_value": 0,

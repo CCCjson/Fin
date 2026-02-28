@@ -346,8 +346,8 @@ def fetch_index_realtime(
     """
     url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 
-    # 上证指数=1.000001, 深证成指=0.399001, 创业板指=0.399006, 科创50=1.000688
-    secids = "1.000001,0.399001,0.399006,1.000688"
+    # 上证指数, 深证成指, 创业板指, 科创50, 恒生指数
+    secids = "1.000001,0.399001,0.399006,1.000688,100.HSI"
 
     params = {
         "fltt": 2,
@@ -394,8 +394,42 @@ def fetch_index_realtime(
                 "amount": item.get("f6"),
             })
 
+        # 补充纳斯达克（东财不支持，用 yfinance）
+        try:
+            nasdaq = _fetch_nasdaq()
+            if nasdaq:
+                result.append(nasdaq)
+        except Exception as e:
+            logger.warning(f"纳斯达克数据获取失败: {e}")
+
         return result
 
     except requests.RequestException as e:
         logger.error(f"指数行情请求异常: {e}")
         return []
+
+
+def _fetch_nasdaq() -> Optional[Dict[str, Any]]:
+    """用 yfinance 获取纳斯达克综合指数"""
+    import yfinance as yf
+    ticker = yf.Ticker("^IXIC")
+    hist = ticker.history(period="2d")
+    if hist.empty or len(hist) < 1:
+        return None
+    latest = hist.iloc[-1]
+    price = round(float(latest["Close"]), 2)
+    if len(hist) >= 2:
+        prev_close = float(hist.iloc[-2]["Close"])
+        change_pct = round((price - prev_close) / prev_close * 100, 2)
+        change_amount = round(price - prev_close, 2)
+    else:
+        change_pct = 0.0
+        change_amount = 0.0
+    return {
+        "code": "IXIC",
+        "name": "纳斯达克",
+        "price": price,
+        "change_pct": change_pct,
+        "change_amount": change_amount,
+        "amount": None,
+    }

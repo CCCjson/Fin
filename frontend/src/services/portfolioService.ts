@@ -95,6 +95,58 @@ export interface ReportRecommendation {
   strategy: string;
 }
 
+export interface RiskWarning {
+  rule: string;
+  message: string;
+  severity: 'WARNING' | 'ERROR';
+}
+
+export interface TradeCreateResponse extends ManualTrade {
+  risk_warnings: RiskWarning[];
+}
+
+export interface RiskAlert {
+  symbol: string;
+  name: string;
+  rule: string;
+  message: string;
+  severity: 'WARNING' | 'ERROR';
+}
+
+export interface RiskOverview {
+  total_capital: number;
+  market_value: number;
+  cash: number;
+  total_position_pct: number;
+  max_total_position_pct: number;
+  total_position_ok: boolean;
+  consecutive_losses: number;
+  max_consecutive_losses: number;
+  consecutive_loss_ok: boolean;
+  last_loss_date: string | null;
+}
+
+export interface PositionRisk {
+  symbol: string;
+  name: string;
+  pnl_pct: number;
+  position_pct: number;
+  max_position_pct: number;
+  position_overweight: boolean;
+  stop_loss_pct: number;
+  take_profit_pct: number;
+  dist_stop_loss: number;
+  dist_take_profit: number;
+  level: 'danger' | 'warning' | 'take_profit' | 'near_tp' | 'safe';
+}
+
+export interface RiskMonitorResponse {
+  overview: RiskOverview;
+  position_risks: PositionRisk[];
+  alerts: RiskAlert[];
+  error?: string;
+}
+
 export interface TradeListParams {
   symbol?: string;
   side?: string;
@@ -107,8 +159,8 @@ export interface TradeListParams {
 // ==================== API ====================
 
 export const portfolioService = {
-  /** 录入交易 */
-  createTrade: async (params: TradeCreateParams): Promise<ManualTrade> => {
+  /** 录入交易（返回包含风控警告） */
+  createTrade: async (params: TradeCreateParams): Promise<TradeCreateResponse> => {
     return api.post('/portfolio/trades', params);
   },
 
@@ -144,6 +196,11 @@ export const portfolioService = {
     recommendations: ReportRecommendation[];
   }> => {
     return api.get(`/portfolio/reports/${reportId}/recommendations`);
+  },
+
+  /** 风控监控 */
+  getRiskMonitor: async (): Promise<RiskMonitorResponse> => {
+    return api.get('/portfolio/risk-monitor');
   },
 
   /** 从报告批量导入 */

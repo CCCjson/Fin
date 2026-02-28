@@ -34,8 +34,7 @@ export const DataPipeline: React.FC = () => {
   const [endDate, setEndDate] = useState('20260225');
   const [threadCount, setThreadCount] = useState(8);
   const [batchSize, setBatchSize] = useState(500);
-  const [useProxy, setUseProxy] = useState(true);
-  const [switchIpEvery, setSwitchIpEvery] = useState(800);
+  const [switchIpEvery] = useState(800);
 
   const [taskId, setTaskId] = useState('');
   const [progress, setProgress] = useState<TaskProgress | null>(null);
@@ -67,7 +66,7 @@ export const DataPipeline: React.FC = () => {
   const submitTask = async (params: {
     symbols: string[]; begin_date: string; end_date: string;
     thread_count: number; batch_size: number;
-    use_proxy: boolean; switch_ip_every: number;
+    switch_ip_every: number;
   }) => {
     setError('');
     setLoading(true);
@@ -89,7 +88,7 @@ export const DataPipeline: React.FC = () => {
 
   const handleSubmit = () => {
     const symList = symbols.trim() ? symbols.split(',').map(s => s.trim()).filter(Boolean) : [];
-    submitTask({ symbols: symList, begin_date: beginDate, end_date: endDate, thread_count: threadCount, batch_size: batchSize, use_proxy: useProxy, switch_ip_every: switchIpEvery });
+    submitTask({ symbols: symList, begin_date: beginDate, end_date: endDate, thread_count: threadCount, batch_size: batchSize, switch_ip_every: switchIpEvery });
   };
 
   const handleUpdateToday = () => {
@@ -97,7 +96,7 @@ export const DataPipeline: React.FC = () => {
     const yyyymmdd = today.getFullYear().toString()
       + (today.getMonth() + 1).toString().padStart(2, '0')
       + today.getDate().toString().padStart(2, '0');
-    submitTask({ symbols: [], begin_date: '20240101', end_date: yyyymmdd, thread_count: threadCount, batch_size: batchSize, use_proxy: useProxy, switch_ip_every: switchIpEvery });
+    submitTask({ symbols: [], begin_date: '20240101', end_date: yyyymmdd, thread_count: threadCount, batch_size: batchSize, switch_ip_every: switchIpEvery });
   };
 
   const handleStop = async () => {
@@ -186,25 +185,6 @@ export const DataPipeline: React.FC = () => {
               </Field>
             </div>
 
-            {/* 代理配置 */}
-            <div className="pt-2 border-t border-border/50">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs text-gray-500">快代理</label>
-                <button
-                  onClick={() => setUseProxy(!useProxy)}
-                  className={`relative w-9 h-5 rounded-full transition-colors ${useProxy ? 'bg-primary' : 'bg-gray-700'}`}
-                >
-                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${useProxy ? 'left-[18px]' : 'left-0.5'}`} />
-                </button>
-              </div>
-              {useProxy && (
-                <Field label="换IP频率" hint="每N次请求换IP">
-                  <input type="number" value={switchIpEvery} onChange={e => setSwitchIpEvery(Number(e.target.value))}
-                    min={50} max={5000} step={50}
-                    className="w-full p-2 bg-dark rounded border border-border text-white text-sm font-mono focus:border-primary outline-none" />
-                </Field>
-              )}
-            </div>
           </div>
 
           {/* 按钮区 */}

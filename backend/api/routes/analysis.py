@@ -69,10 +69,10 @@ async def calculate_indicators(request: IndicatorRequest):
 
             elif indicator_upper == "MACD":
                 df = analysis_engine.trend_indicators.macd(df)
-                if "macd" in df.columns:
+                if "macd_dif" in df.columns:
+                    result_indicators["macd_dif"] = df["macd_dif"].tolist()
+                    result_indicators["macd_dea"] = df["macd_dea"].tolist()
                     result_indicators["macd"] = df["macd"].tolist()
-                    result_indicators["macd_signal"] = df["macd_signal"].tolist()
-                    result_indicators["macd_hist"] = df["macd_hist"].tolist()
                 else:
                     raise HTTPException(
                         status_code=400,

@@ -21,6 +21,7 @@ class TrendIndicators(BaseIndicator):
         df = self.ema(df)
         df = self.macd(df)
         df = self.boll(df)
+        df = self.dmi(df)
 
         return df
 
@@ -78,14 +79,14 @@ class TrendIndicators(BaseIndicator):
         ema_fast = df["close"].ewm(span=fast, adjust=False).mean()
         ema_slow = df["close"].ewm(span=slow, adjust=False).mean()
 
-        # MACD 线
-        df["macd"] = ema_fast - ema_slow
+        # DIF线（快线 - 慢线）
+        df["macd_dif"] = ema_fast - ema_slow
 
-        # 信号线
-        df["macd_signal"] = df["macd"].ewm(span=signal, adjust=False).mean()
+        # DEA线（DIF的信号线）
+        df["macd_dea"] = df["macd_dif"].ewm(span=signal, adjust=False).mean()
 
-        # 柱状图
-        df["macd_hist"] = df["macd"] - df["macd_signal"]
+        # MACD柱状图 = (DIF - DEA) * 2（A股标准）
+        df["macd"] = (df["macd_dif"] - df["macd_dea"]) * 2
 
         return df
 

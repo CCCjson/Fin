@@ -266,22 +266,16 @@ export const Realtime: React.FC = () => {
 
       {/* 大盘指数 */}
       {indices.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+        <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
           {indices.map(idx => (
-            <div key={idx.code} className="bg-dark-card rounded-xl p-3 md:p-4 border border-border">
+            <div key={idx.code} className="bg-dark-card rounded-xl px-4 py-3 border border-border">
               <div className="text-xs md:text-sm text-gray-400 mb-1">{idx.name}</div>
-              <div className={`text-lg md:text-2xl font-bold ${changeColor(idx.change_pct)}`}>
-                {idx.price?.toFixed(2) ?? '-'}
-              </div>
-              <div className="flex gap-2 md:gap-3 mt-1 text-xs md:text-sm">
-                <span className={changeColor(idx.change_pct)}>
+              <div className="flex items-baseline gap-2">
+                <span className={`text-base md:text-lg font-bold ${changeColor(idx.change_pct)}`}>
+                  {idx.price?.toFixed(2) ?? '-'}
+                </span>
+                <span className={`text-xs md:text-sm ${changeColor(idx.change_pct)}`}>
                   {idx.change_pct != null ? (idx.change_pct > 0 ? '+' : '') + idx.change_pct.toFixed(2) + '%' : '-'}
-                </span>
-                <span className={changeColor(idx.change_amount)}>
-                  {idx.change_amount != null ? (idx.change_amount > 0 ? '+' : '') + idx.change_amount.toFixed(2) : '-'}
-                </span>
-                <span className="text-gray-500 hidden md:inline">
-                  {formatAmount(idx.amount)}
                 </span>
               </div>
             </div>
@@ -289,28 +283,28 @@ export const Realtime: React.FC = () => {
         </div>
       )}
 
-      {/* 市场统计卡片 */}
+      {/* 市场统计 */}
       {statistics && (
-        <div className="grid grid-cols-5 gap-1.5 md:gap-4">
-          <div className="bg-dark-card rounded-xl p-2 md:p-4 border border-border text-center">
-            <div className="text-[10px] md:text-sm text-gray-400">上涨</div>
-            <div className="text-base md:text-2xl font-bold text-red-500">{statistics.up}</div>
+        <div className="grid grid-cols-5 gap-2">
+          <div className="bg-dark-card rounded-xl px-4 py-3 border border-border text-center">
+            <div className="text-xs md:text-sm text-gray-400 mb-1">上涨</div>
+            <div className="text-base md:text-lg font-bold text-red-500">{statistics.up}</div>
           </div>
-          <div className="bg-dark-card rounded-xl p-2 md:p-4 border border-border text-center">
-            <div className="text-[10px] md:text-sm text-gray-400">下跌</div>
-            <div className="text-base md:text-2xl font-bold text-green-500">{statistics.down}</div>
+          <div className="bg-dark-card rounded-xl px-4 py-3 border border-border text-center">
+            <div className="text-xs md:text-sm text-gray-400 mb-1">下跌</div>
+            <div className="text-base md:text-lg font-bold text-green-500">{statistics.down}</div>
           </div>
-          <div className="bg-dark-card rounded-xl p-2 md:p-4 border border-border text-center">
-            <div className="text-[10px] md:text-sm text-gray-400">平盘</div>
-            <div className="text-base md:text-2xl font-bold text-gray-400">{statistics.flat}</div>
+          <div className="bg-dark-card rounded-xl px-4 py-3 border border-border text-center">
+            <div className="text-xs md:text-sm text-gray-400 mb-1">平盘</div>
+            <div className="text-base md:text-lg font-bold text-gray-400">{statistics.flat}</div>
           </div>
-          <div className="bg-dark-card rounded-xl p-2 md:p-4 border border-border text-center">
-            <div className="text-[10px] md:text-sm text-gray-400">涨停</div>
-            <div className="text-base md:text-2xl font-bold text-red-400">{statistics.limit_up}</div>
+          <div className="bg-dark-card rounded-xl px-4 py-3 border border-border text-center">
+            <div className="text-xs md:text-sm text-gray-400 mb-1">涨停</div>
+            <div className="text-base md:text-lg font-bold text-red-400">{statistics.limit_up}</div>
           </div>
-          <div className="bg-dark-card rounded-xl p-2 md:p-4 border border-border text-center">
-            <div className="text-[10px] md:text-sm text-gray-400">跌停</div>
-            <div className="text-base md:text-2xl font-bold text-green-400">{statistics.limit_down}</div>
+          <div className="bg-dark-card rounded-xl px-4 py-3 border border-border text-center">
+            <div className="text-xs md:text-sm text-gray-400 mb-1">跌停</div>
+            <div className="text-base md:text-lg font-bold text-green-400">{statistics.limit_down}</div>
           </div>
         </div>
       )}

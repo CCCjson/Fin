@@ -16,6 +16,39 @@ from .base_strategy import BaseStrategy, Signal
 # 模块级工具函数
 # ======================================================================
 
+def _is_limit_up_or_down(df: pd.DataFrame) -> Dict:
+    """
+    检测涨跌停，用于过滤信号。
+
+    涨停 → 不发BUY（追涨买不进）
+    跌停 → 不发SELL（杀跌卖不出）
+
+    Returns:
+        {"is_limit_up": bool, "is_limit_down": bool, "pct_change": float}
+    """
+    result = {"is_limit_up": False, "is_limit_down": False, "pct_change": 0.0}
+
+    if len(df) < 2:
+        return result
+
+    latest_close = df.iloc[-1]["close"]
+    prev_close = df.iloc[-2]["close"]
+
+    if prev_close == 0:
+        return result
+
+    pct = (latest_close - prev_close) / prev_close * 100
+    result["pct_change"] = pct
+
+    # 用9.5%作为阈值（覆盖A股10%限制，留0.5%浮点余量）
+    if pct >= 9.5:
+        result["is_limit_up"] = True
+    elif pct <= -9.5:
+        result["is_limit_down"] = True
+
+    return result
+
+
 def _check_trend_alignment(df: pd.DataFrame, lookback: int = 5) -> Dict:
     """
     回看 lookback 根 K 线，分析趋势方向。
@@ -191,6 +224,9 @@ class MACrossStrategy(BaseStrategy):
         if len(df) < self.slow_period + 1:
             return signals
 
+        # 涨跌停过滤
+        limit = _is_limit_up_or_down(df)
+
         latest = df.iloc[-1]
         prev = df.iloc[-2]
 
@@ -221,12 +257,12 @@ class MACrossStrategy(BaseStrategy):
             ]
 
             conditions = [
-                ma_fast > ma_slow,                      # 金叉
-                latest['close'] > ma_fast,              # 价格在快线上方
-                vol["is_amplified"],                     # 成交量放大
-                trend["direction"] == "up",             # 趋势向上
-                trend["price_above_ma20"],              # 价格在 MA20 上方
-                trend["higher_lows"],                   # 低点抬升
+                (ma_fast > ma_slow, 1.0),               # 金叉（基本条件）
+                (latest['close'] > ma_fast, 0.8),       # 价格在快线上方
+                (vol["is_amplified"], 1.2),              # 成交量放大
+                (trend["direction"] == "up", 0.8),      # 趋势向上
+                (trend["price_above_ma20"], 0.8),       # 价格在 MA20 上方
+                (trend["higher_lows"], 0.6),            # 低点抬升
             ]
             strength = self._calculate_strength(conditions)
 
@@ -258,10 +294,10 @@ class MACrossStrategy(BaseStrategy):
             ]
 
             conditions = [
-                ma_fast < ma_slow,                      # 死叉
-                latest['close'] < ma_fast,              # 价格在快线下方
-                trend["direction"] == "down",           # 趋势向下
-                trend["lower_highs"],                   # 高点降低
+                (ma_fast < ma_slow, 1.0),               # 死叉（基本条件）
+                (latest['close'] < ma_fast, 0.8),       # 价格在快线下方
+                (trend["direction"] == "down", 0.8),    # 趋势向下
+                (trend["lower_highs"], 0.6),            # 高点降低
             ]
             strength = self._calculate_strength(conditions)
 
@@ -277,6 +313,10 @@ class MACrossStrategy(BaseStrategy):
             )
             signals.append(signal)
 
+        # 涨停不发BUY，跌停不发SELL
+        signals = [s for s in signals
+                   if not (limit["is_limit_up"] and s.signal_type == "BUY")
+                   and not (limit["is_limit_down"] and s.signal_type == "SELL")]
         return signals
 
 
@@ -286,12 +326,12 @@ class MACDStrategy(BaseStrategy):
     def __init__(self):
         super().__init__(name="MACD")
 
-    def _detect_divergence(self, df: pd.DataFrame, lookback: int = 10) -> Optional[str]:
+    def _detect_divergence(self, df: pd.DataFrame, lookback: int = 25) -> Optional[str]:
         """
-        检测 MACD 底背离/顶背离。
+        检测 MACD 底背离/顶背离（波峰波谷算法）。
 
-        底背离：价格创新低，但 MACD DIF 未创新低 → 看涨
-        顶背离：价格创新高，但 MACD DIF 未创新高 → 看跌
+        底背离：至少2个局部低点，后一个价格更低但DIF更高 → 看涨
+        顶背离：至少2个局部高点，后一个价格更高但DIF更低 → 看跌
 
         Returns:
             "bullish_divergence" | "bearish_divergence" | None
@@ -300,38 +340,45 @@ class MACDStrategy(BaseStrategy):
             return None
 
         recent = df.iloc[-lookback:]
-        latest_close = df.iloc[-1]['close']
-        latest_dif = df.iloc[-1]['macd_dif']
-
-        if pd.isna(latest_dif):
-            return None
 
         closes = recent['close'].values
         difs = recent['macd_dif'].values
 
         # 过滤 NaN
-        valid_mask = ~np.isnan(difs)
-        if valid_mask.sum() < 3:
+        valid_mask = ~(np.isnan(difs) | np.isnan(closes))
+        if valid_mask.sum() < 10:
             return None
 
-        closes = closes[valid_mask]
-        difs = difs[valid_mask]
+        closes_v = closes[valid_mask]
+        difs_v = difs[valid_mask]
 
-        # 用 DIF 区间范围的 10% 作为背离阈值，避免乘法在负数时方向反转
-        dif_min = difs.min()
-        dif_max = difs.max()
-        dif_range = dif_max - dif_min
-        dif_threshold = dif_range * 0.10 if dif_range > 0 else 0.01
+        # 找局部低点（波谷）
+        local_lows = []
+        for i in range(1, len(closes_v) - 1):
+            if closes_v[i] < closes_v[i - 1] and closes_v[i] < closes_v[i + 1]:
+                local_lows.append(i)
 
-        # 底背离：价格在区间最低点附近，但 DIF 明显高于其最低点
-        if (latest_close <= closes.min() * 1.02 and
-                latest_dif > dif_min + dif_threshold):
-            return "bullish_divergence"
+        # 找局部高点（波峰）
+        local_highs = []
+        for i in range(1, len(closes_v) - 1):
+            if closes_v[i] > closes_v[i - 1] and closes_v[i] > closes_v[i + 1]:
+                local_highs.append(i)
 
-        # 顶背离：价格在区间最高点附近，但 DIF 明显低于其最高点
-        if (latest_close >= closes.max() * 0.98 and
-                latest_dif < dif_max - dif_threshold):
-            return "bearish_divergence"
+        # 底背离：后一个低点价格更低但DIF更高
+        if len(local_lows) >= 2:
+            last_low = local_lows[-1]
+            prev_low = local_lows[-2]
+            if (closes_v[last_low] < closes_v[prev_low] and
+                    difs_v[last_low] > difs_v[prev_low]):
+                return "bullish_divergence"
+
+        # 顶背离：后一个高点价格更高但DIF更低
+        if len(local_highs) >= 2:
+            last_high = local_highs[-1]
+            prev_high = local_highs[-2]
+            if (closes_v[last_high] > closes_v[prev_high] and
+                    difs_v[last_high] < difs_v[prev_high]):
+                return "bearish_divergence"
 
         return None
 
@@ -340,6 +387,9 @@ class MACDStrategy(BaseStrategy):
 
         if len(df) < 30:
             return signals
+
+        # 涨跌停过滤
+        limit = _is_limit_up_or_down(df)
 
         latest = df.iloc[-1]
         prev = df.iloc[-2]
@@ -383,12 +433,12 @@ class MACDStrategy(BaseStrategy):
                 reasons.append("MACD底背离（价格新低但DIF未新低，反转信号）")
 
             conditions = [
-                dif > dea,                              # 金叉
-                above_zero,                             # 零轴上方
-                bar_turning_red,                        # 柱转红
-                vol["is_amplified"],                    # 量能确认
-                trend["direction"] == "up",             # 趋势向上
-                has_divergence,                         # 底背离
+                (dif > dea, 1.0),                       # 金叉（基本条件）
+                (above_zero, 0.8),                      # 零轴上方
+                (bar_turning_red, 0.6),                 # 柱转红
+                (vol["is_amplified"], 1.2),             # 量能确认
+                (trend["direction"] == "up", 0.8),      # 趋势向上
+                (has_divergence, 1.5),                  # 底背离（最重要）
             ]
             strength = self._calculate_strength(conditions)
 
@@ -424,10 +474,10 @@ class MACDStrategy(BaseStrategy):
                 reasons.append("MACD顶背离（价格新高但DIF未新高，见顶信号）")
 
             conditions = [
-                dif < dea,                              # 死叉
-                macd_bar < 0,                           # 柱为负
-                trend["direction"] == "down",           # 趋势向下
-                has_divergence,                         # 顶背离
+                (dif < dea, 1.0),                       # 死叉（基本条件）
+                (macd_bar < 0, 0.6),                    # 柱为负
+                (trend["direction"] == "down", 0.8),    # 趋势向下
+                (has_divergence, 1.5),                  # 顶背离（最重要）
             ]
             strength = self._calculate_strength(conditions)
 
@@ -443,6 +493,52 @@ class MACDStrategy(BaseStrategy):
             )
             signals.append(signal)
 
+        # 独立背离预警：即使没有金叉/死叉，检测到背离也发出预警
+        if not signals and divergence:
+            if divergence == "bullish_divergence":
+                sl, tp, sl_desc = _compute_atr_stops(df, 'BUY', sl_mult=2.0, tp_mult=3.0)
+                signal = Signal(
+                    symbol=symbol,
+                    date=pd.to_datetime(latest['date']).date(),
+                    signal_type='BUY',
+                    strength=0.5,
+                    price=latest['close'],
+                    strategy=self.name,
+                    reasons=[
+                        "MACD底背离预警（价格新低但DIF未新低，无金叉确认）",
+                        f"当前价格: ¥{latest['close']:.2f}",
+                        trend["desc"],
+                        vol["desc"],
+                        sl_desc,
+                    ],
+                    entry_price=latest['close'],
+                    stop_loss=sl,
+                    take_profit=tp,
+                    position_size="20%"
+                )
+                signals.append(signal)
+            elif divergence == "bearish_divergence":
+                signal = Signal(
+                    symbol=symbol,
+                    date=pd.to_datetime(latest['date']).date(),
+                    signal_type='SELL',
+                    strength=0.5,
+                    price=latest['close'],
+                    strategy=self.name,
+                    reasons=[
+                        "MACD顶背离预警（价格新高但DIF未新高，无死叉确认）",
+                        f"当前价格: ¥{latest['close']:.2f}",
+                        trend["desc"],
+                        vol["desc"],
+                    ],
+                    entry_price=latest['close']
+                )
+                signals.append(signal)
+
+        # 涨停不发BUY，跌停不发SELL
+        signals = [s for s in signals
+                   if not (limit["is_limit_up"] and s.signal_type == "BUY")
+                   and not (limit["is_limit_down"] and s.signal_type == "SELL")]
         return signals
 
 
@@ -457,6 +553,9 @@ class KDJStrategy(BaseStrategy):
 
         if len(df) < 20:
             return signals
+
+        # 涨跌停过滤
+        limit = _is_limit_up_or_down(df)
 
         latest = df.iloc[-1]
         prev = df.iloc[-2]
@@ -487,12 +586,12 @@ class KDJStrategy(BaseStrategy):
             ]
 
             conditions = [
-                k > d,                                  # 金叉
-                k < 30,                                 # 超卖区
-                j < 20,                                 # J 值极低
-                not vol["is_shrunk"],                   # 不缩量
-                trend["direction"] != "down",           # 趋势不空
-                trend["price_above_ma20"],              # 价格在 MA20 上方
+                (k > d, 1.0),                           # 金叉（基本条件）
+                (k < 30, 0.8),                          # 超卖区
+                (j < 20, 0.6),                          # J 值极低
+                (not vol["is_shrunk"], 1.2),            # 不缩量（量能确认）
+                (trend["direction"] != "down", 0.8),    # 趋势不空
+                (trend["price_above_ma20"], 0.8),       # 价格在 MA20 上方
             ]
             strength = self._calculate_strength(conditions)
 
@@ -525,10 +624,10 @@ class KDJStrategy(BaseStrategy):
             ]
 
             conditions = [
-                k < d,                                  # 死叉
-                k > 70,                                 # 超买区
-                j > 80,                                 # J 值极高
-                trend["direction"] != "up",             # 趋势不多
+                (k < d, 1.0),                           # 死叉（基本条件）
+                (k > 70, 0.8),                          # 超买区
+                (j > 80, 0.6),                          # J 值极高
+                (trend["direction"] != "up", 0.8),      # 趋势不多
             ]
             strength = self._calculate_strength(conditions)
 
@@ -544,6 +643,10 @@ class KDJStrategy(BaseStrategy):
             )
             signals.append(signal)
 
+        # 涨停不发BUY，跌停不发SELL
+        signals = [s for s in signals
+                   if not (limit["is_limit_up"] and s.signal_type == "BUY")
+                   and not (limit["is_limit_down"] and s.signal_type == "SELL")]
         return signals
 
 
@@ -563,6 +666,9 @@ class RSIStrategy(BaseStrategy):
 
         if len(df) < 20:
             return signals
+
+        # 涨跌停过滤
+        limit = _is_limit_up_or_down(df)
 
         latest = df.iloc[-1]
         prev = df.iloc[-2]
@@ -589,11 +695,11 @@ class RSIStrategy(BaseStrategy):
             ]
 
             conditions = [
-                rsi > self.oversold,                    # 回升
-                rsi < 50,                               # 还有上行空间
-                vol["is_amplified"],                    # 量能确认
-                trend["direction"] != "down",           # 趋势不空
-                trend["price_above_ma20"],              # 价格在 MA20 上方
+                (rsi > self.oversold, 1.0),             # 回升（基本条件）
+                (rsi < 50, 0.8),                        # 还有上行空间
+                (vol["is_amplified"], 1.2),             # 量能确认
+                (trend["direction"] != "down", 0.8),    # 趋势不空
+                (trend["price_above_ma20"], 0.8),       # 价格在 MA20 上方
             ]
             strength = self._calculate_strength(conditions)
 
@@ -625,10 +731,10 @@ class RSIStrategy(BaseStrategy):
             ]
 
             conditions = [
-                rsi < self.overbought,                  # 回落
-                rsi > 50,                               # 还在高位
-                trend["direction"] != "up",             # 趋势不多
-                vol["is_amplified"],                    # 放量下跌
+                (rsi < self.overbought, 1.0),           # 回落（基本条件）
+                (rsi > 50, 0.8),                        # 还在高位
+                (trend["direction"] != "up", 0.8),      # 趋势不多
+                (vol["is_amplified"], 1.2),             # 放量下跌
             ]
             strength = self._calculate_strength(conditions)
 
@@ -644,4 +750,8 @@ class RSIStrategy(BaseStrategy):
             )
             signals.append(signal)
 
+        # 涨停不发BUY，跌停不发SELL
+        signals = [s for s in signals
+                   if not (limit["is_limit_up"] and s.signal_type == "BUY")
+                   and not (limit["is_limit_down"] and s.signal_type == "SELL")]
         return signals

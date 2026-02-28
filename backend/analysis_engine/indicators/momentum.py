@@ -43,9 +43,9 @@ class MomentumIndicators(BaseIndicator):
         gain = delta.where(delta > 0, 0)
         loss = -delta.where(delta < 0, 0)
 
-        # 计算平均涨跌
-        avg_gain = gain.rolling(window=period).mean()
-        avg_loss = loss.rolling(window=period).mean()
+        # Wilder平滑（ewm alpha=1/period），与主流行情软件一致
+        avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
 
         # 计算 RS 和 RSI
         rs = avg_gain / avg_loss
@@ -74,11 +74,11 @@ class MomentumIndicators(BaseIndicator):
         df["rsv"] = 100 * (df["close"] - low_min) / (high_max - low_min)
         df["rsv"] = df["rsv"].fillna(50)  # 初始值设为 50
 
-        # 计算 K 值（RSV 的移动平均）
-        df["kdj_k"] = df["rsv"].ewm(span=m1, adjust=False).mean()
+        # 计算 K 值（RSV 的移动平均，alpha=1/m1 与通达信一致）
+        df["kdj_k"] = df["rsv"].ewm(alpha=1 / m1, adjust=False).mean()
 
         # 计算 D 值（K 值的移动平均）
-        df["kdj_d"] = df["kdj_k"].ewm(span=m2, adjust=False).mean()
+        df["kdj_d"] = df["kdj_k"].ewm(alpha=1 / m2, adjust=False).mean()
 
         # 计算 J 值
         df["kdj_j"] = 3 * df["kdj_k"] - 2 * df["kdj_d"]

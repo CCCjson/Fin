@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data_engine import init_db
-from api.routes import data, analysis, backtest, trading, monitor, history, signal_generation, realtime, report, tracking, portfolio, review, advisor, orderbook, backtest_cpp, pipeline, prediction, news
+from api.routes import data, analysis, backtest, trading, monitor, history, signal_generation, realtime, report, tracking, portfolio, review, advisor, orderbook, backtest_cpp, pipeline, prediction, news, auth, automation, ws
 
 # 初始化数据库
 init_db()
@@ -52,6 +52,9 @@ app.include_router(backtest_cpp.router)
 app.include_router(pipeline.router)
 app.include_router(prediction.router)
 app.include_router(news.router)
+app.include_router(auth.router)
+app.include_router(automation.router)
+app.include_router(ws.router)
 
 
 # 全局异常处理
@@ -98,6 +101,13 @@ async def startup_event():
     logger.info("=" * 80)
     logger.info("API文档: http://127.0.0.1:8000/docs")
     logger.info("=" * 80)
+
+    # pytdx 预热：测速选最优服务器，后续盘中扫描直连不再等待
+    try:
+        from data_engine.fetchers.pytdx_fetcher import warmup_pytdx
+        warmup_pytdx()
+    except Exception as e:
+        logger.warning(f"pytdx 预热失败（不影响其他功能）: {e}")
 
 
 @app.on_event("shutdown")
