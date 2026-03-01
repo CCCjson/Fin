@@ -13,6 +13,7 @@ from loguru import logger
 from data_engine.storage.database import get_session
 from data_engine.storage.models import ManualTrade, AnalysisReport, StockInfo
 from portfolio.calculator import PortfolioCalculator
+from portfolio.closed_trade_service import ClosedTradeService
 from trading_engine.risk.manager import RiskManager
 from trading_engine.risk.adapter import build_broker_info
 from trading_engine.config import RISK_CONFIG
@@ -133,6 +134,13 @@ async def create_trade(req: TradeCreate):
 
         logger.info(f"录入交易: {trade.side} {trade.symbol} x{trade.quantity} @{trade.price}")
 
+        # --- SELL 交易自动生成已平仓记录 ---
+        if trade.side == "SELL":
+            try:
+                _closed_trade_service.generate_closed_trade_for_sell(trade.id)
+            except Exception as e:
+                logger.warning(f"自动生成已平仓记录失败（不影响录入）: {e}")
+
         # --- 风控检查（不阻断录入，仅产生警告） ---
         risk_warnings = []
         try:
@@ -227,6 +235,14 @@ async def update_trade(trade_id: int, req: TradeUpdate):
         session.commit()
         session.refresh(trade)
 
+        # 修改交易后，删除关联的已平仓记录并重新生成
+        try:
+            _closed_trade_service.delete_by_trade_id(trade_id)
+            if trade.side == "SELL":
+                _closed_trade_service.generate_closed_trade_for_sell(trade.id)
+        except Exception as e:
+            logger.warning(f"更新已平仓记录失败（不影响修改）: {e}")
+
         return _trade_to_dict(trade)
 
     except HTTPException:
@@ -247,6 +263,12 @@ async def delete_trade(trade_id: int):
         trade = session.query(ManualTrade).filter(ManualTrade.id == trade_id).first()
         if not trade:
             raise HTTPException(status_code=404, detail="交易记录不存在")
+
+        # 先删除关联的已平仓记录
+        try:
+            _closed_trade_service.delete_by_trade_id(trade_id)
+        except Exception as e:
+            logger.warning(f"删除关联已平仓记录失败: {e}")
 
         session.delete(trade)
         session.commit()
@@ -542,3 +564,50 @@ def _trade_to_dict(t: ManualTrade) -> dict:
         "created_at": str(t.created_at) if t.created_at else None,
         "updated_at": str(t.updated_at) if t.updated_at else None,
     }
+
+
+# ==================== 已平仓交易 API ====================
+
+_closed_trade_service = ClosedTradeService()
+
+
+@router.get("/closed-trades", summary="已平仓交易列表")
+async def get_closed_trades(
+    symbol: Optional[str] = Query(None, description="股票代码筛选"),
+    sell_reason: Optional[str] = Query(None, description="卖出原因: take_profit/stop_loss/manual_close"),
+    market_env: Optional[str] = Query(None, description="大盘环境: bullish/neutral/bearish"),
+    start_date: Optional[str] = Query(None, description="卖出开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="卖出结束日期 YYYY-MM-DD"),
+    sort_by: str = Query("sell_date", description="排序字段"),
+    sort_order: str = Query("desc", description="排序方向: asc/desc"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """获取已平仓交易列表（分页 + 筛选 + 汇总统计）"""
+    return _closed_trade_service.get_closed_trades(
+        symbol=symbol,
+        sell_reason=sell_reason,
+        market_env=market_env,
+        start_date=date.fromisoformat(start_date) if start_date else None,
+        end_date=date.fromisoformat(end_date) if end_date else None,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post("/closed-trades/rebuild", summary="重建已平仓记录")
+async def rebuild_closed_trades():
+    """清空并重建全部已平仓交易记录（幂等操作）"""
+    result = _closed_trade_service.rebuild_all()
+    return {
+        "message": f"重建完成: 成功 {result['count']} 笔, 失败 {result['errors']} 笔",
+        **result,
+    }
+
+
+@router.get("/closed-trades/stats", summary="已平仓交易统计")
+async def get_closed_trade_stats():
+    """按策略、卖出原因、大盘环境分组统计"""
+    return _closed_trade_service.get_stats()

@@ -46,6 +46,14 @@ async def generate_report(request: GenerateReportRequest):
         if request.period_end:
             period_end = date.fromisoformat(request.period_end)
 
+        # 周末不允许生成日报（周末无交易日，日报无意义）
+        check_date = period_end or date.today()
+        if request.report_type == "daily" and check_date.weekday() >= 5:
+            raise HTTPException(
+                status_code=400,
+                detail="周末无交易日，不支持生成日报。建议选择周报（weekly）或月报（monthly）。"
+            )
+
         loop = asyncio.get_event_loop()
 
         # 1. 收集数据（在线程池中执行，避免阻塞事件循环）
@@ -139,6 +147,8 @@ async def generate_report(request: GenerateReportRequest):
             },
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"生成报告失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))

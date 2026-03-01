@@ -156,6 +156,69 @@ export interface TradeListParams {
   offset?: number;
 }
 
+// ==================== 已平仓交易类型 ====================
+
+export interface ClosedTrade {
+  id: number;
+  symbol: string;
+  name: string | null;
+  buy_trade_id: number;
+  buy_date: string;
+  buy_price: number;
+  buy_quantity: number;
+  buy_signal_strategy: string | null;
+  buy_signal_strength: number | null;
+  ai_stop_loss: number | null;
+  ai_take_profit: number | null;
+  market_env: 'bullish' | 'neutral' | 'bearish' | 'unknown' | null;
+  market_env_detail: Record<string, any> | null;
+  sell_trade_id: number;
+  sell_date: string;
+  sell_price: number;
+  sell_quantity: number;
+  sell_reason: 'take_profit' | 'stop_loss' | 'manual_close' | null;
+  holding_days: number | null;
+  pnl: number | null;
+  pnl_pct: number | null;
+  total_commission: number | null;
+  benchmark_return_pct: number | null;
+  excess_return_pct: number | null;
+  created_at: string | null;
+}
+
+export interface ClosedTradeSummary {
+  count: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number;
+  total_pnl: number;
+  avg_pnl_pct: number;
+  avg_holding_days: number;
+  avg_win_pct: number;
+  avg_loss_pct: number;
+  avg_benchmark_return_pct: number | null;
+  avg_excess_return_pct: number | null;
+}
+
+export interface ClosedTradeListParams {
+  symbol?: string;
+  sell_reason?: string;
+  market_env?: string;
+  start_date?: string;
+  end_date?: string;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
+export interface ClosedTradeStats {
+  overall: ClosedTradeSummary;
+  by_strategy: Array<{ name: string } & ClosedTradeSummary>;
+  by_sell_reason: Array<{ name: string } & ClosedTradeSummary>;
+  by_market_env: Array<{ name: string } & ClosedTradeSummary>;
+}
+
 // ==================== API ====================
 
 export const portfolioService = {
@@ -210,6 +273,25 @@ export const portfolioService = {
     trades: ManualTrade[];
   }> => {
     return api.post('/portfolio/import-from-report', { report_id: reportId, trades });
+  },
+
+  /** 已平仓交易列表 */
+  getClosedTrades: async (params?: ClosedTradeListParams): Promise<{
+    total: number;
+    trades: ClosedTrade[];
+    summary: ClosedTradeSummary;
+  }> => {
+    return api.get('/portfolio/closed-trades', { params });
+  },
+
+  /** 重建已平仓记录 */
+  rebuildClosedTrades: async (): Promise<{ message: string; count: number; errors: number }> => {
+    return api.post('/portfolio/closed-trades/rebuild');
+  },
+
+  /** 已平仓交易统计 */
+  getClosedTradeStats: async (): Promise<ClosedTradeStats> => {
+    return api.get('/portfolio/closed-trades/stats');
   },
 
   /** 获取用户设置 */

@@ -13,6 +13,7 @@ from sqlalchemy import and_, or_
 
 from data_engine.storage.database import get_session
 from data_engine.storage.models import PendingOrder, ManualTrade, StockInfo
+from portfolio.closed_trade_service import ClosedTradeService
 from trading_engine.config import RISK_CONFIG
 from trading_engine.risk.manager import RiskManager
 from trading_engine.risk.adapter import build_broker_info, get_total_capital
@@ -71,6 +72,14 @@ class PendingOrderManager:
                 logger.warning(f"信号数据不完整，跳过: {signal}")
                 return None
 
+            # SELL 信号：检查是否真的持有该股票
+            if signal_type == "SELL":
+                broker = get_paper_broker()
+                position = broker.get_position(symbol)
+                if not position or position.quantity <= 0:
+                    logger.info(f"跳过 SELL 信号（无持仓）: {symbol}")
+                    return None
+
             # 查重：同 symbol + signal_type 30 分钟内不重复创建
             cutoff = datetime.now() - timedelta(minutes=30)
             existing = session.query(PendingOrder).filter(
@@ -87,12 +96,41 @@ class PendingOrderManager:
 
             # 计算建议数量
             total_capital = get_total_capital()
-            suggested_qty = int(total_capital * position_size_pct / price / 100) * 100
+            if signal_type == "SELL":
+                # SELL：用实际持仓数量
+                broker = get_paper_broker()
+                position = broker.get_position(symbol)
+                suggested_qty = position.available if position else 0
+            else:
+                # BUY：用资金比例计算
+                suggested_qty = int(total_capital * position_size_pct / price / 100) * 100
             if suggested_qty < 100:
                 suggested_qty = 100  # A 股最少 1 手
 
-            # 风控检查
-            broker_info = build_broker_info(total_capital)
+            # 风控检查（从实际 broker 获取账户状态）
+            if broker_type == "paper":
+                paper = get_paper_broker()
+                acct = paper.get_account_info()
+                positions_map = {
+                    sym: {
+                        "market_value": pos.market_value,
+                        "avg_cost": pos.avg_cost,
+                        "current_price": pos.current_price,
+                    }
+                    for sym, pos in paper.positions.items()
+                }
+                broker_info = {
+                    "cash": acct["cash"],
+                    "market_value": acct["market_value"],
+                    "total_value": acct["total_value"],
+                    "unrealized_pnl": acct["unrealized_pnl"],
+                    "positions": positions_map,
+                    "recent_closed_pnls": [],
+                    "last_loss_date": None,
+                }
+            else:
+                broker_info = build_broker_info(total_capital)
+
             risk_passed, risk_results = self.risk_manager.check_order(
                 symbol=symbol,
                 action=signal_type,
@@ -192,9 +230,31 @@ class PendingOrderManager:
             exec_price = override_price or pending.suggested_price
             exec_broker = broker_type or pending.broker_type
 
-            # 再次风控检查
-            total_capital = get_total_capital()
-            broker_info = build_broker_info(total_capital)
+            # 再次风控检查（从实际 broker 获取账户状态）
+            if exec_broker == "paper":
+                paper = get_paper_broker()
+                acct = paper.get_account_info()
+                positions_map = {
+                    sym: {
+                        "market_value": pos.market_value,
+                        "avg_cost": pos.avg_cost,
+                        "current_price": pos.current_price,
+                    }
+                    for sym, pos in paper.positions.items()
+                }
+                broker_info = {
+                    "cash": acct["cash"],
+                    "market_value": acct["market_value"],
+                    "total_value": acct["total_value"],
+                    "unrealized_pnl": acct["unrealized_pnl"],
+                    "positions": positions_map,
+                    "recent_closed_pnls": [],
+                    "last_loss_date": None,
+                }
+            else:
+                total_capital = get_total_capital()
+                broker_info = build_broker_info(total_capital)
+
             risk_passed, risk_results = self.risk_manager.check_order(
                 symbol=pending.symbol,
                 action=pending.signal_type,
@@ -225,6 +285,8 @@ class PendingOrderManager:
                     broker_order = self._execute_paper(pending.symbol, pending.signal_type, exec_qty, exec_price)
                 elif exec_broker == "easytrader":
                     broker_order = self._execute_easytrader(pending.symbol, pending.signal_type, exec_qty, exec_price)
+                elif exec_broker == "qmt":
+                    broker_order = self._execute_qmt(pending.symbol, pending.signal_type, exec_qty, exec_price)
                 else:
                     raise ValueError(f"不支持的券商类型: {exec_broker}")
 
@@ -419,6 +481,22 @@ class PendingOrderManager:
             )
         return broker.submit_order(symbol, action, quantity, price)
 
+    def _execute_qmt(self, symbol: str, action: str, quantity: int, price: float):
+        """通过 QMT (国金证券 miniQMT) 执行"""
+        from trading_engine.brokers.qmt_broker import QMTBroker
+        broker = QMTBroker()
+        if not broker.connect():
+            from trading_engine.brokers.base import BrokerOrder
+            return BrokerOrder(
+                order_id="",
+                symbol=symbol,
+                action=action,
+                quantity=quantity,
+                status=OrderStatus.FAILED,
+                error_msg="QMT Bridge 连接失败，请确认 bridge_server 已启动",
+            )
+        return broker.submit_order(symbol, action, quantity, price)
+
     def _save_manual_trade(self, session, pending: PendingOrder, broker_order):
         """将成交记录写入 ManualTrade 表"""
         exec_price = pending.actual_price or pending.suggested_price
@@ -435,12 +513,23 @@ class PendingOrderManager:
             commission=commission,
             trade_date=date.today(),
             note=f"[自动化] 策略={pending.strategy}, 强度={pending.strength:.2f}, 来源={pending.scan_source}, 订单号={pending.order_id}",
+            source_type="automation",
+            pending_order_id=pending.order_id,
             ai_strategy=pending.strategy,
             ai_stop_loss=pending.stop_loss,
             ai_take_profit=pending.take_profit,
             ai_composite_score=pending.strength,
         )
         session.add(trade)
+        session.flush()  # 获取 trade.id
+
+        # SELL 交易自动生成已平仓记录
+        if pending.signal_type == "SELL":
+            try:
+                closed_svc = ClosedTradeService()
+                closed_svc.generate_closed_trade_for_sell(trade.id)
+            except Exception as e:
+                logger.warning(f"自动化 SELL 生成已平仓记录失败: {e}")
 
     def _get_stock_name(self, session, symbol: str) -> str:
         """获取股票名称"""

@@ -8,6 +8,33 @@ import type { ReportSummary, ReportDetail, ReportStreamEvent } from '../services
 type View = 'list' | 'view' | 'generate';
 
 /* ================================================================
+   日历工具函数
+   ================================================================ */
+function getMonthDays(year: number, month: number) {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+function getFirstDayOfWeek(year: number, month: number) {
+  return new Date(year, month, 1).getDay(); // 0=周日
+}
+
+function isSameDay(d1: string, day: number, month: number, year: number) {
+  const d = new Date(d1);
+  return d.getFullYear() === year && d.getMonth() === month && d.getDate() === day;
+}
+
+function isToday(day: number, month: number, year: number) {
+  const now = new Date();
+  return now.getFullYear() === year && now.getMonth() === month && now.getDate() === day;
+}
+
+function isWeekend(dayOfWeek: number) {
+  return dayOfWeek === 0 || dayOfWeek === 6;
+}
+
+const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
+
+/* ================================================================
    章节解析
    ================================================================ */
 interface Chapter {
@@ -366,13 +393,66 @@ export const Reports: React.FC = () => {
     }
   };
 
+  /* ==================== 日历状态 ==================== */
+  const now = new Date();
+  const [calYear, setCalYear] = useState(now.getFullYear());
+  const [calMonth, setCalMonth] = useState(now.getMonth());
+  const [selectedDay, setSelectedDay] = useState<number | null>(now.getDate());
+  const [showGenConfig, setShowGenConfig] = useState(false);
+
+  const goMonthPrev = () => {
+    if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11); }
+    else setCalMonth(m => m - 1);
+    setSelectedDay(null);
+  };
+  const goMonthNext = () => {
+    if (calMonth === 11) { setCalYear(y => y + 1); setCalMonth(0); }
+    else setCalMonth(m => m + 1);
+    setSelectedDay(null);
+  };
+  const goToday = () => {
+    const t = new Date();
+    setCalYear(t.getFullYear());
+    setCalMonth(t.getMonth());
+    setSelectedDay(t.getDate());
+  };
+
+  // 按日期分组报告
+  const reportsByDay = useMemo(() => {
+    const map = new Map<number, ReportSummary[]>();
+    for (const r of reports) {
+      if (!r.created_at) continue;
+      const d = new Date(r.created_at);
+      if (d.getFullYear() === calYear && d.getMonth() === calMonth) {
+        const day = d.getDate();
+        if (!map.has(day)) map.set(day, []);
+        map.get(day)!.push(r);
+      }
+    }
+    return map;
+  }, [reports, calYear, calMonth]);
+
+  // 选中日期的报告
+  const selectedReports = selectedDay ? (reportsByDay.get(selectedDay) || []) : [];
+
+  // 日历网格数据
+  const calendarGrid = useMemo(() => {
+    const totalDays = getMonthDays(calYear, calMonth);
+    const firstDow = getFirstDayOfWeek(calYear, calMonth);
+    const cells: (number | null)[] = [];
+    for (let i = 0; i < firstDow; i++) cells.push(null);
+    for (let d = 1; d <= totalDays; d++) cells.push(d);
+    while (cells.length % 7 !== 0) cells.push(null);
+    return cells;
+  }, [calYear, calMonth]);
+
   /* ==================== 列表视图 ==================== */
   if (view === 'list') {
     return (
       <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6">
-        <div className="max-w-5xl mx-auto space-y-4 md:space-y-6">
+        <div className="max-w-6xl mx-auto space-y-4 md:space-y-5">
           {/* 头部 */}
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-violet-400 to-purple-300 bg-clip-text text-transparent">
                 AI 分析报告
@@ -380,168 +460,256 @@ export const Reports: React.FC = () => {
               <p className="text-gray-500 text-sm mt-1">基于量化数据的智能投资分析</p>
             </div>
             <button
-              onClick={handleGenerate}
-              className="group relative px-3 py-1.5 md:px-6 md:py-2.5 text-sm md:text-base bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl
+              onClick={() => setShowGenConfig(!showGenConfig)}
+              className="group relative px-3 py-1.5 md:px-5 md:py-2 text-sm bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl
                 hover:from-violet-600 hover:to-purple-700 shadow-lg shadow-purple-500/25
-                hover:shadow-purple-500/40 transition-all duration-300 flex items-center gap-2.5 font-medium w-fit"
+                hover:shadow-purple-500/40 transition-all duration-300 flex items-center gap-2 font-medium"
             >
-              <svg className="h-5 w-5 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="h-4 w-4 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               生成报告
             </button>
           </div>
 
-          {/* 配置卡片 */}
-          <div className="bg-gradient-card border border-border shadow-card p-3 md:p-5 rounded-2xl">
-            <div className="flex items-center gap-2 mb-4">
-              <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              <span className="text-sm font-medium text-gray-400">报告配置</span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wider">报告类型</label>
-                <select
-                  value={reportType}
-                  onChange={e => setReportType(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-dark text-white rounded-xl border border-border
-                    focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all"
-                >
-                  <option value="daily">日报</option>
-                  <option value="weekly">周报</option>
-                  <option value="monthly">月报</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wider">AI 模型</label>
-                <select
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-dark text-white rounded-xl border border-border
-                    focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all"
-                >
-                  <optgroup label="推荐">
-                    <option value="gpt-4.1">GPT-4.1 — 周报/月报首选 ~¥1.0/份</option>
-                    <option value="gpt-4.1-mini">GPT-4.1 Mini — 日报首选 ~¥0.2/份</option>
-                    <option value="gpt-4.1-nano">GPT-4.1 Nano — 极速省钱 ~¥0.05/份</option>
-                  </optgroup>
-                  <optgroup label="其他">
-                    <option value="gpt-4o">GPT-4o — 高质量 ~¥1.5/份</option>
-                    <option value="gpt-4o-mini">GPT-4o Mini — 快速 ~¥0.1/份</option>
-                    <option value="o3-mini">o3-mini — 深度推理 ~¥0.7/份</option>
-                  </optgroup>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* 报告列表 */}
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg md:text-xl font-semibold text-white">
-                历史报告
-                {totalReports > 0 && <span className="text-sm text-gray-500 font-normal ml-2">({totalReports})</span>}
-              </h2>
-            </div>
-
-            {loading ? (
-              <div className="text-center py-16 text-gray-500">
-                <svg className="animate-spin h-8 w-8 mx-auto mb-3 text-gray-600" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                加载中...
-              </div>
-            ) : reports.length === 0 ? (
-              <div className="bg-gradient-card border border-border rounded-2xl text-center py-16">
-                <div className="text-5xl mb-4 opacity-30">📄</div>
-                <div className="text-gray-400 text-lg mb-1">暂无报告</div>
-                <div className="text-gray-600 text-sm">点击上方"生成报告"创建你的第一份 AI 分析报告</div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {reports.map((r) => (
-                  <div
-                    key={r.report_id}
-                    onClick={() => handleViewReport(r.report_id)}
-                    className="group bg-gradient-card border border-border rounded-2xl p-3 md:p-5
-                      hover:border-violet-500/30 hover:shadow-lg hover:shadow-violet-500/5
-                      transition-all duration-300 cursor-pointer"
+          {/* 生成配置卡片 — 折叠 */}
+          {showGenConfig && (
+            <div className="bg-gradient-card border border-violet-500/30 shadow-card p-4 rounded-2xl animate-slide-in-right">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wider">报告类型</label>
+                  <select
+                    value={reportType}
+                    onChange={e => setReportType(e.target.value)}
+                    className="w-full px-3 py-2 bg-dark text-white rounded-xl border border-border
+                      focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all text-sm"
                   >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 min-w-0">
-                        {/* 标签行 */}
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className={`px-2.5 py-0.5 rounded-lg text-xs font-semibold ${
-                            r.report_type === 'daily'
-                              ? 'bg-green-500/15 text-green-400'
-                              : r.report_type === 'weekly'
-                              ? 'bg-blue-500/15 text-blue-400'
-                              : 'bg-amber-500/15 text-amber-400'
+                    <option value="daily">日报</option>
+                    <option value="weekly">周报</option>
+                    <option value="monthly">月报</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wider">AI 模型</label>
+                  <select
+                    value={model}
+                    onChange={e => setModel(e.target.value)}
+                    className="w-full px-3 py-2 bg-dark text-white rounded-xl border border-border
+                      focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all text-sm"
+                  >
+                    <optgroup label="推荐">
+                      <option value="gpt-4.1">GPT-4.1 ~¥1.0/份</option>
+                      <option value="gpt-4.1-mini">GPT-4.1 Mini ~¥0.2/份</option>
+                      <option value="gpt-4.1-nano">GPT-4.1 Nano ~¥0.05/份</option>
+                    </optgroup>
+                    <optgroup label="其他">
+                      <option value="gpt-4o">GPT-4o ~¥1.5/份</option>
+                      <option value="gpt-4o-mini">GPT-4o Mini ~¥0.1/份</option>
+                      <option value="o3-mini">o3-mini ~¥0.7/份</option>
+                    </optgroup>
+                  </select>
+                </div>
+                <button
+                  onClick={() => { setShowGenConfig(false); handleGenerate(); }}
+                  className="px-4 py-2 bg-violet-500 hover:bg-violet-600 text-white rounded-xl transition-colors text-sm font-medium"
+                >
+                  开始生成
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ========== 日历 + 报告面板 ========== */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 md:gap-5">
+            {/* 日历面板 */}
+            <div className="lg:col-span-3 bg-gradient-card border border-border rounded-2xl overflow-hidden">
+              {/* 月份导航 */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                <button onClick={goMonthPrev} className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-dark-light transition-all">
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                </button>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg font-bold text-white">{calYear} 年 {calMonth + 1} 月</h2>
+                  <button onClick={goToday} className="px-2 py-0.5 text-xs text-violet-400 bg-violet-500/10 rounded-md hover:bg-violet-500/20 transition-colors">
+                    今天
+                  </button>
+                </div>
+                <button onClick={goMonthNext} className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-dark-light transition-all">
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                </button>
+              </div>
+
+              {/* 星期表头 */}
+              <div className="grid grid-cols-7 border-b border-border">
+                {WEEKDAY_LABELS.map((w, i) => (
+                  <div key={w} className={`text-center text-xs font-medium py-2 ${isWeekend(i) ? 'text-gray-600' : 'text-gray-500'}`}>
+                    {w}
+                  </div>
+                ))}
+              </div>
+
+              {/* 日期网格 */}
+              <div className="grid grid-cols-7">
+                {calendarGrid.map((day, idx) => {
+                  if (day === null) return <div key={`empty-${idx}`} className="aspect-square border-b border-r border-border/30" />;
+                  const dow = idx % 7;
+                  const dayReports = reportsByDay.get(day) || [];
+                  const hasReports = dayReports.length > 0;
+                  const isSelected = selectedDay === day;
+                  const isTodayCell = isToday(day, calMonth, calYear);
+                  const weekendCell = isWeekend(dow);
+
+                  return (
+                    <button
+                      key={day}
+                      onClick={() => setSelectedDay(isSelected ? null : day)}
+                      className={`relative aspect-square border-b border-r border-border/30 flex flex-col items-center justify-center gap-0.5 transition-all duration-200 group/cell
+                        ${isSelected
+                          ? 'bg-violet-500/20 ring-1 ring-inset ring-violet-500/50'
+                          : hasReports
+                          ? 'hover:bg-dark-light/80'
+                          : 'hover:bg-dark-light/40'
+                        }
+                        ${weekendCell && !isSelected ? 'bg-dark/30' : ''}
+                      `}
+                    >
+                      {/* 今天的发光边框 */}
+                      {isTodayCell && (
+                        <span className="absolute inset-1 rounded-lg border border-violet-500/60 pointer-events-none" />
+                      )}
+
+                      {/* 日期数字 */}
+                      <span className={`text-sm font-medium transition-colors z-10
+                        ${isSelected ? 'text-violet-300' : isTodayCell ? 'text-violet-400' : weekendCell ? 'text-gray-600' : 'text-gray-400'}
+                        ${hasReports && !isSelected ? 'text-white' : ''}
+                      `}>
+                        {day}
+                      </span>
+
+                      {/* 报告指示点 */}
+                      {hasReports && (
+                        <div className="flex items-center gap-0.5 z-10">
+                          {dayReports.slice(0, 3).map((r, i) => (
+                            <span key={i} className={`w-1.5 h-1.5 rounded-full ${
+                              r.report_type === 'daily' ? 'bg-green-400' :
+                              r.report_type === 'weekly' ? 'bg-blue-400' : 'bg-amber-400'
+                            }`} />
+                          ))}
+                          {dayReports.length > 3 && (
+                            <span className="text-[8px] text-gray-500">+{dayReports.length - 3}</span>
+                          )}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* 图例 */}
+              <div className="flex items-center justify-center gap-4 py-2.5 border-t border-border text-xs text-gray-500">
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-400" />日报</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-400" />周报</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" />月报</span>
+                <span className="text-gray-600">|</span>
+                <span>共 {totalReports} 份报告</span>
+              </div>
+            </div>
+
+            {/* 报告列表面板 */}
+            <div className="lg:col-span-2">
+              <div className="bg-gradient-card border border-border rounded-2xl overflow-hidden h-full flex flex-col">
+                {/* 面板标题 */}
+                <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-white">
+                    {selectedDay
+                      ? `${calMonth + 1}月${selectedDay}日 — ${selectedReports.length} 份报告`
+                      : '选择日期查看报告'
+                    }
+                  </h3>
+                </div>
+
+                {/* 报告卡片列表 */}
+                <div className="flex-1 overflow-y-auto scrollbar-hide p-3 space-y-2.5">
+                  {loading ? (
+                    <div className="text-center py-12 text-gray-500">
+                      <svg className="animate-spin h-6 w-6 mx-auto mb-2 text-gray-600" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      加载中...
+                    </div>
+                  ) : !selectedDay ? (
+                    <div className="text-center py-12">
+                      <div className="text-3xl mb-3 opacity-20">📅</div>
+                      <div className="text-gray-500 text-sm">点击日历中的日期</div>
+                      <div className="text-gray-600 text-xs mt-1">查看当日生成的报告</div>
+                    </div>
+                  ) : selectedReports.length === 0 ? (
+                    <div className="text-center py-12">
+                      <div className="text-3xl mb-3 opacity-20">📄</div>
+                      <div className="text-gray-500 text-sm">该日暂无报告</div>
+                      <div className="text-gray-600 text-xs mt-1">点击右上角"生成报告"创建</div>
+                    </div>
+                  ) : (
+                    selectedReports.map((r) => (
+                      <div
+                        key={r.report_id}
+                        onClick={() => handleViewReport(r.report_id)}
+                        className="group bg-dark-light/50 border border-border/50 rounded-xl p-3
+                          hover:border-violet-500/30 hover:bg-dark-light
+                          transition-all duration-200 cursor-pointer"
+                      >
+                        {/* 标签 + 状态 */}
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            r.report_type === 'daily' ? 'bg-green-500/15 text-green-400' :
+                            r.report_type === 'weekly' ? 'bg-blue-500/15 text-blue-400' :
+                            'bg-amber-500/15 text-amber-400'
                           }`}>
                             {r.report_type === 'daily' ? '日报' : r.report_type === 'weekly' ? '周报' : '月报'}
                           </span>
-                          <span className={`px-2.5 py-0.5 rounded-lg text-xs font-medium ${
-                            r.status === 'completed'
-                              ? 'bg-green-500/15 text-green-400'
-                              : r.status === 'failed'
-                              ? 'bg-red-500/15 text-red-400'
-                              : 'bg-yellow-500/15 text-yellow-400'
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                            r.status === 'completed' ? 'bg-green-500/15 text-green-400' :
+                            r.status === 'failed' ? 'bg-red-500/15 text-red-400' :
+                            'bg-yellow-500/15 text-yellow-400'
                           }`}>
                             {r.status === 'completed' ? '已完成' : r.status === 'failed' ? '失败' : '生成中'}
                           </span>
                         </div>
+
                         {/* 标题 */}
-                        <div className="text-white font-medium text-base mb-2 truncate group-hover:text-violet-300 transition-colors">
+                        <div className="text-white text-sm font-medium truncate mb-1.5 group-hover:text-violet-300 transition-colors">
                           {r.title}
                         </div>
+
                         {/* 元信息 */}
-                        <div className="flex items-center gap-3 text-xs text-gray-500">
-                          <span className="flex items-center gap-1">
-                            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                            {r.model_used}
-                          </span>
-                          {r.token_count != null && (
-                            <span className="flex items-center gap-1">
-                              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z" /></svg>
-                              {r.token_count} tokens
-                            </span>
-                          )}
-                          {r.generation_time_seconds != null && (
-                            <span className="flex items-center gap-1">
-                              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                              {r.generation_time_seconds.toFixed(1)}s
-                            </span>
-                          )}
-                          <span className="flex items-center gap-1">
-                            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                            {r.created_at?.split('.')[0]}
-                          </span>
+                        <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                          <span>{r.model_used}</span>
+                          {r.token_count != null && <span>{r.token_count} tokens</span>}
+                          {r.generation_time_seconds != null && <span>{r.generation_time_seconds.toFixed(1)}s</span>}
+                        </div>
+
+                        {/* 右箭头 + 删除 */}
+                        <div className="flex items-center justify-end gap-1 mt-1">
+                          <button
+                            onClick={e => { e.stopPropagation(); handleDelete(r.report_id); }}
+                            className="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
+                            title="删除"
+                          >
+                            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                          <svg className="h-4 w-4 text-gray-600 group-hover:text-violet-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
                         </div>
                       </div>
-                      {/* 右侧操作 */}
-                      <div className="flex items-center gap-2 ml-4">
-                        <button
-                          onClick={e => { e.stopPropagation(); handleDelete(r.report_id); }}
-                          className="p-2 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
-                          title="删除"
-                        >
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                        <svg className="h-5 w-5 text-gray-600 group-hover:text-violet-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                    ))
+                  )}
+                </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>

@@ -393,6 +393,12 @@ class ManualTrade(Base):
     trade_date = Column(Date, nullable=False, index=True)
     note = Column(Text)
 
+    # 来源追溯
+    source_type = Column(String(20), nullable=True, index=True)
+        # "automation" | "manual_broker" | "manual_entry" | None(历史数据)
+    pending_order_id = Column(String(50), nullable=True, index=True)
+        # 关联 PendingOrder.order_id，用于溯源
+
     # AI 报告关联（可空，手动录入时为 null）
     report_id = Column(String(50), nullable=True, index=True)
     ai_recommended_price = Column(Float, nullable=True)
@@ -689,3 +695,153 @@ class AutomationLog(Base):
 
     def __repr__(self):
         return f"<AutomationLog(config_id={self.config_id}, run_type={self.run_type}, status={self.status})>"
+
+
+# ==================== Alpha Lab 模块 ====================
+
+class ClosedTrade(Base):
+    """已平仓交易记录表 — 将买入和卖出配对，追踪完整交易周期"""
+    __tablename__ = "closed_trades"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    name = Column(String(100))
+
+    # 买入侧
+    buy_trade_id = Column(Integer, nullable=False, index=True)  # ManualTrade.id
+    buy_date = Column(Date, nullable=False, index=True)
+    buy_price = Column(Float, nullable=False)  # 加权平均成本
+    buy_quantity = Column(Integer, nullable=False)
+    buy_signal_strategy = Column(String(100))  # AI 策略名
+    buy_signal_strength = Column(Float)  # 信号强度
+    ai_stop_loss = Column(Float)
+    ai_take_profit = Column(Float)
+
+    # 大盘环境
+    market_env = Column(String(20))  # bullish / neutral / bearish
+    market_env_detail = Column(Text)  # JSON: 三指标投票详情
+
+    # 卖出侧
+    sell_trade_id = Column(Integer, nullable=False, index=True)  # ManualTrade.id
+    sell_date = Column(Date, nullable=False, index=True)
+    sell_price = Column(Float, nullable=False)
+    sell_quantity = Column(Integer, nullable=False)
+    sell_reason = Column(String(30))  # take_profit / stop_loss / manual_close
+
+    # 收益统计
+    holding_days = Column(Integer)
+    pnl = Column(Float)  # 绝对盈亏（含佣金）
+    pnl_pct = Column(Float)  # 收益率 %
+    total_commission = Column(Float, default=0)
+
+    # 基准对比
+    benchmark_return_pct = Column(Float)  # 同期沪深300收益率 %
+    excess_return_pct = Column(Float)  # 超额收益率 %
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_closed_symbol_sell_date', 'symbol', 'sell_date'),
+        Index('idx_closed_sell_reason', 'sell_reason'),
+        Index('idx_closed_market_env', 'market_env'),
+    )
+
+    def __repr__(self):
+        return f"<ClosedTrade(symbol={self.symbol}, buy={self.buy_date}, sell={self.sell_date}, pnl={self.pnl_pct}%)>"
+
+
+class AlphaLabSession(Base):
+    """Alpha Lab 会话表"""
+    __tablename__ = "alpha_lab_sessions"
+
+    id = Column(String(50), primary_key=True)                # alab_xxxxxxxxxxxx
+    target_symbols = Column(Text, nullable=False)            # JSON: ["600519.SH", "AAPL"]
+    optimization_goal = Column(String(20), nullable=False)   # sharpe/return/win_rate/drawdown
+    data_start = Column(String(10), nullable=False)
+    data_end = Column(String(10), nullable=False)
+    max_iterations = Column(Integer, default=15)
+    initial_capital = Column(Float, default=1000000.0)
+    constraints = Column(Text)                               # JSON
+
+    # 运行状态
+    status = Column(String(20), default="running", index=True)  # running/paused/completed/failed
+    total_iterations = Column(Integer, default=0)
+    current_phase = Column(String(10), default="explore")    # explore/refine
+
+    # 最佳结果
+    best_iteration = Column(Integer)
+    best_sharpe = Column(Float)
+    best_composite_score = Column(Float)
+
+    # 成本追踪
+    total_tokens = Column(Integer, default=0)
+    cost_usd = Column(Float, default=0.0)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    completed_at = Column(DateTime)
+
+    def __repr__(self):
+        return f"<AlphaLabSession(id={self.id}, status={self.status}, best_sharpe={self.best_sharpe})>"
+
+
+class AlphaLabStrategy(Base):
+    """Alpha Lab 生成的策略"""
+    __tablename__ = "alpha_lab_strategies"
+
+    id = Column(String(80), primary_key=True)                # alab_xxx_iter1
+    session_id = Column(String(50), ForeignKey("alpha_lab_sessions.id"), nullable=False, index=True)
+    iteration = Column(Integer, nullable=False)
+
+    # 策略代码
+    code = Column(Text, nullable=False)
+    ai_reasoning = Column(Text)
+
+    # 回测指标（JSON）
+    train_metrics = Column(Text)
+    val_metrics = Column(Text)
+
+    # 评估
+    overfit_score = Column(Float)
+    composite_score = Column(Float, index=True)
+    walk_forward_results = Column(Text)                      # JSON
+
+    # 状态
+    status = Column(String(20), default="completed")         # completed/failed/rejected
+    error_message = Column(Text)
+    execution_time = Column(Float)                           # 秒
+
+    # 部署
+    deployed = Column(Integer, default=0)
+    deployed_at = Column(DateTime)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_alab_strat_session_score', 'session_id', 'composite_score'),
+    )
+
+    def __repr__(self):
+        return f"<AlphaLabStrategy(id={self.id}, iter={self.iteration}, score={self.composite_score})>"
+
+
+class AlphaLabLog(Base):
+    """Alpha Lab 运行日志"""
+    __tablename__ = "alpha_lab_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(50), ForeignKey("alpha_lab_sessions.id"), nullable=False, index=True)
+    iteration = Column(Integer)
+    level = Column(String(10), default="INFO")
+    event = Column(String(50), nullable=False)
+    message = Column(Text)
+    details = Column(Text)                                   # JSON
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_alab_log_session', 'session_id', 'created_at'),
+    )
+
+    def __repr__(self):
+        return f"<AlphaLabLog(session={self.session_id}, event={self.event})>"

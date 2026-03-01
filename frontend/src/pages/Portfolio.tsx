@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
+import { ClosedTradesTab } from '../components/ClosedTradesTab';
 import { portfolioService } from '../services/portfolioService';
 import { reportService } from '../services/reportService';
 import { useRiskToastStore } from '../components/RiskToast';
@@ -94,6 +95,9 @@ export const Portfolio: React.FC = () => {
   const [importPrices, setImportPrices] = useState<Record<string, { price: string; quantity: string }>>({});
   const [importStep, setImportStep] = useState<1 | 2 | 3>(1);
   const [importing, setImporting] = useState(false);
+
+  // --- tab ---
+  const [activeTab, setActiveTab] = useState<'positions' | 'trades' | 'closed'>('positions');
 
   // --- risk monitor ---
   const [riskAlerts, setRiskAlerts] = useState<RiskAlert[]>([]);
@@ -509,6 +513,30 @@ export const Portfolio: React.FC = () => {
           </div>
         )}
 
+        {/* Tab Navigation */}
+        <div className="flex border-b border-border">
+          {([
+            { key: 'positions' as const, label: '当前持仓' },
+            { key: 'trades' as const, label: '交易流水' },
+            { key: 'closed' as const, label: '已平仓交易' },
+          ]).map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-all ${
+                activeTab === tab.key
+                  ? 'border-primary text-primary-light'
+                  : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-600'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab: 当前持仓 */}
+        {activeTab === 'positions' && <>
+
         {/* Risk Overview */}
         {riskOverview && (
           <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
@@ -869,6 +897,11 @@ export const Portfolio: React.FC = () => {
           </div>
         </div>
 
+        </>}
+
+        {/* Tab: 交易流水 */}
+        {activeTab === 'trades' && <>
+
         {/* Filters */}
         <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -945,27 +978,18 @@ export const Portfolio: React.FC = () => {
                   <th className="px-3 py-3 text-right">金额</th>
                   <th className="px-3 py-3 text-right">佣金</th>
                   <th className="px-3 py-3 text-left">备注</th>
-                  <th className="px-3 py-3 text-right">AI价</th>
-                  <th className="px-3 py-3 text-right">差价</th>
-                  <th className="px-3 py-3 text-center">AI评分</th>
                   <th className="px-3 py-3 text-center">操作</th>
                 </tr>
               </thead>
               <tbody className="text-gray-300">
                 {trades.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                       {loading ? '加载中...' : '暂无交易记录'}
                     </td>
                   </tr>
                 ) : (
                   trades.map(t => {
-                    // 差价：买入时实际价-AI价（正=买贵了），卖出时AI价-实际价（正=卖便宜了）
-                    const priceDiff = t.ai_recommended_price != null
-                      ? (t.side === 'BUY'
-                          ? t.price - t.ai_recommended_price
-                          : t.ai_recommended_price - t.price)
-                      : null;
                     return (
                       <tr key={t.id} className="border-b border-border hover:bg-dark-light transition-colors">
                         <td className="px-3 py-3 whitespace-nowrap">{t.trade_date}</td>
@@ -988,22 +1012,6 @@ export const Portfolio: React.FC = () => {
                         <td className="px-3 py-3 text-right text-gray-400">{t.commission > 0 ? formatMoney(t.commission) : '-'}</td>
                         <td className="px-3 py-3 text-gray-400 max-w-[120px] truncate" title={t.note || ''}>
                           {t.note || '-'}
-                        </td>
-                        <td className="px-3 py-3 text-right text-accent-cyan">
-                          {t.ai_recommended_price != null ? t.ai_recommended_price.toFixed(2) : '-'}
-                        </td>
-                        <td className={`px-3 py-3 text-right font-medium ${
-                          priceDiff === null ? 'text-gray-500'
-                            : priceDiff < 0 ? 'text-bull'
-                            : priceDiff > 0 ? 'text-bear'
-                            : 'text-gray-400'
-                        }`}>
-                          {priceDiff !== null ? `${priceDiff >= 0 ? '+' : ''}${priceDiff.toFixed(2)}` : '-'}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          {t.ai_composite_score != null ? (
-                            <span className="text-accent-purple font-medium">{t.ai_composite_score.toFixed(1)}</span>
-                          ) : '-'}
                         </td>
                         <td className="px-3 py-3 text-center">
                           <div className="flex items-center justify-center gap-1">
@@ -1036,11 +1044,6 @@ export const Portfolio: React.FC = () => {
               </div>
             ) : (
               trades.map(t => {
-                const priceDiff = t.ai_recommended_price != null
-                  ? (t.side === 'BUY'
-                      ? t.price - t.ai_recommended_price
-                      : t.ai_recommended_price - t.price)
-                  : null;
                 return (
                   <div key={t.id} className="bg-dark-light rounded-lg border border-border p-3">
                     <div className="flex items-center justify-between mb-2">
@@ -1074,31 +1077,6 @@ export const Portfolio: React.FC = () => {
                         <span className="text-gray-500">佣金</span>
                         <span className="text-gray-400">{t.commission > 0 ? formatMoney(t.commission) : '-'}</span>
                       </div>
-                      {t.ai_recommended_price != null && (
-                        <>
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">AI价</span>
-                            <span className="text-accent-cyan">{t.ai_recommended_price.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">差价</span>
-                            <span className={`font-medium ${
-                              priceDiff === null ? 'text-gray-500'
-                                : priceDiff < 0 ? 'text-bull'
-                                : priceDiff > 0 ? 'text-bear'
-                                : 'text-gray-400'
-                            }`}>
-                              {priceDiff !== null ? `${priceDiff >= 0 ? '+' : ''}${priceDiff.toFixed(2)}` : '-'}
-                            </span>
-                          </div>
-                        </>
-                      )}
-                      {t.ai_composite_score != null && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">AI评分</span>
-                          <span className="text-accent-purple font-medium">{t.ai_composite_score.toFixed(1)}</span>
-                        </div>
-                      )}
                     </div>
                     {t.note && (
                       <div className="text-xs text-gray-400 mt-2 truncate" title={t.note}>
@@ -1164,6 +1142,12 @@ export const Portfolio: React.FC = () => {
             </div>
           )}
         </div>
+
+        </>}
+
+        {/* Tab: 已平仓交易 */}
+        {activeTab === 'closed' && <ClosedTradesTab />}
+
       </div>
 
       {/* ==================== Trade Modal ==================== */}

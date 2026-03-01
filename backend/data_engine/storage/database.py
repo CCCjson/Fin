@@ -59,6 +59,75 @@ def init_db():
                 conn.execute(text("ALTER TABLE daily_reviews ADD COLUMN index_snapshot TEXT"))
             print("✓ daily_reviews 表已添加 index_snapshot 列")
 
+    # 自动迁移：为 manual_trades 表添加 source_type、pending_order_id 列 + 回填
+    if "manual_trades" in insp.get_table_names():
+        mt_cols = {c["name"] for c in insp.get_columns("manual_trades")}
+        added_mt = False
+        if "source_type" not in mt_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE manual_trades ADD COLUMN source_type VARCHAR(20)"))
+            added_mt = True
+            print("✓ manual_trades 表已添加 source_type 列")
+        if "pending_order_id" not in mt_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE manual_trades ADD COLUMN pending_order_id VARCHAR(50)"))
+            added_mt = True
+            print("✓ manual_trades 表已添加 pending_order_id 列")
+
+        # 添加索引
+        mt_indexes = {idx["name"] for idx in insp.get_indexes("manual_trades")}
+        if "ix_manual_trades_source_type" not in mt_indexes:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_manual_trades_source_type "
+                    "ON manual_trades (source_type)"
+                ))
+        if "ix_manual_trades_pending_order_id" not in mt_indexes:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_manual_trades_pending_order_id "
+                    "ON manual_trades (pending_order_id)"
+                ))
+
+        # 回填历史数据
+        if added_mt:
+            with engine.begin() as conn:
+                # 自动化订单：note LIKE '[自动化]%' → source_type='automation'，提取订单号
+                conn.execute(text("""
+                    UPDATE manual_trades
+                    SET source_type = 'automation'
+                    WHERE note LIKE '[自动化]%' AND source_type IS NULL
+                """))
+                # 手动下单：note LIKE '[手动下单]%' → source_type='manual_broker'
+                conn.execute(text("""
+                    UPDATE manual_trades
+                    SET source_type = 'manual_broker'
+                    WHERE note LIKE '[手动下单]%' AND source_type IS NULL
+                """))
+                # 其余 → source_type='manual_entry'
+                conn.execute(text("""
+                    UPDATE manual_trades
+                    SET source_type = 'manual_entry'
+                    WHERE source_type IS NULL
+                """))
+            print("✓ manual_trades 历史数据 source_type 回填完成")
+
+            # 回填 pending_order_id：从 note 中提取 "订单号=PO-xxx"
+            with engine.begin() as conn:
+                from sqlalchemy import text as sql_text
+                rows = conn.execute(text(
+                    "SELECT id, note FROM manual_trades "
+                    "WHERE source_type = 'automation' AND pending_order_id IS NULL AND note IS NOT NULL"
+                )).fetchall()
+                import re
+                for row in rows:
+                    match = re.search(r"订单号=(PO-[A-Za-z0-9\-]+)", row[1] or "")
+                    if match:
+                        conn.execute(text(
+                            "UPDATE manual_trades SET pending_order_id = :oid WHERE id = :tid"
+                        ), {"oid": match.group(1), "tid": row[0]})
+            print("✓ manual_trades 历史数据 pending_order_id 回填完成")
+
     # 自动迁移：为 signal_tracking 表添加 (symbol, signal_date) 复合索引
     if "signal_tracking" in insp.get_table_names():
         existing_indexes = {idx["name"] for idx in insp.get_indexes("signal_tracking")}

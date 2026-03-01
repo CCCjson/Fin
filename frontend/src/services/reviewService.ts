@@ -38,6 +38,27 @@ export interface DayTrade {
   commission: number;
   note: string | null;
   ai_recommended_price: number | null;
+  source_type: 'automation' | 'manual_broker' | 'manual_entry' | null;
+  pending_order_id: string | null;
+}
+
+export interface Decision {
+  order_id: string;
+  symbol: string;
+  name: string | null;
+  signal_type: 'BUY' | 'SELL';
+  strategy: string | null;
+  strength: number;
+  suggested_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  reasons: Array<{ indicator?: string; detail?: string }>;
+  status: 'FILLED' | 'REJECTED' | 'EXPIRED' | 'FAILED';
+  actual_price: number | null;
+  reject_reason: string | null;
+  risk_check_detail: Array<{ rule?: string; passed?: boolean; message?: string }>;
+  created_at: string | null;
+  confirmed_at: string | null;
 }
 
 export interface DaySignal {
@@ -96,6 +117,12 @@ export interface ReviewData {
   signals: DaySignal[];
   signals_total: number;
   signals_count: number;
+  decisions: Decision[];
+  decisions_count: number;
+  decisions_filled: number;
+  decisions_rejected: number;
+  decisions_expired: number;
+  decisions_failed: number;
   review: ReviewRecord | null;
   template: string;
 }

@@ -26,8 +26,8 @@ RISK_CONFIG = {
     # 总仓位不超过 80%，保留 20% 现金
     "max_total_position_pct": 0.80,
 
-    # 单日最大亏损 ≤ 总资金 3%（按 20 万总资金计算 = 6000）
-    "max_daily_loss": 6000,
+    # 单日最大亏损 ≤ 总资金 3%（动态计算）
+    "max_daily_loss_pct": 0.03,
 
     # 止损止盈
     "stop_loss_pct": 0.05,   # 每笔交易必须设置止损 -5%

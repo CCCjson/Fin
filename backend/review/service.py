@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from data_engine.storage.database import get_session
 from data_engine.storage.models import (
     DailyQuote, ManualTrade, Signal, DailyReview,
-    StockInfo, RealtimeSnapshot,
+    StockInfo, RealtimeSnapshot, PendingOrder,
 )
 from portfolio.calculator import PortfolioCalculator
 
@@ -117,7 +117,14 @@ class ReviewService:
             signals_total = session.query(Signal).filter(Signal.date == review_date).count()
             day_signals = self._get_day_signals(session, review_date, signals_limit, signals_offset)
 
-            # 5. 当日盈亏汇总
+            # 5. 当日自动化决策
+            decisions = self._get_day_decisions(session, review_date)
+            decisions_filled = sum(1 for d in decisions if d["status"] == "FILLED")
+            decisions_rejected = sum(1 for d in decisions if d["status"] == "REJECTED")
+            decisions_expired = sum(1 for d in decisions if d["status"] == "EXPIRED")
+            decisions_failed = sum(1 for d in decisions if d["status"] == "FAILED")
+
+            # 6. 当日盈亏汇总
             daily_pnl = sum(p.get("daily_pnl", 0) or 0 for p in positions)
 
             # 整体日盈亏百分比（加权）
@@ -175,6 +182,12 @@ class ReviewService:
                 "signals": day_signals,
                 "signals_total": signals_total,
                 "signals_count": len(day_signals),
+                "decisions": decisions,
+                "decisions_count": len(decisions),
+                "decisions_filled": decisions_filled,
+                "decisions_rejected": decisions_rejected,
+                "decisions_expired": decisions_expired,
+                "decisions_failed": decisions_failed,
                 "review": review_data,
                 "template": BEGINNER_TEMPLATE,
             }
@@ -792,9 +805,64 @@ class ReviewService:
                 "commission": t.commission,
                 "note": t.note,
                 "ai_recommended_price": t.ai_recommended_price,
+                "source_type": t.source_type,
+                "pending_order_id": t.pending_order_id,
             }
             for t in trades
         ]
+
+    def _get_day_decisions(self, session, review_date: date) -> List[Dict[str, Any]]:
+        """获取当日所有已决策的 PendingOrder（status != PENDING）"""
+        day_start = datetime.combine(review_date, datetime.min.time())
+        day_end = datetime.combine(review_date, datetime.max.time())
+
+        orders = (
+            session.query(PendingOrder)
+            .filter(
+                PendingOrder.created_at >= day_start,
+                PendingOrder.created_at <= day_end,
+                PendingOrder.status != "PENDING",
+            )
+            .order_by(PendingOrder.created_at.asc())
+            .all()
+        )
+
+        result = []
+        for o in orders:
+            # 解析 JSON 字段
+            reasons = []
+            if o.reasons:
+                try:
+                    reasons = json.loads(o.reasons)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            risk_detail = []
+            if o.risk_check_detail:
+                try:
+                    risk_detail = json.loads(o.risk_check_detail)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            result.append({
+                "order_id": o.order_id,
+                "symbol": o.symbol,
+                "name": o.name,
+                "signal_type": o.signal_type,
+                "strategy": o.strategy,
+                "strength": o.strength,
+                "suggested_price": o.suggested_price,
+                "stop_loss": o.stop_loss,
+                "take_profit": o.take_profit,
+                "reasons": reasons,
+                "status": o.status,
+                "actual_price": o.actual_price,
+                "reject_reason": o.reject_reason,
+                "risk_check_detail": risk_detail,
+                "created_at": o.created_at.isoformat() if o.created_at else None,
+                "confirmed_at": o.confirmed_at.isoformat() if o.confirmed_at else None,
+            })
+
+        return result
 
     def _get_day_signals(self, session, review_date: date,
                          limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
@@ -918,6 +986,22 @@ class ReviewService:
             status_map = {"held": "已持有", "sold_today": "今日已卖", "not_held": "未持有"}
             status = status_map.get(s["holding_status"], "")
             parts.append(f"- {s['name']} {s['strategy']} {s['signal_type']} 强度{s['strength']:.2f} [{status}]")
+
+        # 自动化决策回顾
+        decisions = data.get("decisions", [])
+        if decisions:
+            parts.append(f"\n### 自动化决策回顾 ({data.get('decisions_count', 0)} 个)")
+            parts.append(f"- 执行: {data.get('decisions_filled', 0)} | 拒绝: {data.get('decisions_rejected', 0)} | 过期: {data.get('decisions_expired', 0)} | 失败: {data.get('decisions_failed', 0)}")
+            for d in decisions:
+                reasons_str = ", ".join(r.get("detail", r.get("indicator", "")) for r in d.get("reasons", [])[:3])
+                if d["status"] == "FILLED":
+                    parts.append(f"- ✅ {d['name']}({d['symbol']}) {d['signal_type']} 策略={d['strategy']} 强度={d['strength']:.2f} 成交价={d.get('actual_price', 'N/A')} | {reasons_str}")
+                elif d["status"] == "REJECTED":
+                    parts.append(f"- ❌ {d['name']}({d['symbol']}) {d['signal_type']} 策略={d['strategy']} 强度={d['strength']:.2f} 被拒绝: {d.get('reject_reason', '')} | {reasons_str}")
+                elif d["status"] == "EXPIRED":
+                    parts.append(f"- ⏰ {d['name']}({d['symbol']}) {d['signal_type']} 策略={d['strategy']} 强度={d['strength']:.2f} 过期未处理 | {reasons_str}")
+                elif d["status"] == "FAILED":
+                    parts.append(f"- ⚠️ {d['name']}({d['symbol']}) {d['signal_type']} 策略={d['strategy']} 强度={d['strength']:.2f} 执行失败: {d.get('reject_reason', '')} | {reasons_str}")
 
         # 复盘笔记
         review = data.get("review")

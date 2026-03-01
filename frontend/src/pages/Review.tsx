@@ -5,8 +5,8 @@ import { reviewService } from '../services/reviewService';
 import type {
   ReviewData,
   AiScoreResult,
-  AiDimensionScores,
   CalendarEntry,
+  Decision,
 } from '../services/reviewService';
 
 // ==================== 辅助函数 ====================
@@ -403,8 +403,8 @@ export const Review: React.FC = () => {
               </div>
             )}
 
-            {/* Daily Overview Cards (4) */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+            {/* Daily Overview Cards (5) */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
               <div className="bg-gradient-card p-3 md:p-5 rounded-xl border border-border shadow-card">
                 <div className="text-gray-400 text-xs md:text-sm mb-2">当日总盈亏</div>
                 <div className={`text-xl md:text-2xl font-bold ${pnlColor(data.daily_pnl)}`}>
@@ -432,6 +432,18 @@ export const Review: React.FC = () => {
               <div className="bg-gradient-card p-3 md:p-5 rounded-xl border border-border shadow-card">
                 <div className="text-gray-400 text-xs md:text-sm mb-2">当日信号</div>
                 <div className="text-xl md:text-2xl font-bold text-accent-purple">{data.signals_total} 个</div>
+              </div>
+              <div className="bg-gradient-card p-3 md:p-5 rounded-xl border border-border shadow-card">
+                <div className="text-gray-400 text-xs md:text-sm mb-2">自动化决策</div>
+                <div className="text-xl md:text-2xl font-bold text-amber-400">{data.decisions_count} 个</div>
+                {data.decisions_count > 0 && (
+                  <div className="text-xs text-gray-500 mt-1 flex flex-wrap gap-1.5">
+                    <span className="text-bull">{data.decisions_filled}执行</span>
+                    <span className="text-bear">{data.decisions_rejected}拒绝</span>
+                    {data.decisions_expired > 0 && <span className="text-amber-400">{data.decisions_expired}过期</span>}
+                    {data.decisions_failed > 0 && <span className="text-gray-400">{data.decisions_failed}失败</span>}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -499,6 +511,7 @@ export const Review: React.FC = () => {
                             <th className="px-3 py-2.5 text-right">价格</th>
                             <th className="px-3 py-2.5 text-right">数量</th>
                             <th className="px-3 py-2.5 text-right">金额</th>
+                            <th className="px-3 py-2.5 text-center">来源</th>
                             <th className="px-3 py-2.5 text-right">AI价</th>
                             <th className="px-3 py-2.5 text-left">备注</th>
                           </tr>
@@ -519,6 +532,15 @@ export const Review: React.FC = () => {
                               <td className="px-3 py-2.5 text-right">{t.price.toFixed(2)}</td>
                               <td className="px-3 py-2.5 text-right">{t.quantity}</td>
                               <td className="px-3 py-2.5 text-right">{formatMoney(t.amount)}</td>
+                              <td className="px-3 py-2.5 text-center">
+                                {t.source_type === 'automation' ? (
+                                  <span className="px-1.5 py-0.5 rounded text-xs bg-violet-500/20 text-violet-300 border border-violet-500/30">自动</span>
+                                ) : t.source_type === 'manual_broker' ? (
+                                  <span className="px-1.5 py-0.5 rounded text-xs bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/30">手动</span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded text-xs bg-gray-500/20 text-gray-400 border border-gray-500/30">录入</span>
+                                )}
+                              </td>
                               <td className="px-3 py-2.5 text-right text-accent-cyan">
                                 {t.ai_recommended_price ? t.ai_recommended_price.toFixed(2) : '-'}
                               </td>
@@ -530,6 +552,87 @@ export const Review: React.FC = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Decisions Review (自动化决策回顾) */}
+                {data.decisions_count > 0 && (
+                  <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+                    <h2 className="text-lg md:text-xl font-semibold text-white mb-4">当日决策回顾</h2>
+                    <div className="overflow-x-auto rounded-lg border border-border">
+                      <table className="w-full text-sm">
+                        <thead className="bg-dark-light text-gray-300 border-b border-border">
+                          <tr>
+                            <th className="px-3 py-2.5 text-center">状态</th>
+                            <th className="px-3 py-2.5 text-center">方向</th>
+                            <th className="px-3 py-2.5 text-left">股票</th>
+                            <th className="px-3 py-2.5 text-left">策略</th>
+                            <th className="px-3 py-2.5 text-right">强度</th>
+                            <th className="px-3 py-2.5 text-right">建议价</th>
+                            <th className="px-3 py-2.5 text-right">成交价</th>
+                            <th className="px-3 py-2.5 text-left">说明</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-gray-300">
+                          {data.decisions.map((d: Decision) => (
+                            <tr key={d.order_id} className="border-b border-border hover:bg-dark-light transition-colors">
+                              <td className="px-3 py-2.5 text-center">
+                                {d.status === 'FILLED' && (
+                                  <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-bull/20 text-bull border border-bull/30">已执行</span>
+                                )}
+                                {d.status === 'REJECTED' && (
+                                  <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-bear/20 text-bear border border-bear/30">已拒绝</span>
+                                )}
+                                {d.status === 'EXPIRED' && (
+                                  <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">已过期</span>
+                                )}
+                                {d.status === 'FAILED' && (
+                                  <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-gray-500/20 text-gray-400 border border-gray-500/30">失败</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2.5 text-center">
+                                <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${
+                                  d.signal_type === 'BUY'
+                                    ? 'bg-bull/20 text-bull border border-bull/30'
+                                    : 'bg-bear/20 text-bear border border-bear/30'
+                                }`}>
+                                  {d.signal_type === 'BUY' ? '买' : '卖'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <div className="font-medium text-white text-xs">{d.name || d.symbol}</div>
+                                <div className="text-xs text-gray-500">{d.symbol}</div>
+                              </td>
+                              <td className="px-3 py-2.5 text-xs text-violet-300">{d.strategy || '-'}</td>
+                              <td className="px-3 py-2.5 text-right font-medium text-amber-400 text-xs">
+                                {d.strength?.toFixed(2) ?? '-'}
+                              </td>
+                              <td className="px-3 py-2.5 text-right text-xs">
+                                {d.suggested_price?.toFixed(2) ?? '-'}
+                              </td>
+                              <td className="px-3 py-2.5 text-right text-xs">
+                                {d.status === 'FILLED' ? (
+                                  <span className="text-bull">{d.actual_price?.toFixed(2) ?? '-'}</span>
+                                ) : '-'}
+                              </td>
+                              <td className="px-3 py-2.5 text-xs text-gray-400 max-w-[180px]">
+                                {d.status === 'REJECTED' && d.reject_reason ? (
+                                  <span className="text-bear">{d.reject_reason}</span>
+                                ) : d.status === 'EXPIRED' ? (
+                                  <span className="text-amber-400">超时未处理</span>
+                                ) : d.status === 'FAILED' && d.reject_reason ? (
+                                  <span className="text-gray-400">{d.reject_reason}</span>
+                                ) : d.reasons?.length ? (
+                                  <span className="truncate block" title={d.reasons.map(r => r.detail || r.indicator || '').join('; ')}>
+                                    {d.reasons.slice(0, 2).map(r => r.detail || r.indicator || '').join('; ')}
+                                  </span>
+                                ) : '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
 
                 {/* Review Note */}
                 <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl flex-1 flex flex-col">

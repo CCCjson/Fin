@@ -66,6 +66,51 @@ export interface AutomationLogItem {
   completed_at: string | null;
 }
 
+export interface BrokerStatusItem {
+  online: boolean;
+  name: string;
+  cash?: number;
+  total_value?: number;
+  market_value?: number;
+  unrealized_pnl?: number;
+  return_pct?: number;
+  total_trades?: number;
+  error?: string;
+}
+
+export interface PositionItem {
+  symbol: string;
+  quantity: number;
+  avg_cost: number;
+  current_price: number;
+  market_value: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number;
+  available: number;
+  broker: string;
+}
+
+export interface ExecutionHistoryItem {
+  order_id: string;
+  symbol: string;
+  name: string;
+  signal_type: string;
+  strategy: string;
+  strength: number;
+  suggested_price: number;
+  suggested_quantity: number;
+  actual_price: number | null;
+  actual_quantity: number | null;
+  commission: number | null;
+  status: string;
+  broker_type: string;
+  scan_source: string;
+  reject_reason: string | null;
+  confirmed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface Notification {
   id: string;
   type: string;
@@ -86,6 +131,12 @@ interface AutomationStore {
   unreadCount: number;
   wsConnected: boolean;
   loading: boolean;
+
+  // 交易中心扩展状态
+  brokerStatuses: Record<string, BrokerStatusItem>;
+  brokerSummary: { total_value: number; total_cash: number; total_pnl: number };
+  positions: PositionItem[];
+  executionHistory: ExecutionHistoryItem[];
 
   // 订单
   fetchPendingOrders: (status?: string) => Promise<void>;
@@ -111,6 +162,12 @@ interface AutomationStore {
   fetchLogs: (configId?: string) => Promise<void>;
   fetchStatistics: () => Promise<void>;
 
+  // 交易中心扩展
+  fetchBrokerStatus: () => Promise<void>;
+  fetchPositions: (brokerType?: string) => Promise<void>;
+  submitManualOrder: (data: { broker_type: string; symbol: string; action: string; quantity: number; price?: number }) => Promise<{ success: boolean; message: string }>;
+  fetchExecutionHistory: (params?: { status?: string; broker_type?: string; symbol?: string }) => Promise<void>;
+
   // WebSocket
   connectWebSocket: () => void;
   disconnectWebSocket: () => void;
@@ -129,6 +186,12 @@ export const useAutomationStore = create<AutomationStore>((set, get) => ({
   unreadCount: 0,
   wsConnected: false,
   loading: false,
+
+  // 交易中心扩展
+  brokerStatuses: {},
+  brokerSummary: { total_value: 0, total_cash: 0, total_pnl: 0 },
+  positions: [],
+  executionHistory: [],
 
   // ==================== 订单 ====================
 
@@ -322,6 +385,61 @@ export const useAutomationStore = create<AutomationStore>((set, get) => ({
       }
     } catch (err) {
       console.error('获取统计失败:', err);
+    }
+  },
+
+  // ==================== 交易中心扩展 ====================
+
+  fetchBrokerStatus: async () => {
+    try {
+      const res: any = await automationApi.getBrokerStatus();
+      if (res.success) {
+        set({
+          brokerStatuses: res.brokers || {},
+          brokerSummary: res.summary || { total_value: 0, total_cash: 0, total_pnl: 0 },
+        });
+      }
+    } catch (err) {
+      console.error('获取 broker 状态失败:', err);
+    }
+  },
+
+  fetchPositions: async (brokerType?: string) => {
+    try {
+      const bt = brokerType || 'paper';
+      const res: any = await automationApi.getBrokerPositions(bt);
+      if (res.success) {
+        set({ positions: res.positions || [] });
+      }
+    } catch (err) {
+      console.error('获取持仓失败:', err);
+    }
+  },
+
+  submitManualOrder: async (data) => {
+    try {
+      const res: any = await automationApi.submitBrokerOrder(data);
+      if (res.success) {
+        // 下单成功后刷新持仓和历史
+        get().fetchPositions(data.broker_type);
+        get().fetchExecutionHistory();
+        get().fetchBrokerStatus();
+      }
+      return { success: res.success, message: res.message || '' };
+    } catch (err: any) {
+      console.error('手动下单失败:', err);
+      return { success: false, message: err?.message || '下单异常' };
+    }
+  },
+
+  fetchExecutionHistory: async (params?) => {
+    try {
+      const res: any = await automationApi.getExecutionHistory(params);
+      if (res.success) {
+        set({ executionHistory: res.orders || [] });
+      }
+    } catch (err) {
+      console.error('获取执行历史失败:', err);
     }
   },
 

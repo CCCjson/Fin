@@ -55,9 +55,13 @@ class RiskManager:
         if "max_position_pct" in self.config:
             self.add_rule(MaxPositionPercentRule(self.config["max_position_pct"]))
 
-        # 损失限制
+        # 损失限制（支持绝对值或百分比）
         if "max_daily_loss" in self.config:
             self.add_rule(MaxDailyLossRule(self.config["max_daily_loss"]))
+        elif "max_daily_loss_pct" in self.config:
+            from trading_engine.risk.adapter import get_total_capital
+            capital = get_total_capital()
+            self.add_rule(MaxDailyLossRule(capital * self.config["max_daily_loss_pct"]))
 
         # 交易时间
         if "allow_trading_hours" in self.config:

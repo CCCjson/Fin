@@ -68,3 +68,27 @@ export const getLogs = (params?: { config_id?: string; limit?: number }) =>
   api.get('/automation/logs', { params });
 
 export const getStatistics = () => api.get('/automation/statistics');
+
+// ==================== 交易中心扩展 ====================
+
+export const getBrokerStatus = () => api.get('/automation/broker-status');
+
+export const getBrokerPositions = (brokerType: string = 'paper') =>
+  api.get('/automation/broker-positions', { params: { broker_type: brokerType } });
+
+export const submitBrokerOrder = (data: {
+  broker_type: string;
+  symbol: string;
+  action: string;
+  quantity: number;
+  price?: number;
+}) => api.post('/automation/broker-order', data);
+
+export const getExecutionHistory = (params?: {
+  status?: string;
+  broker_type?: string;
+  symbol?: string;
+  date_from?: string;
+  date_to?: string;
+  limit?: number;
+}) => api.get('/automation/execution-history', { params });

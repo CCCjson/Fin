@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query, Body
 from loguru import logger
 
 from data_engine.storage.database import get_session
-from data_engine.storage.models import PendingOrder, AutomationConfig, AutomationLog
+from data_engine.storage.models import PendingOrder, AutomationConfig, AutomationLog, ManualTrade
 from automation.pending_order_manager import PendingOrderManager
 from automation.websocket_manager import (
     notify_order_status,
@@ -364,6 +364,286 @@ async def get_statistics():
     """获取统计数据"""
     stats = _order_manager.get_statistics()
     return {"success": True, **stats}
+
+
+# ==================== 交易中心扩展 API ====================
+
+@router.get("/broker-status")
+async def get_broker_status():
+    """获取各 broker 连接状态 + 账户摘要"""
+    results = {}
+
+    # Paper Broker — 始终在线
+    try:
+        from automation.pending_order_manager import get_paper_broker
+        paper = get_paper_broker()
+        info = paper.get_account_info()
+        results["paper"] = {
+            "online": True,
+            "name": "模拟交易",
+            "cash": info.get("cash", 0),
+            "total_value": info.get("total_value", 0),
+            "market_value": info.get("market_value", 0),
+            "unrealized_pnl": info.get("unrealized_pnl", 0),
+            "return_pct": info.get("return_pct", 0),
+            "total_trades": info.get("total_trades", 0),
+        }
+    except Exception as e:
+        logger.error(f"获取 PaperBroker 状态失败: {e}")
+        results["paper"] = {"online": False, "name": "模拟交易", "error": str(e)}
+
+    # QMT / EasyTrader — 尚未接入，直接标记离线（后续接入后改为实际探测）
+    results["qmt"] = {"online": False, "name": "QMT 国金证券"}
+    results["easytrader"] = {"online": False, "name": "EasyTrader"}
+
+    # 汇总
+    total_value = sum(b.get("total_value", 0) for b in results.values() if b.get("online"))
+    total_cash = sum(b.get("cash", 0) for b in results.values() if b.get("online"))
+    total_pnl = sum(b.get("unrealized_pnl", 0) for b in results.values() if b.get("online"))
+
+    return {
+        "success": True,
+        "brokers": results,
+        "summary": {
+            "total_value": total_value,
+            "total_cash": total_cash,
+            "total_pnl": total_pnl,
+        },
+    }
+
+
+@router.get("/broker-positions")
+async def get_broker_positions(
+    broker_type: str = Query("paper", description="券商类型: paper/qmt/easytrader"),
+):
+    """获取指定 broker 的持仓"""
+    try:
+        positions = []
+
+        if broker_type == "paper":
+            from automation.pending_order_manager import get_paper_broker
+            broker = get_paper_broker()
+            for pos in broker.get_positions():
+                positions.append({
+                    "symbol": pos.symbol,
+                    "quantity": pos.quantity,
+                    "avg_cost": round(pos.avg_cost, 3),
+                    "current_price": round(pos.current_price, 3),
+                    "market_value": round(pos.market_value, 2),
+                    "unrealized_pnl": round(pos.unrealized_pnl, 2),
+                    "unrealized_pnl_pct": round(pos.unrealized_pnl_pct, 2),
+                    "available": pos.available,
+                    "broker": "paper",
+                })
+
+        elif broker_type == "qmt":
+            from trading_engine.brokers.qmt_broker import QMTBroker
+            broker = QMTBroker()
+            if not broker.connect():
+                return {"success": False, "message": "QMT Bridge 未连接"}
+            for pos in broker.get_positions():
+                positions.append({
+                    "symbol": pos.symbol,
+                    "quantity": pos.quantity,
+                    "avg_cost": round(pos.avg_cost, 3),
+                    "current_price": round(pos.current_price, 3),
+                    "market_value": round(pos.market_value, 2),
+                    "unrealized_pnl": round(pos.unrealized_pnl, 2),
+                    "unrealized_pnl_pct": round(pos.unrealized_pnl_pct, 2),
+                    "available": pos.available,
+                    "broker": "qmt",
+                })
+
+        elif broker_type == "easytrader":
+            from trading_engine.brokers.easytrader_broker import EasyTraderBroker
+            broker = EasyTraderBroker()
+            if not broker.connect():
+                return {"success": False, "message": "EasyTrader 未连接"}
+            for pos in broker.get_positions():
+                positions.append({
+                    "symbol": pos.symbol,
+                    "quantity": pos.quantity,
+                    "avg_cost": round(pos.avg_cost, 3),
+                    "current_price": round(pos.current_price, 3),
+                    "market_value": round(pos.market_value, 2),
+                    "unrealized_pnl": round(pos.unrealized_pnl, 2),
+                    "unrealized_pnl_pct": round(pos.unrealized_pnl_pct, 2),
+                    "available": pos.available,
+                    "broker": "easytrader",
+                })
+
+        else:
+            return {"success": False, "message": f"不支持的券商类型: {broker_type}"}
+
+        return {"success": True, "positions": positions, "total": len(positions)}
+
+    except Exception as e:
+        logger.error(f"获取持仓失败 ({broker_type}): {e}")
+        return {"success": False, "message": str(e)}
+
+
+@router.post("/broker-order")
+async def submit_broker_order(
+    broker_type: str = Body(...),
+    symbol: str = Body(...),
+    action: str = Body(...),
+    quantity: int = Body(...),
+    price: Optional[float] = Body(None),
+):
+    """统一手动下单入口"""
+    from automation.pending_order_manager import get_paper_broker
+    from trading_engine.risk.manager import RiskManager
+    from trading_engine.config import RISK_CONFIG
+    from trading_engine.risk.adapter import build_broker_info, get_total_capital
+
+    # 风控检查
+    try:
+        risk_mgr = RiskManager(RISK_CONFIG)
+        total_capital = get_total_capital()
+        broker_info = build_broker_info(total_capital)
+        risk_passed, risk_results = risk_mgr.check_order(
+            symbol=symbol,
+            action=action,
+            quantity=quantity,
+            price=price or 0,
+            broker_info=broker_info,
+        )
+        if not risk_passed:
+            failed_rules = [r.message for r in risk_results if not r.passed]
+            return {"success": False, "message": f"风控检查未通过: {'; '.join(failed_rules)}"}
+    except Exception as e:
+        logger.warning(f"风控检查异常（允许继续）: {e}")
+
+    # 执行交易
+    try:
+        if broker_type == "paper":
+            broker = get_paper_broker()
+            if price:
+                broker.update_market_price(symbol, price)
+            broker_order = broker.submit_order(symbol, action, quantity, price)
+
+        elif broker_type == "qmt":
+            from trading_engine.brokers.qmt_broker import QMTBroker
+            broker = QMTBroker()
+            if not broker.connect():
+                return {"success": False, "message": "QMT Bridge 未连接"}
+            broker_order = broker.submit_order(symbol, action, quantity, price)
+
+        elif broker_type == "easytrader":
+            from trading_engine.brokers.easytrader_broker import EasyTraderBroker
+            broker = EasyTraderBroker()
+            if not broker.connect():
+                return {"success": False, "message": "EasyTrader 未连接"}
+            broker_order = broker.submit_order(symbol, action, quantity, price)
+
+        else:
+            return {"success": False, "message": f"不支持的券商类型: {broker_type}"}
+
+        # 检查执行结果
+        from trading_engine.brokers.base import OrderStatus as BOS
+        if broker_order.status in (BOS.FILLED, BOS.SUBMITTED):
+            # 写入 ManualTrade 表
+            try:
+                session = get_session()
+                exec_price = broker_order.filled_price or price or 0
+                exec_qty = broker_order.filled_quantity or quantity
+                trade = ManualTrade(
+                    symbol=symbol,
+                    name=symbol,
+                    side=action,
+                    price=exec_price,
+                    quantity=exec_qty,
+                    amount=exec_price * exec_qty,
+                    commission=broker_order.commission,
+                    trade_date=datetime.now().date(),
+                    note=f"[手动下单] broker={broker_type}",
+                    source_type="manual_broker",
+                )
+                session.add(trade)
+                session.commit()
+                session.close()
+            except Exception as e:
+                logger.error(f"写入 ManualTrade 失败: {e}")
+
+            return {
+                "success": True,
+                "message": f"{action} {symbol} x{quantity} 成功",
+                "order": {
+                    "order_id": broker_order.order_id,
+                    "status": broker_order.status.value,
+                    "filled_price": broker_order.filled_price,
+                    "filled_quantity": broker_order.filled_quantity,
+                    "commission": broker_order.commission,
+                },
+            }
+        else:
+            return {
+                "success": False,
+                "message": broker_order.error_msg or f"下单失败: {broker_order.status.value}",
+            }
+
+    except Exception as e:
+        logger.error(f"手动下单失败: {e}")
+        return {"success": False, "message": str(e)}
+
+
+@router.get("/execution-history")
+async def get_execution_history(
+    status: Optional[str] = Query(None, description="FILLED/REJECTED/EXPIRED/FAILED"),
+    broker_type: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """查询执行历史（非 PENDING 的 PendingOrder 记录）"""
+    session = get_session()
+    try:
+        query = session.query(PendingOrder).filter(PendingOrder.status != "PENDING")
+
+        if status:
+            query = query.filter(PendingOrder.status == status)
+        if broker_type:
+            query = query.filter(PendingOrder.broker_type == broker_type)
+        if symbol:
+            query = query.filter(PendingOrder.symbol.contains(symbol))
+        if date_from:
+            query = query.filter(PendingOrder.created_at >= datetime.fromisoformat(date_from))
+        if date_to:
+            query = query.filter(PendingOrder.created_at <= datetime.fromisoformat(date_to + "T23:59:59"))
+
+        orders = query.order_by(PendingOrder.updated_at.desc()).limit(limit).all()
+
+        result = []
+        for o in orders:
+            result.append({
+                "order_id": o.order_id,
+                "symbol": o.symbol,
+                "name": o.name,
+                "signal_type": o.signal_type,
+                "strategy": o.strategy,
+                "strength": o.strength,
+                "suggested_price": o.suggested_price,
+                "suggested_quantity": o.suggested_quantity,
+                "actual_price": o.actual_price,
+                "actual_quantity": o.actual_quantity,
+                "commission": o.commission,
+                "status": o.status,
+                "broker_type": o.broker_type,
+                "scan_source": o.scan_source,
+                "reject_reason": o.reject_reason,
+                "confirmed_at": o.confirmed_at.isoformat() if o.confirmed_at else None,
+                "created_at": o.created_at.isoformat() if o.created_at else None,
+                "updated_at": o.updated_at.isoformat() if o.updated_at else None,
+            })
+
+        return {"success": True, "orders": result, "total": len(result)}
+
+    except Exception as e:
+        logger.error(f"获取执行历史失败: {e}")
+        return {"success": False, "message": str(e)}
+    finally:
+        session.close()
 
 
 # -------- 工具函数 --------
