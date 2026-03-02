@@ -233,3 +233,23 @@ class StrategyStore:
             }
         finally:
             db.close()
+
+    def delete_session(self, session_id: str) -> bool:
+        """删除会话及其关联的策略和日志"""
+        db = get_session()
+        try:
+            session = db.query(AlphaLabSession).filter(AlphaLabSession.id == session_id).first()
+            if not session:
+                return False
+            db.query(AlphaLabLog).filter(AlphaLabLog.session_id == session_id).delete()
+            db.query(AlphaLabStrategy).filter(AlphaLabStrategy.session_id == session_id).delete()
+            db.delete(session)
+            db.commit()
+            logger.info(f"已删除 Alpha Lab 会话: {session_id}")
+            return True
+        except Exception as e:
+            db.rollback()
+            logger.error(f"删除会话失败: {e}")
+            raise
+        finally:
+            db.close()

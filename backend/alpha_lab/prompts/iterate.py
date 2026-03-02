@@ -71,24 +71,34 @@ def build_iteration_prompt(
     return feedback
 
 
+def _safe_float(value, default: float = 0.0) -> float:
+    """安全转换为 float，非数值类型返回默认值"""
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _format_metrics(metrics: Dict) -> str:
     """格式化指标为 Markdown 表格"""
     if not metrics:
         return "（无数据）"
 
     lines = []
-    sharpe = metrics.get("sharpe_ratio", 0)
-    ann_ret = metrics.get("annualized_return", 0)
-    total_ret = metrics.get("total_return", 0)
-    win = metrics.get("win_rate", 0)
+    sharpe = _safe_float(metrics.get("sharpe_ratio", 0))
+    ann_ret = _safe_float(metrics.get("annualized_return", 0))
+    total_ret = _safe_float(metrics.get("total_return", 0))
+    win = _safe_float(metrics.get("win_rate", 0))
     trades = metrics.get("num_trades", 0)
-    pf = metrics.get("profit_factor", 0)
+    pf = _safe_float(metrics.get("profit_factor", 0))
 
     dd = metrics.get("max_drawdown", {})
     if isinstance(dd, dict):
-        dd_pct = dd.get("max_drawdown_pct", 0)
+        dd_pct = _safe_float(dd.get("max_drawdown_pct", 0))
     else:
-        dd_pct = dd
+        dd_pct = _safe_float(dd)
 
     lines.append(f"| 指标 | 值 |")
     lines.append(f"|------|------|")

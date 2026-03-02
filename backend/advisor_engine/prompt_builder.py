@@ -15,6 +15,7 @@ SYSTEM_PROMPT = """你是我的私人量化交易顾问，直接告诉我该怎�
 4. 必须给出具体的入场价、止损价、止盈价，精确到小数点
 5. 禁止说"不构成投资建议""建议咨询专业人士"之类的废话，我就是要你的投资建议
 6. 使用 Markdown 格式输出，结构清晰
+7. K线形态名称已翻译为中文，直接使用中文名称即可，禁止输出英文形态名
 
 分析框架（首次分析时遵循）：
 1. **操作结论** — 开头第一句话就告诉我：现在该买、该卖、还是观望，信心指数多少（0-100）
@@ -22,8 +23,15 @@ SYSTEM_PROMPT = """你是我的私人量化交易顾问，直接告诉我该怎�
 3. **动量分析** — RSI 超买超卖区间、KDJ 交叉状态
 4. **波动率与量价** — 布林带位置、ATR 水平、量比变化
 5. **信号与形态** — 量化系统检测到的买卖信号和 K 线形态
-6. **具体操作计划** — 明确写出：入场价、止损价、止盈价（分第一目标和第二目标）、建议仓位比例
-7. **风险点** — 什么情况下这个判断会失效，到时候怎么应对
+6. **标的质量评估** — 若数据中提供了「标的质量分析」「市值画像」「机构行为分析」，必须引用具体数据进行分析：庄股风险等级、换手率、量价异常度、止损猎杀/假突破次数。若庄股风险为中/高，必须明确警示
+7. **具体操作计划** — 必须引用数据中已计算好的「ATR 动态止盈止损」数值，明确写出：
+   - 入场价
+   - ATR 止损位（引用数据中的 atr_stop_loss）
+   - 追踪止损位（引用数据中的 trailing_stop）
+   - 分批止盈：T1/T2/T3 目标位（引用数据中的 take_profit_levels）
+   - 盈亏比（引用数据中的 risk_reward_ratio）
+   - 建议仓位比例
+8. **风险点** — 什么情况下这个判断会失效，到时候怎么应对。若检测到止损猎杀或假突破行为，需提示注意
 
 回答追问时，基于对话上下文中的数据，直接回答问题，给出明确操作建议。
 """
@@ -120,6 +128,60 @@ class AdvisorPromptBuilder:
             vr = ind.get("volume_ratio")
             vr_st = "放量" if vr and vr > 1.5 else ("缩量" if vr and vr < 0.7 else "正常")
             parts.append(f"| 量比 | {vr} | {vr_st} |")
+            parts.append("")
+
+        # ── 标的质量分析 ──
+        mr = ctx.get("manipulation_risk")
+        if mr:
+            emoji = {"low": "🟢", "medium": "🟡", "high": "🔴"}.get(mr.get("risk_level", ""), "⚪")
+            label = {"low": "低风险", "medium": "中等风险", "high": "高风险"}.get(mr.get("risk_level", ""), "未知")
+            parts.append("### 标的质量分析\n")
+            parts.append(f"- 庄股风险: {emoji} {label} (风险分 {mr.get('risk_score', 'N/A')}/100)")
+            details = mr.get("details", {})
+            if details.get("turnover_analysis"):
+                parts.append(f"- 换手率: {details['turnover_analysis']}")
+            if details.get("volume_anomaly"):
+                parts.append(f"- 量价异常: {details['volume_anomaly']}")
+            if details.get("liquidity_grade"):
+                parts.append(f"- 流动性等级: {details['liquidity_grade']}")
+            parts.append("")
+
+        # ── 市值画像 ──
+        scp = ctx.get("small_cap_profile")
+        if scp:
+            parts.append("### 市值画像\n")
+            parts.append(f"- 市值分类: {scp.get('cap_label', '未知')}")
+            if scp.get("sideways_days", 0) > 0:
+                parts.append(f"- 缩量横盘: {scp['sideways_days']}天")
+            if scp.get("volume_breakout"):
+                parts.append(f"- 放量启动: {scp.get('breakout_detail', '是')}")
+            parts.append("")
+
+        # ── ATR 动态止盈止损 ──
+        dl = ctx.get("dynamic_levels")
+        if dl:
+            parts.append("### ATR 动态止盈止损\n")
+            parts.append(f"- ATR(14): {dl.get('atr_value', 'N/A')}")
+            parts.append(f"- ATR 止损位: {dl.get('atr_stop_loss', 'N/A')}")
+            parts.append(f"- 追踪止损位: {dl.get('trailing_stop', 'N/A')}")
+            tp_levels = dl.get("take_profit_levels", [])
+            for t in tp_levels:
+                parts.append(f"- 止盈 T{t['level']}: {t['price']} ({t['action']})")
+            parts.append(f"- 盈亏比: {dl.get('risk_reward_ratio', 'N/A')}")
+            parts.append("")
+
+        # ── 机构行为分析 ──
+        mb = ctx.get("market_behavior")
+        if mb:
+            parts.append("### 机构行为分析\n")
+            parts.append(f"- 止损猎杀次数: {mb.get('stop_hunt_count', 0)}")
+            parts.append(f"- 假突破次数: {mb.get('fake_breakout_count', 0)}")
+            parts.append(f"- 量价配合度: {mb.get('volume_price_alignment', 'N/A')}% ({mb.get('volume_price_desc', '')})")
+            details = mb.get("details", {})
+            for sh in details.get("stop_hunts", []):
+                parts.append(f"- 止损猎杀: {sh.get('date', '')} — {sh.get('detail', '')}")
+            for fb in details.get("fake_breakouts", []):
+                parts.append(f"- 假突破: {fb.get('date', '')} — {fb.get('detail', '')}")
             parts.append("")
 
         # 策略信号

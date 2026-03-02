@@ -174,4 +174,11 @@ export const alphaLabService = {
   getStrategy: async (strategyId: string): Promise<StrategySummary> => {
     return api.get(`/alpha-lab/strategies/${strategyId}`) as any;
   },
+
+  /**
+   * 删除会话
+   */
+  deleteSession: async (sessionId: string): Promise<{ success: boolean }> => {
+    return api.delete(`/alpha-lab/sessions/${sessionId}`) as any;
+  },
 };

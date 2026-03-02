@@ -1,5 +1,5 @@
 """
-AI 策略代码生成器 — 调用 OpenAI 生成策略代码
+AI 策略代码生成器 — 支持 OpenAI API 和本地模型 (MLX/Ollama)
 """
 import os
 import re
@@ -16,23 +16,63 @@ from alpha_lab.prompts.generate import build_first_generate_prompt
 from alpha_lab.prompts.iterate import build_iteration_prompt
 
 
+def _get_provider_config() -> Dict:
+    """读取 Alpha Lab 模型配置"""
+    provider = os.getenv("ALPHA_LAB_PROVIDER", "openai").lower()
+
+    if provider == "local":
+        return {
+            "provider": "local",
+            "base_url": os.getenv("ALPHA_LAB_LOCAL_BASE_URL", "http://localhost:11434/v1"),
+            "model": os.getenv("ALPHA_LAB_LOCAL_MODEL", "mlx-community/Qwen2.5-Coder-14B-Instruct-4bit"),
+            "api_key": "local",  # 本地模型不需要真实 key
+        }
+    else:
+        return {
+            "provider": "openai",
+            "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+            "explore_model": os.getenv("ALPHA_LAB_EXPLORE_MODEL", "gpt-4o-mini"),
+            "refine_model": os.getenv("ALPHA_LAB_REFINE_MODEL", "gpt-4o"),
+            "api_key": os.getenv("OPENAI_API_KEY", ""),
+        }
+
+
 class CodeGenerator:
     """AI 策略代码生成器"""
 
     def __init__(self):
+        self.config = _get_provider_config()
         self.client: Optional[OpenAI] = None
         self._init_client()
 
     def _init_client(self):
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        if api_key:
+        if self.config["provider"] == "local":
             self.client = OpenAI(
-                api_key=api_key,
-                base_url=base_url,
-                timeout=HttpxTimeout(connect=15.0, read=120.0, write=30.0, pool=30.0),
-                max_retries=2,
+                api_key=self.config["api_key"],
+                base_url=self.config["base_url"],
+                timeout=HttpxTimeout(connect=15.0, read=300.0, write=30.0, pool=30.0),
+                max_retries=1,
             )
+            logger.info(f"Alpha Lab 使用本地模型: {self.config['model']} @ {self.config['base_url']}")
+        else:
+            api_key = self.config["api_key"]
+            if api_key:
+                self.client = OpenAI(
+                    api_key=api_key,
+                    base_url=self.config["base_url"],
+                    timeout=HttpxTimeout(connect=15.0, read=120.0, write=30.0, pool=30.0),
+                    max_retries=2,
+                )
+                logger.info(f"Alpha Lab 使用 OpenAI API")
+
+    def get_model_for_phase(self, phase: str) -> str:
+        """根据阶段返回模型名"""
+        if self.config["provider"] == "local":
+            return self.config["model"]  # 本地模型不分阶段
+        return self.config.get("explore_model", "gpt-4o-mini") if phase == "explore" else self.config.get("refine_model", "gpt-4o")
+
+    def is_local(self) -> bool:
+        return self.config["provider"] == "local"
 
     def generate(
         self,
@@ -43,16 +83,11 @@ class CodeGenerator:
         """
         调用 AI 生成策略代码
 
-        Args:
-            messages: OpenAI messages 列表
-            model: 模型名
-            temperature: 创造性温度
-
         Returns:
             (strategy_code, full_response, tokens_used)
         """
         if not self.client:
-            raise RuntimeError("OPENAI_API_KEY 未配置，请在 .env 中设置")
+            raise RuntimeError("AI 客户端未初始化，请检查 .env 配置")
 
         logger.info(f"调用 {model} 生成策略代码...")
 
@@ -60,7 +95,7 @@ class CodeGenerator:
             model=model,
             messages=messages,
             temperature=temperature,
-            max_tokens=3000,
+            max_tokens=4000,
         )
 
         content = response.choices[0].message.content or ""
@@ -87,7 +122,7 @@ class CodeGenerator:
             {"event": "error", "message": "..."}
         """
         if not self.client:
-            yield {"event": "error", "message": "OPENAI_API_KEY 未配置"}
+            yield {"event": "error", "message": "AI 客户端未初始化"}
             return
 
         try:
@@ -95,7 +130,7 @@ class CodeGenerator:
                 model=model,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=3000,
+                max_tokens=4000,
                 stream=True,
             )
 

@@ -57,6 +57,10 @@ class AdvisorContextCollector:
             "signal_stats": None,
             "fundamentals": None,
             "web_news": None,
+            "manipulation_risk": None,
+            "small_cap_profile": None,
+            "dynamic_levels": None,
+            "market_behavior": None,
         }
 
         # 查股票名称
@@ -99,6 +103,46 @@ class AdvisorContextCollector:
             result["indicators"] = self._extract_indicators(df_ind)
         except Exception:
             logger.warning(f"计算技术指标失败: {symbol}\n{traceback.format_exc()}")
+
+        # StockAnalyzer 深度分析（用已有的 df 构建 analysis_quotes）
+        try:
+            from report_engine.stock_analyzer import StockAnalyzer
+            analysis_quotes = []
+            for _, row in df.tail(20).iterrows():
+                analysis_quotes.append({
+                    "date": str(row.get("date", ""))[:10],
+                    "open": float(row["open"]) if pd.notna(row["open"]) else 0,
+                    "high": float(row["high"]) if pd.notna(row["high"]) else 0,
+                    "low": float(row["low"]) if pd.notna(row["low"]) else 0,
+                    "close": float(row["close"]) if pd.notna(row["close"]) else 0,
+                    "volume": int(row["volume"]) if pd.notna(row["volume"]) else 0,
+                    "turnover": float(row["turnover"]) if "turnover" in row and pd.notna(row.get("turnover")) else None,
+                })
+            if len(analysis_quotes) >= 5:
+                atr_val = result.get("indicators", {}).get("atr") if result.get("indicators") else None
+                latest_close = analysis_quotes[-1]["close"] if analysis_quotes else None
+
+                try:
+                    result["manipulation_risk"] = StockAnalyzer.analyze_manipulation_risk(
+                        analysis_quotes, result.get("fundamentals"))
+                except Exception:
+                    pass
+                try:
+                    result["small_cap_profile"] = StockAnalyzer.analyze_small_cap_profile(
+                        analysis_quotes, result.get("fundamentals"))
+                except Exception:
+                    pass
+                try:
+                    result["dynamic_levels"] = StockAnalyzer.calculate_dynamic_levels(
+                        latest_close, analysis_quotes, atr_val, "BUY")
+                except Exception:
+                    pass
+                try:
+                    result["market_behavior"] = StockAnalyzer.analyze_market_behavior(analysis_quotes)
+                except Exception:
+                    pass
+        except Exception:
+            logger.debug(f"StockAnalyzer 深度分析失败: {symbol}\n{traceback.format_exc()}")
 
         # 策略信号
         gen: Optional[SignalGenerator] = None
@@ -237,6 +281,22 @@ class AdvisorContextCollector:
             "volume_ratio": _val("volume_ratio"),
         }
 
+    # K线形态英中翻译
+    PATTERN_NAMES = {
+        "doji": "十字星",
+        "hammer": "锤子线",
+        "shooting_star": "射击之星",
+        "hanging_man": "上吊线",
+        "engulfing_bullish": "看涨吞没",
+        "engulfing_bearish": "看跌吞没",
+        "morning_star": "早晨之星",
+        "evening_star": "黄昏之星",
+        "three_white_soldiers": "三连阳（红三兵）",
+        "three_black_crows": "三连阴（黑三鸦）",
+        "dark_cloud_cover": "乌云盖顶",
+        "piercing_line": "刺透形态",
+    }
+
     @staticmethod
     def _summarize_patterns(patterns: Dict, df: pd.DataFrame) -> list:
         """将形态检测结果转为可读描述（df 已经过 _normalize_df，RangeIndex + date 列）"""
@@ -251,5 +311,6 @@ class AdvisorContextCollector:
                 if idx < n - 10 or idx >= n:
                     continue
                 d = str(df.iloc[idx]["date"])[:10] if "date" in df.columns else ""
-                results.append({"pattern": name, "date": d})
+                cn_name = AdvisorContextCollector.PATTERN_NAMES.get(name, name)
+                results.append({"pattern": cn_name, "date": d})
         return results

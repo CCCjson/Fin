@@ -143,3 +143,18 @@ async def get_strategy_detail(strategy_id: str):
     if not strategy:
         raise HTTPException(status_code=404, detail="策略不存在")
     return strategy
+
+
+@router.delete("/sessions/{session_id}", summary="删除会话")
+async def delete_session(session_id: str):
+    """删除指定会话及其关联的策略和日志"""
+    try:
+        deleted = _engine.delete_session(session_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        return {"success": True, "message": "会话已删除"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除会话失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

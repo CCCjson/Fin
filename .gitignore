@@ -101,6 +101,11 @@ package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
+# ==================== 远程训练 ====================
+server_finetune/data/
+server_finetune/output/
+backend/finetune/remote_output/
+
 # ==================== 其他 ====================
 .pytest_cache/
 .coverage
@@ -111,3 +116,5 @@ htmlcov/
 *.a
 *.exe
 *.out
+code_dataset/
+datasets/

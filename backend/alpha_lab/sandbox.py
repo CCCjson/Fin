@@ -210,7 +210,7 @@ try:
     # 动态导入 AI 生成的策略
     import importlib.util
     spec = importlib.util.spec_from_file_location("gen_strategy", {json.dumps(strategy_path)})
-    mod = importlib.util.import_module_from_spec(spec)
+    mod = importlib.util.module_from_spec(spec)
 
     # 注入依赖让 AI 代码能 import
     sys.modules["backtest_engine"] = __import__("backtest_engine")
@@ -218,6 +218,14 @@ try:
     sys.modules["backtest_engine.strategies.base"] = __import__("backtest_engine.strategies.base", fromlist=["BaseStrategy", "StrategyContext"])
     sys.modules["backtest_engine.portfolio"] = __import__("backtest_engine.portfolio", fromlist=["order"])
     sys.modules["backtest_engine.portfolio.order"] = __import__("backtest_engine.portfolio.order", fromlist=["Order", "OrderType"])
+
+    # 直接注入 base 类到模块命名空间（防止 AI 未正确 import）
+    from backtest_engine.strategies.base import BaseStrategy, StrategyContext
+    from backtest_engine.portfolio.order import Order, OrderType
+    mod.BaseStrategy = BaseStrategy
+    mod.StrategyContext = StrategyContext
+    mod.Order = Order
+    mod.OrderType = OrderType
 
     spec.loader.exec_module(mod)
 
@@ -228,7 +236,7 @@ try:
         symbol = {json.dumps(symbol)}
 
         # ====== 训练集回测 ======
-        train_df = pd.read_parquet({json.dumps(train_data_path)})
+        train_df = pd.read_csv({json.dumps(train_data_path)}, index_col=0, parse_dates=True)
         strategy_train = mod.GeneratedStrategy()
         engine_train = BacktestEngine(initial_capital={initial_capital})
         train_result = engine_train.run(symbol=symbol, data=train_df, strategy=strategy_train)
@@ -247,7 +255,7 @@ try:
             result["train_metrics"] = clean
 
         # ====== 验证集回测 ======
-        val_df = pd.read_parquet({json.dumps(val_data_path)})
+        val_df = pd.read_csv({json.dumps(val_data_path)}, index_col=0, parse_dates=True)
         strategy_val = mod.GeneratedStrategy()
         engine_val = BacktestEngine(initial_capital={initial_capital})
         val_result = engine_val.run(symbol=symbol, data=val_df, strategy=strategy_val)

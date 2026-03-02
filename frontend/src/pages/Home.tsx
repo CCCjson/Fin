@@ -55,6 +55,11 @@ const markets: MarketModule[] = [
     icon: '🧬', accentColor: '#A855F7', available: true, route: '/alpha-lab',
     orbitRadius: 275, orbitSpeed: 90, orbitDirection: 1, startAngle: 280,
   },
+  {
+    id: 'fine-tune', name: 'Fine-Tune', subtitle: '模型微调训练',
+    icon: '🔬', accentColor: '#EC4899', available: true, route: '/fine-tune',
+    orbitRadius: 175, orbitSpeed: 65, orbitDirection: -1, startAngle: 120,
+  },
 ];
 
 interface FeaturePlanet {

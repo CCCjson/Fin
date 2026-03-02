@@ -96,12 +96,14 @@ class AlphaLabEngine:
         )
 
         # 4. 迭代循环
-        no_improve_count = 0
+        no_improve_count = 0   # 只计成功但未改进的轮次
+        fail_streak = 0        # 连续失败计数（代码/回测错误）
 
         for i in range(1, max_iterations + 1):
             phase = "explore" if i <= self.EXPLORE_ROUNDS else "refine"
-            model = "gpt-4o-mini" if phase == "explore" else "gpt-4o"
+            model = self.code_generator.get_model_for_phase(phase)
             session.phase = phase
+            session.current_iteration = i  # 无论成功失败都记录实际迭代轮数
 
             yield _ndjson({
                 "event": "iteration_start",
@@ -122,8 +124,11 @@ class AlphaLabEngine:
                         yield event
 
                 if eval_result is None:
-                    no_improve_count += 1
+                    # 迭代失败（代码错误/AST拒绝/回测失败），不算进早停
+                    fail_streak += 1
                     continue
+
+                fail_streak = 0  # 成功执行，重置失败连击
 
                 # 更新最佳
                 val_sharpe = self.evaluator._get_sharpe(eval_result.val_metrics)
@@ -147,15 +152,20 @@ class AlphaLabEngine:
             except Exception as e:
                 logger.error(f"[{session.id}] 迭代 {i} 异常: {e}")
                 yield _ndjson({"event": "iteration_error", "iteration": i, "error": str(e)})
-                no_improve_count += 1
+                fail_streak += 1
 
             # 检查 phase 切换
             if i == self.EXPLORE_ROUNDS:
                 yield _ndjson({"event": "phase_change", "from": "explore", "to": "refine", "iteration": i + 1})
 
-            # 早停
-            if no_improve_count >= 3 and i >= 5:
+            # 早停：连续 5 轮成功执行但无改进，才触发
+            if no_improve_count >= 5 and i >= self.EXPLORE_ROUNDS:
                 yield _ndjson({"event": "early_stop", "reason": f"连续 {no_improve_count} 轮无改进"})
+                break
+
+            # 连续失败太多次也停（避免一直烧 token）
+            if fail_streak >= 5:
+                yield _ndjson({"event": "early_stop", "reason": f"连续 {fail_streak} 轮执行失败"})
                 break
 
         # 5. 完成
@@ -383,17 +393,17 @@ class AlphaLabEngine:
             train_df = df.iloc[:split_idx].copy()
             val_df = df.iloc[split_idx:].copy()
 
-            # 保存为 parquet
-            train_path = os.path.join(tmpdir, f"{symbol}_train.parquet")
-            val_path = os.path.join(tmpdir, f"{symbol}_val.parquet")
-            train_df.to_parquet(train_path)
-            val_df.to_parquet(val_path)
+            # 保存为 CSV 临时文件
+            train_path = os.path.join(tmpdir, f"{symbol}_train.csv")
+            val_path = os.path.join(tmpdir, f"{symbol}_val.csv")
+            train_df.to_csv(train_path, index=True)
+            val_df.to_csv(val_path, index=True)
 
             train_paths[symbol] = train_path
             val_paths[symbol] = val_path
 
-            # 数据摘要
-            data_summary = {
+            # 数据摘要（累积多股票信息）
+            sym_summary = {
                 "train_days": len(train_df),
                 "val_days": len(val_df),
                 "total_days": len(df),
@@ -401,6 +411,16 @@ class AlphaLabEngine:
                 "avg_volume": f"{df['volume'].mean():,.0f}",
                 "latest_price": f"{df['close'].iloc[-1]:.2f}",
             }
+            if not data_summary:
+                data_summary = sym_summary
+            else:
+                # 多股票时汇总：天数取最小值，价格范围合并
+                data_summary["train_days"] = min(data_summary["train_days"], sym_summary["train_days"])
+                data_summary["val_days"] = min(data_summary["val_days"], sym_summary["val_days"])
+                data_summary["total_days"] = min(data_summary["total_days"], sym_summary["total_days"])
+                data_summary["price_range"] += f" | {symbol}: {sym_summary['price_range']}"
+                data_summary["avg_volume"] += f" | {symbol}: {sym_summary['avg_volume']}"
+                data_summary["latest_price"] += f" | {symbol}: {sym_summary['latest_price']}"
 
         logger.info(f"数据准备完成: train={data_summary['train_days']}天, val={data_summary['val_days']}天")
         return train_paths, val_paths, data_summary
@@ -436,3 +456,7 @@ class AlphaLabEngine:
     def get_strategy_detail(self, strategy_id: str) -> Optional[Dict]:
         """获取策略详情"""
         return self.strategy_store.get_strategy(strategy_id)
+
+    def delete_session(self, session_id: str) -> bool:
+        """删除会话及关联数据"""
+        return self.strategy_store.delete_session(session_id)

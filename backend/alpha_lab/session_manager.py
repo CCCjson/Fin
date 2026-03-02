@@ -123,9 +123,9 @@ class SessionManager:
             logger.info(f"[{session.id}] 新最佳: iter={iteration}, sharpe={val_sharpe:.3f}, score={composite:.4f}")
 
     def add_cost(self, session: SessionState, tokens: int, model: str):
-        """追加成本"""
+        """追加成本（本地模型费率为 0）"""
         session.total_tokens += tokens
-        rate = self.COST_RATES.get(model, self.COST_RATES["gpt-4o-mini"])
+        rate = self.COST_RATES.get(model, 0.0)  # 未知模型（本地模型）费率为 0
         session.total_cost += tokens * rate / 1000
 
     def add_iteration(self, session: SessionState, record: IterationRecord):
