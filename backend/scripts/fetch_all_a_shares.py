@@ -1,5 +1,5 @@
 """
-全量 A股数据拉取脚本
+全量 A股 + ETF + 指数 + 北交所 数据拉取脚本
 
 使用企业级爬虫框架，具备：
 - 请求限速 + 指数退避重试
@@ -31,9 +31,13 @@ from data_engine.storage.models import StockInfo, DailyQuote, DataUpdateLog
 from eastmoney_crawler import EastMoneyCrawler, CrawlerConfig, parse_kline_data, ProxyTimeoutError
 from proxy_manager import ProxyManager
 
+# 绕过系统代理（Clash）— 必须放在 import 之后，因为 proxy_manager 的 load_dotenv 会重新注入
+for _k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+    os.environ.pop(_k, None)
+
 
 # ============ 配置 ============
-START_DATE = "2024-01-01"
+START_DATE = "2010-01-01"
 END_DATE = datetime.now().strftime("%Y-%m-%d")
 BATCH_SIZE = 500  # 每批保存进度
 LONG_PAUSE_EVERY = 1000  # 每处理多少只后长休息
@@ -55,6 +59,22 @@ logger.add(
 logger.add(log_dir / "fetch_all_a_shares.log", level="DEBUG", rotation="10 MB")
 
 
+# ============ 主要指数常量 ============
+MAJOR_INDICES = [
+    {"code": "000001", "name": "上证指数",   "exchange": "SH", "secid_market": 1},
+    {"code": "000016", "name": "上证50",     "exchange": "SH", "secid_market": 1},
+    {"code": "000300", "name": "沪深300",    "exchange": "SH", "secid_market": 1},
+    {"code": "000688", "name": "科创50",     "exchange": "SH", "secid_market": 1},
+    {"code": "000852", "name": "中证1000",   "exchange": "SH", "secid_market": 1},
+    {"code": "000905", "name": "中证500",    "exchange": "SH", "secid_market": 1},
+    {"code": "399001", "name": "深证成指",   "exchange": "SZ", "secid_market": 0},
+    {"code": "399006", "name": "创业板指",   "exchange": "SZ", "secid_market": 0},
+    {"code": "399106", "name": "深证综指",   "exchange": "SZ", "secid_market": 0},
+    {"code": "399005", "name": "中小100",    "exchange": "SZ", "secid_market": 0},
+    {"code": "399673", "name": "创业板50",   "exchange": "SZ", "secid_market": 0},
+]
+
+
 def load_progress() -> Dict:
     """加载进度"""
     if PROGRESS_FILE.exists():
@@ -70,7 +90,7 @@ def save_progress(progress: Dict):
 
 
 def get_all_a_share_list() -> List[Dict]:
-    """获取所有 A股股票列表"""
+    """获取所有 A股股票列表（含北交所）"""
     logger.info("正在获取 A股股票列表...")
 
     try:
@@ -80,19 +100,26 @@ def get_all_a_share_list() -> List[Dict]:
         for _, row in df.iterrows():
             code = row["code"]
             if code.startswith("6"):
-                market_suffix = "SH"
+                exchange = "SH"
             elif code.startswith(("0", "3")):
-                market_suffix = "SZ"
+                exchange = "SZ"
+            elif code.startswith(("4", "8")):
+                exchange = "BJ"
             else:
                 continue
 
             stocks.append({
-                "symbol": f"{code}.{market_suffix}",
+                "symbol": f"{code}.{exchange}",
                 "name": row["name"],
-                "code": code
+                "code": code,
+                "stock_type": "stock",
+                "exchange": exchange,
             })
 
-        logger.info(f"获取到 {len(stocks)} 只 A股")
+        sh_count = sum(1 for s in stocks if s["exchange"] == "SH")
+        sz_count = sum(1 for s in stocks if s["exchange"] == "SZ")
+        bj_count = sum(1 for s in stocks if s["exchange"] == "BJ")
+        logger.info(f"获取到 {len(stocks)} 只 A股 (SH={sh_count}, SZ={sz_count}, BJ={bj_count})")
         return stocks
 
     except Exception as e:
@@ -100,9 +127,139 @@ def get_all_a_share_list() -> List[Dict]:
         raise
 
 
+ETF_CACHE_FILE = Path(__file__).parent / "etf_list_cache.json"
+ETF_CACHE_DAYS = 7  # 缓存有效期（天）
+
+
+def get_etf_list(proxy_mgr: 'ProxyManager' = None) -> List[Dict]:
+    """通过东财 clist API 获取全量 ETF 列表，结果缓存到本地文件"""
+
+    # 加载缓存（作为基础数据，后续增量补全）
+    etfs = []
+    seen_codes = set()
+    if ETF_CACHE_FILE.exists():
+        try:
+            with open(ETF_CACHE_FILE, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+            etfs = cache.get("data", [])
+            seen_codes = {e["code"] for e in etfs}
+            logger.info(f"加载缓存 ETF: {len(etfs)} 只")
+        except Exception as e:
+            logger.warning(f"读取 ETF 缓存失败: {e}")
+
+    logger.info("正在从东财 API 补全 ETF 列表...")
+
+    import requests as req
+
+    API_URL = "https://88.push2.eastmoney.com/api/qt/clist/get"
+
+    def _get_proxies():
+        if not proxy_mgr:
+            return None
+        p = proxy_mgr.get_proxy()
+        return p.to_requests_proxies() if p else None
+
+    def _fetch_page(page: int):
+        """获取单页，失败换 IP 重试，最多 5 次。成功返回 list，失败返回 None"""
+        params = {
+            "pn": page, "pz": 100, "po": 1, "np": 1,
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": 2, "invt": 2, "fid": "f12",
+            "fs": "b:MK0021,b:MK0022,b:MK0023,b:MK0024,b:MK0827",
+            "fields": "f12,f14",
+        }
+        for _ in range(5):
+            proxies = _get_proxies()
+            try:
+                resp = req.get(API_URL, params=params, proxies=proxies, timeout=15)
+                data = resp.json()
+                items = data.get("data", {}).get("diff") if data.get("data") else None
+                return list(items.values()) if isinstance(items, dict) else (items or [])
+            except Exception:
+                if proxy_mgr:
+                    proxy_mgr.switch_proxy()
+        return None  # 全部失败
+
+    try:
+        new_count = 0
+        for page in range(1, 20):
+            items = _fetch_page(page)
+            if items is None:
+                logger.warning(f"  ETF 第{page}页获取失败，跳过 (已有缓存数据兜底)")
+                continue  # 失败跳过，缓存里有这些数据
+            if not items:
+                break  # 空列表 = 分页结束
+
+            page_new = 0
+            for item in items:
+                code = str(item.get("f12", "")).strip()
+                name = str(item.get("f14", "")).strip()
+                if len(code) != 6 or code in seen_codes:
+                    continue
+
+                if code.startswith(("51", "56", "58", "50", "52", "53")):
+                    exchange = "SH"
+                elif code.startswith(("15", "16")):
+                    exchange = "SZ"
+                else:
+                    continue
+
+                seen_codes.add(code)
+                etfs.append({
+                    "symbol": f"{code}.{exchange}",
+                    "name": name,
+                    "code": code,
+                    "stock_type": "etf",
+                    "exchange": exchange,
+                })
+                page_new += 1
+
+            new_count += page_new
+            logger.info(f"  ETF 第{page}页: 新增{page_new} 只 (总计 {len(etfs)})")
+
+            if len(items) < 100:
+                break
+            time.sleep(0.3)
+
+        logger.info(f"ETF 列表完成: 共 {len(etfs)} 只 (本次新增 {new_count})")
+
+        # 保存缓存
+        try:
+            with open(ETF_CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump({"updated_at": datetime.now().isoformat(), "data": etfs}, f, ensure_ascii=False, indent=2)
+            logger.info(f"ETF 列表已缓存到 {ETF_CACHE_FILE.name}")
+        except Exception as e:
+            logger.warning(f"保存 ETF 缓存失败: {e}")
+
+        return etfs
+
+    except Exception as e:
+        logger.warning(f"东财 ETF 接口失败: {e}，已获取 {len(etfs)} 只")
+        return etfs
+
+
+def get_index_list() -> List[Dict]:
+    """获取主要指数列表"""
+    logger.info("正在生成指数列表...")
+
+    indices = []
+    for item in MAJOR_INDICES:
+        indices.append({
+            "symbol": f"{item['code']}.{item['exchange']}",
+            "name": item["name"],
+            "code": item["code"],
+            "stock_type": "index",
+            "exchange": item["exchange"],
+            "secid_market": item["secid_market"],
+        })
+
+    logger.info(f"指数列表: {len(indices)} 只")
+    return indices
+
+
 def save_stock_list_to_db(stocks: List[Dict], session):
-    """保存股票列表到数据库"""
-    logger.info("正在保存股票列表到数据库...")
+    """保存股票/ETF/指数列表到数据库"""
+    logger.info("正在保存列表到数据库...")
 
     saved_count = 0
     for stock in stocks:
@@ -114,20 +271,26 @@ def save_stock_list_to_db(stocks: List[Dict], session):
             if existing:
                 existing.name = stock["name"]
                 existing.is_active = 1
+                if stock.get("stock_type"):
+                    existing.stock_type = stock["stock_type"]
+                if stock.get("exchange"):
+                    existing.exchange = stock["exchange"]
             else:
                 stock_info = StockInfo(
                     symbol=stock["symbol"],
                     name=stock["name"],
                     market="a_share",
-                    is_active=1
+                    is_active=1,
+                    stock_type=stock.get("stock_type", "stock"),
+                    exchange=stock.get("exchange"),
                 )
                 session.add(stock_info)
                 saved_count += 1
         except Exception as e:
-            logger.warning(f"保存股票 {stock['symbol']} 失败: {e}")
+            logger.warning(f"保存 {stock['symbol']} 失败: {e}")
 
     session.commit()
-    logger.info(f"股票列表保存完成，新增 {saved_count} 只")
+    logger.info(f"列表保存完成，新增 {saved_count} 条")
 
 
 def save_daily_quotes_to_db(symbol: str, klines: List[Dict], session) -> int:
@@ -182,7 +345,7 @@ def main():
     start_time = datetime.now()
 
     logger.info("=" * 60)
-    logger.info("全量 A股数据拉取 - 按需代理 IP 模式")
+    logger.info("全量数据拉取 - A股 + ETF + 指数 + 北交所")
     logger.info("=" * 60)
     logger.info(f"时间范围: {START_DATE} ~ {END_DATE}")
     logger.info(f"策略: 每次请求 1 个 IP，超时立即切换")
@@ -221,14 +384,26 @@ def main():
 
     logger.info(f"已完成: {len(completed_symbols)} 只")
 
-    # 获取股票列表
+    # 获取三个列表
     stocks = get_all_a_share_list()
+    etfs = get_etf_list(proxy_mgr=proxy_mgr)
+    indices = get_index_list()
 
-    # 保存股票列表到数据库
-    save_stock_list_to_db(stocks, session)
+    # 合并
+    all_items = stocks + etfs + indices
+
+    # 保存列表到数据库
+    save_stock_list_to_db(all_items, session)
+
+    # 分类统计
+    stock_count = len(stocks)
+    etf_count = len(etfs)
+    index_count = len(indices)
+    total = len(all_items)
+
+    logger.info(f"\n品种汇总: 股票={stock_count}, ETF={etf_count}, 指数={index_count}, 合计={total}")
 
     # 统计
-    total = len(stocks)
     success_count = 0
     fail_count = 0
     skip_count = 0
@@ -239,13 +414,13 @@ def main():
     start_date_fmt = START_DATE.replace("-", "")
     end_date_fmt = END_DATE.replace("-", "")
 
-    logger.info(f"\n开始拉取日线数据，共 {total} 只股票...\n")
+    logger.info(f"\n开始拉取日线数据，共 {total} 只...\n")
 
     try:
-        for i, stock in enumerate(stocks):
-            symbol = stock["symbol"]
-            code = stock["code"]
-            name = stock["name"]
+        for i, item in enumerate(all_items):
+            symbol = item["symbol"]
+            code = item["code"]
+            name = item["name"]
 
             # 跳过已完成的
             if symbol in completed_symbols:
@@ -265,14 +440,19 @@ def main():
             # 进度显示
             progress_pct = (i + 1) / total * 100
             proxy_info = f" [代理: {current_proxy.ip}:{current_proxy.port}]" if current_proxy else " [直连]"
-            logger.info(f"[{i+1}/{total}] ({progress_pct:.1f}%) {symbol} {name}{proxy_info}")
+            item_type = item.get("stock_type", "stock")
+            logger.info(f"[{i+1}/{total}] ({progress_pct:.1f}%) [{item_type}] {symbol} {name}{proxy_info}")
 
             # 构造 proxies 参数
             proxies_dict = current_proxy.to_requests_proxies() if current_proxy else None
 
-            # 使用爬虫获取数据
+            # 使用爬虫获取数据（传 secid_market 如果有）
             try:
-                data = crawler.fetch_stock_history(code, start_date_fmt, end_date_fmt, proxies=proxies_dict)
+                data = crawler.fetch_stock_history(
+                    code, start_date_fmt, end_date_fmt,
+                    proxies=proxies_dict,
+                    secid_market=item.get("secid_market"),
+                )
 
                 if data:
                     klines = parse_kline_data(data)
@@ -366,7 +546,7 @@ def main():
     logger.info("\n" + "=" * 60)
     logger.info("数据拉取完成!")
     logger.info("=" * 60)
-    logger.info(f"总股票数: {total}")
+    logger.info(f"总数: {total} (股票={stock_count}, ETF={etf_count}, 指数={index_count})")
     logger.info(f"成功: {success_count}")
     logger.info(f"失败: {fail_count}")
     logger.info(f"跳过: {skip_count}")
@@ -384,7 +564,7 @@ def main():
     logger.info("=" * 60)
 
     if failed_symbols:
-        logger.warning(f"\n失败的股票 ({len(failed_symbols)} 只):")
+        logger.warning(f"\n失败的品种 ({len(failed_symbols)} 只):")
         for sym in failed_symbols[:20]:
             logger.warning(f"  - {sym}")
         if len(failed_symbols) > 20:

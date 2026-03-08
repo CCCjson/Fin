@@ -116,12 +116,12 @@ TEST(MetricsTest, TradeStats) {
     std::vector<Fill> fills;
 
     // 盈利交易：买 100，卖 110
-    fills.push_back({"o1", "AAPL", Side::BUY, 100.0, 100, 1.0, "2025-01-01"});
-    fills.push_back({"o2", "AAPL", Side::SELL, 110.0, 100, 1.0, "2025-01-10"});
+    fills.push_back({"o1", "AAPL", Side::BUY, 100.0, 100, 1.0, 0.0, "2025-01-01", "signal"});
+    fills.push_back({"o2", "AAPL", Side::SELL, 110.0, 100, 1.0, 0.0, "2025-01-10", "signal"});
 
     // 亏损交易：买 100，卖 95
-    fills.push_back({"o3", "AAPL", Side::BUY, 100.0, 100, 1.0, "2025-02-01"});
-    fills.push_back({"o4", "AAPL", Side::SELL, 95.0, 100, 1.0, "2025-02-10"});
+    fills.push_back({"o3", "AAPL", Side::BUY, 100.0, 100, 1.0, 0.0, "2025-02-01", "signal"});
+    fills.push_back({"o4", "AAPL", Side::SELL, 95.0, 100, 1.0, 0.0, "2025-02-10", "signal"});
 
     auto stats = Metrics::calc_trade_stats(fills);
 
@@ -145,8 +145,8 @@ TEST(MetricsTest, CalculateAll) {
     auto curve = make_curve({100000, 105000, 103000, 108000, 106000, 112000});
 
     std::vector<Fill> fills;
-    fills.push_back({"o1", "AAPL", Side::BUY, 100.0, 100, 5.0, "2025-01-01"});
-    fills.push_back({"o2", "AAPL", Side::SELL, 112.0, 100, 5.0, "2025-01-06"});
+    fills.push_back({"o1", "AAPL", Side::BUY, 100.0, 100, 5.0, 0.0, "2025-01-01", "signal"});
+    fills.push_back({"o2", "AAPL", Side::SELL, 112.0, 100, 5.0, 0.0, "2025-01-06", "signal"});
 
     auto m = Metrics::calculate(curve, fills, 100000.0);
 

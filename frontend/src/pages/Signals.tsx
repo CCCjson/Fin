@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { signalService } from '../services/signalService';
-import type { ScanProgressEvent, DataFreshness, TodayStatus } from '../services/signalService';
+import type { ScanProgressEvent, DataFreshness, TodayStatus, BackfillProgressEvent } from '../services/signalService';
 import type { Signal, SignalStatistics } from '../types';
 
 interface ScanProgress {
@@ -15,6 +15,16 @@ interface ScanProgress {
   failed: number;
 }
 
+interface BackfillProgress {
+  currentDay: number;
+  totalDays: number;
+  currentDate: string;
+  cumulativeSignals: number;
+  daySignals: number;
+  dayBuy: number;
+  daySell: number;
+}
+
 export const Signals: React.FC = () => {
   const navigate = useNavigate();
   const [signals, setSignals] = useState<Signal[]>([]);
@@ -25,7 +35,7 @@ export const Signals: React.FC = () => {
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [symbol, setSymbol] = useState('');
   const [signalType, setSignalType] = useState('');
-  const [startDate, setStartDate] = useState('2025-01-01');
+  const [startDate, setStartDate] = useState('2010-01-01');
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
@@ -37,6 +47,11 @@ export const Signals: React.FC = () => {
   const [showStaleAlert, setShowStaleAlert] = useState(false);
   const [checkingFreshness, setCheckingFreshness] = useState(false);
   const [todayStatus, setTodayStatus] = useState<TodayStatus | null>(null);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<BackfillProgress | null>(null);
+  const [backfillResult, setBackfillResult] = useState<string | null>(null);
+  const [gapCount, setGapCount] = useState<number | null>(null);
+  const backfillAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     loadData();
@@ -201,6 +216,85 @@ export const Signals: React.FC = () => {
     abortControllerRef.current?.abort();
   };
 
+  // 检测信号缺口
+  const checkGaps = async () => {
+    try {
+      const gaps = await signalService.detectGaps(30);
+      setGapCount(gaps.count);
+    } catch {
+      setGapCount(null);
+    }
+  };
+
+  // 启动时检测缺口
+  useEffect(() => {
+    checkGaps();
+  }, []);
+
+  // 信号回补
+  const handleBackfill = async () => {
+    try {
+      setBackfilling(true);
+      setBackfillResult(null);
+      setBackfillProgress(null);
+
+      const abortController = new AbortController();
+      backfillAbortRef.current = abortController;
+
+      await signalService.backfillStream(
+        { lookback_days: 30, save_to_db: true, db_only: true },
+        (event: BackfillProgressEvent) => {
+          if (event.event === 'start') {
+            setBackfillProgress({
+              currentDay: 0,
+              totalDays: event.missing_dates?.length || 0,
+              currentDate: '',
+              cumulativeSignals: 0,
+              daySignals: 0,
+              dayBuy: 0,
+              daySell: 0,
+            });
+          } else if (event.event === 'day_complete') {
+            setBackfillProgress({
+              currentDay: event.day_index || 0,
+              totalDays: event.total_days || 0,
+              currentDate: event.date || '',
+              cumulativeSignals: event.cumulative_signals || 0,
+              daySignals: event.day_signals || 0,
+              dayBuy: event.day_buy || 0,
+              daySell: event.day_sell || 0,
+            });
+          } else if (event.event === 'complete') {
+            setBackfillResult(
+              event.backfilled_days === 0
+                ? event.message || '无需回补'
+                : `回补完成！共回补 ${event.backfilled_days} 天，生成 ${event.total_signals} 个信号（买入: ${event.buy_signals}, 卖出: ${event.sell_signals}）`
+            );
+            setGapCount(0);
+          }
+        },
+        abortController.signal,
+      );
+
+      setPage(1);
+      await loadData(1);
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        setBackfillResult('回补已取消');
+      } else {
+        setBackfillResult('回补失败，请重试');
+      }
+    } finally {
+      setBackfilling(false);
+      setBackfillProgress(null);
+      backfillAbortRef.current = null;
+    }
+  };
+
+  const handleCancelBackfill = () => {
+    backfillAbortRef.current?.abort();
+  };
+
   const getStrengthColor = (strength: number) => {
     if (strength >= 0.8) return 'text-bull';
     if (strength >= 0.6) return 'text-primary-light';
@@ -232,9 +326,46 @@ export const Signals: React.FC = () => {
                 取消
               </button>
             )}
+            {/* 信号回补按钮 */}
+            {backfilling && (
+              <button
+                onClick={handleCancelBackfill}
+                className="px-3 md:px-4 py-1.5 md:py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl hover:bg-red-500/30 transition-all flex items-center gap-2 text-sm"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                取消
+              </button>
+            )}
+            <button
+              onClick={handleBackfill}
+              disabled={backfilling || scanning || gapCount === 0}
+              className="px-3 md:px-4 py-1.5 md:py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl hover:from-amber-600 hover:to-orange-700 shadow-lg shadow-amber-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm"
+            >
+              {backfilling ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  回补中...
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  信号回补
+                  {gapCount !== null && gapCount > 0 && (
+                    <span className="bg-white/20 px-1.5 py-0.5 rounded-md text-xs">{gapCount}天</span>
+                  )}
+                </>
+              )}
+            </button>
             <button
               onClick={handleScanMarket}
-              disabled={scanning || checkingFreshness}
+              disabled={scanning || checkingFreshness || backfilling}
               className="px-4 md:px-6 py-1.5 md:py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl hover:from-green-600 hover:to-emerald-700 shadow-lg shadow-green-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm md:text-base"
             >
               {scanning || checkingFreshness ? (
@@ -295,6 +426,52 @@ export const Signals: React.FC = () => {
                 </span>
               )}
             </div>
+          </div>
+        )}
+
+        {/* 信号回补进度条 */}
+        {backfilling && backfillProgress && backfillProgress.totalDays > 0 && (
+          <div className="bg-gradient-card border border-amber-500/30 shadow-card p-5 rounded-xl space-y-3">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-300">
+                正在回补: <span className="text-amber-400 font-medium">{backfillProgress.currentDate}</span>
+              </span>
+              <span className="text-gray-400">
+                {backfillProgress.currentDay} / {backfillProgress.totalDays} 天
+                <span className="ml-2 text-white font-medium">
+                  {Math.round((backfillProgress.currentDay / backfillProgress.totalDays) * 100)}%
+                </span>
+              </span>
+            </div>
+            <div className="w-full h-3 bg-dark-light rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-amber-500 to-orange-400 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${(backfillProgress.currentDay / backfillProgress.totalDays) * 100}%` }}
+              />
+            </div>
+            <div className="flex items-center gap-6 text-xs text-gray-400">
+              <span>
+                当日信号: <span className="text-white font-medium">{backfillProgress.daySignals}</span>
+                <span className="ml-1 text-bull">({backfillProgress.dayBuy}买</span>
+                <span className="text-bear"> {backfillProgress.daySell}卖)</span>
+              </span>
+              <span>
+                累计: <span className="text-amber-400 font-medium">{backfillProgress.cumulativeSignals}</span>
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* 回补结果提示 */}
+        {backfillResult && (
+          <div className={`p-4 rounded-xl border ${
+            backfillResult.includes('失败') || backfillResult.includes('取消')
+              ? 'bg-red-500/10 border-red-500/30 text-red-400'
+              : backfillResult.includes('无需')
+              ? 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+              : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+          }`}>
+            {backfillResult}
           </div>
         )}
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
+import { MarketSelector } from '../components/common/MarketSelector';
 import { reportService } from '../services/reportService';
 import type { ReportSummary, ReportDetail, ReportStreamEvent } from '../services/reportService';
 
@@ -454,9 +455,12 @@ export const Reports: React.FC = () => {
           {/* 头部 */}
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-violet-400 to-purple-300 bg-clip-text text-transparent">
-                AI 分析报告
-              </h1>
+              <div className="flex items-center gap-4">
+                <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-violet-400 to-purple-300 bg-clip-text text-transparent">
+                  AI 分析报告
+                </h1>
+                <MarketSelector />
+              </div>
               <p className="text-gray-500 text-sm mt-1">基于量化数据的智能投资分析</p>
             </div>
             <button

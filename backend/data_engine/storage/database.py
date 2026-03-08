@@ -139,6 +139,39 @@ def init_db():
                 ))
             print("✓ signal_tracking 表已添加 idx_tracking_symbol_date 复合索引")
 
+    # 自动迁移：为 backtest_tasks 表添加 batch_id 列
+    if "backtest_tasks" in insp.get_table_names():
+        bt_cols = {c["name"] for c in insp.get_columns("backtest_tasks")}
+        if "batch_id" not in bt_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE backtest_tasks ADD COLUMN batch_id VARCHAR(50)"))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_backtest_tasks_batch_id "
+                    "ON backtest_tasks (batch_id)"
+                ))
+            print("✓ backtest_tasks 表已添加 batch_id 列")
+
+    # 自动迁移：回填 stock_info 表的 stock_type 和 exchange
+    if "stock_info" in insp.get_table_names():
+        with engine.begin() as conn:
+            # stock_type 为空的默认设为 stock
+            conn.execute(text(
+                "UPDATE stock_info SET stock_type = 'stock' WHERE stock_type IS NULL"
+            ))
+            # exchange 为空的根据 symbol 推断
+            conn.execute(text(
+                "UPDATE stock_info SET exchange = 'SH' "
+                "WHERE exchange IS NULL AND symbol LIKE '6%'"
+            ))
+            conn.execute(text(
+                "UPDATE stock_info SET exchange = 'SZ' "
+                "WHERE exchange IS NULL AND (symbol LIKE '0%' OR symbol LIKE '3%')"
+            ))
+            conn.execute(text(
+                "UPDATE stock_info SET exchange = 'BJ' "
+                "WHERE exchange IS NULL AND (symbol LIKE '4%' OR symbol LIKE '8%')"
+            ))
+
     print("✓ 数据库初始化完成")
 
 

@@ -52,6 +52,7 @@ struct BacktestMetrics {
     double avg_profit = 0.0;            // 平均盈利金额
     double avg_loss = 0.0;              // 平均亏损金额
     double total_commission = 0.0;      // 总手续费
+    double total_slippage = 0.0;        // 总滑点成本
 };
 
 /*

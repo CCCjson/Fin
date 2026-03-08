@@ -23,7 +23,10 @@ TEST(PortfolioTest, InitialState) {
 // ── 买入测试 ──
 
 TEST(PortfolioTest, BuyOrder) {
-    Portfolio p(100000.0, CommissionConfig::us_stock());
+    // Use zero-slippage config so price matches exactly
+    CommissionConfig comm = CommissionConfig::us_stock();
+    comm.slippage_pct = 0.0;
+    Portfolio p(100000.0, comm);
 
     auto fill = p.execute_order(
         Order::market_buy("AAPL", 100),

@@ -96,7 +96,7 @@ export const DataPipeline: React.FC = () => {
     const yyyymmdd = today.getFullYear().toString()
       + (today.getMonth() + 1).toString().padStart(2, '0')
       + today.getDate().toString().padStart(2, '0');
-    submitTask({ symbols: [], begin_date: '20240101', end_date: yyyymmdd, thread_count: threadCount, batch_size: batchSize, switch_ip_every: switchIpEvery });
+    submitTask({ symbols: [], begin_date: '20100101', end_date: yyyymmdd, thread_count: threadCount, batch_size: batchSize, switch_ip_every: switchIpEvery });
   };
 
   const handleStop = async () => {

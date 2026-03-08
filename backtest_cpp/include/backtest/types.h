@@ -161,7 +161,9 @@ struct Fill {
     double price = 0.0;         // 实际成交价格
     int quantity = 0;           // 成交数量
     double commission = 0.0;    // 手续费
+    double slippage = 0.0;      // 滑点成本
     std::string date;           // 成交日期
+    std::string reason;         // 成交原因: "signal" / "stop_loss" / "trailing_stop"
 
     /*
      * 计算成交金额（不含手续费）
@@ -252,6 +254,7 @@ struct CommissionConfig {
     double stamp_tax = 0.001;       // 印花税率（默认千 1）
     bool stamp_tax_sell_only = true; // 印花税是否只在卖出时收
     double min_commission = 5.0;    // 最低佣金（元/美元）
+    double slippage_pct = 0.0;      // 滑点比例（如 0.001 = 0.1%）
 
     /*
      * 计算某笔交易的总手续费
@@ -271,20 +274,42 @@ struct CommissionConfig {
     }
 
     /*
-     * 预设配置的工厂方法
+     * 计算滑点后的实际成交价
+     * 买入价格偏高，卖出价格偏低
+     */
+    double apply_slippage(double price, bool is_buy) const {
+        if (slippage_pct <= 0.0) return price;
+        if (is_buy) return price * (1.0 + slippage_pct);
+        else        return price * (1.0 - slippage_pct);
+    }
+
+    /*
+     * 预设配置的工厂方法（含默认滑点）
      */
     static CommissionConfig a_share() {
-        return { 0.00025, 0.001, true, 5.0 };
+        return { 0.00025, 0.001, true, 5.0, 0.001 };    // 滑点 0.1%
     }
 
     static CommissionConfig us_stock() {
-        // 美股按笔佣金比较复杂，这里简化为固定比率
-        return { 0.0001, 0.0, false, 1.0 };
+        return { 0.0001, 0.0, false, 1.0, 0.0005 };     // 滑点 0.05%
     }
 
     static CommissionConfig hk_stock() {
-        return { 0.0005, 0.001, false, 5.0 };
+        return { 0.0005, 0.001, false, 5.0, 0.001 };    // 滑点 0.1%
     }
+};
+
+/*
+ * RiskConfig — 风控配置
+ *
+ * 在引擎层面强制执行止损和仓位限制，策略不可绕过。
+ */
+struct RiskConfig {
+    bool   enabled = false;             // 是否启用风控
+    double stop_loss_pct = 0.05;        // 固定止损比例（亏损 5% 平仓）
+    bool   trailing_stop = false;       // 是否启用追踪止损
+    double trailing_stop_pct = 0.08;    // 追踪止损：从最高点回撤 8% 平仓
+    double max_position_pct = 1.0;      // 单股最大仓位占总资产比例（1.0 = 不限制）
 };
 
 }  // namespace backtest

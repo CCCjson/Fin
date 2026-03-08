@@ -70,32 +70,54 @@ export const Layout: React.FC = () => {
     setMoreDrawerOpen(false);
   }, [currentPath]);
 
-  const navItems = [
+  // A股专属功能
+  const aStockItems = [
     { path: '/app/realtime', label: '实时行情', icon: '⚡' },
     { path: '/app/market', label: 'K线分析', icon: '📈' },
-    { path: '/app/portfolio', label: '交易记录', icon: '📒' },
-    { path: '/app/review', label: '每日复盘', icon: '📝' },
     { path: '/app/signals', label: '信号分析', icon: '🎯' },
     { path: '/app/tracking', label: '信号追踪', icon: '📋' },
-    { path: '/app/backtest', label: '策略回测', icon: '🔬' },
-    { path: '/app/reports', label: 'AI 报告', icon: '🤖' },
-    { path: '/app/advisor', label: 'AI 顾问', icon: '💬' },
-    { path: '/app/orderbook', label: '订单簿', icon: '📊' },
     { path: '/app/pipeline', label: '数据管道', icon: '🚀' },
     { path: '/app/prediction', label: '股价预测', icon: '🔮' },
-    { path: '/app/news', label: '新闻分析', icon: '📰' },
   ];
 
-  // 底部 Tab 栏固定显示的 4 个 + 更多
-  const mobileTabItems = [
-    { path: '/app/realtime', label: '行情', icon: '⚡' },
-    { path: '/app/market', label: 'K线', icon: '📈' },
-    { path: '/app/signals', label: '信号', icon: '🎯' },
-    { path: '/app/advisor', label: '顾问', icon: '💬' },
+  // 通用功能（跨市场共享）
+  const sharedItems = [
+    { path: '/app/backtest', label: '策略回测', icon: '🔬' },
+    { path: '/app/portfolio', label: '交易记录', icon: '📒' },
+    { path: '/app/review', label: '每日复盘', icon: '📝' },
+    { path: '/app/reports', label: 'AI 报告', icon: '🤖' },
+    { path: '/app/advisor', label: 'AI 顾问', icon: '💬' },
+    { path: '/app/news', label: '新闻分析', icon: '📰' },
+    { path: '/app/orderbook', label: '订单簿', icon: '📊' },
   ];
+
+  // 判断当前处于哪个分区
+  const aStockPaths = aStockItems.map(i => i.path);
+  const sharedPaths = sharedItems.map(i => i.path);
+  const isInShared = sharedPaths.includes(currentPath);
+
+  // 侧边栏只显示当前分区
+  const sidebarSection = isInShared ? 'shared' : 'astock';
+  const sidebarItems = sidebarSection === 'shared' ? sharedItems : aStockItems;
+  const sidebarLabel = sidebarSection === 'shared' ? '通用工具' : 'A 股';
+
+  // 手机端底部 Tab 栏 — 根据分区切换
+  const mobileTabItems = isInShared
+    ? [
+        { path: '/app/backtest', label: '回测', icon: '🔬' },
+        { path: '/app/portfolio', label: '记录', icon: '📒' },
+        { path: '/app/reports', label: '报告', icon: '🤖' },
+        { path: '/app/advisor', label: '顾问', icon: '💬' },
+      ]
+    : [
+        { path: '/app/realtime', label: '行情', icon: '⚡' },
+        { path: '/app/market', label: 'K线', icon: '📈' },
+        { path: '/app/signals', label: '信号', icon: '🎯' },
+        { path: '/app/pipeline', label: '管道', icon: '🚀' },
+      ];
 
   // 「更多」抽屉里的其他页面
-  const moreItems = navItems.filter(
+  const moreItems = sidebarItems.filter(
     (item) => !mobileTabItems.some((tab) => tab.path === item.path)
   );
 
@@ -120,37 +142,47 @@ export const Layout: React.FC = () => {
         {/* Logo + 返回主页 */}
         <div className="border-b border-border p-3 group-hover/sidebar:p-6 transition-all duration-300">
           <div
-            className="group-hover/sidebar:hidden text-2xl text-center cursor-pointer"
+            className="group-hover/sidebar:hidden w-9 h-9 mx-auto rounded-lg bg-gradient-to-br from-primary to-accent-cyan flex items-center justify-center cursor-pointer"
             onClick={() => nav('/')}
             title="返回主页"
           >
-            🇨🇳
+            <span className="text-white text-sm font-bold">F</span>
           </div>
           <div className="hidden group-hover/sidebar:flex items-center gap-3">
-            <span className="text-3xl cursor-pointer" onClick={() => nav('/')} title="返回主页">🇨🇳</span>
-            <h1
-              className="text-2xl font-bold text-white bg-gradient-to-r from-primary-light to-accent-cyan bg-clip-text text-transparent whitespace-nowrap cursor-pointer"
+            <div
+              className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary to-accent-cyan flex items-center justify-center cursor-pointer flex-shrink-0"
               onClick={() => nav('/')}
               title="返回主页"
             >
-              Fin · A 股
-            </h1>
-            <p className="text-gray-400 text-sm whitespace-nowrap">
-              <span className="cursor-pointer hover:text-primary-light transition-colors" onClick={() => nav('/')}>
-                ← 返回主页
-              </span>
-            </p>
+              <span className="text-white text-sm font-bold">F</span>
+            </div>
+            <div>
+              <h1
+                className="text-xl font-bold bg-gradient-to-r from-primary-light to-accent-cyan bg-clip-text text-transparent whitespace-nowrap cursor-pointer"
+                onClick={() => nav('/')}
+                title="返回主页"
+              >
+                FinHub
+              </h1>
+              <p className="text-gray-500 text-[10px] whitespace-nowrap">
+                <span className="cursor-pointer hover:text-primary-light transition-colors" onClick={() => nav('/')}>
+                  ← 返回主页
+                </span>
+              </p>
+            </div>
           </div>
         </div>
 
         {/* 导航 */}
-        <nav className="flex-1 py-4 space-y-2 overflow-y-auto scrollbar-hide px-1.5 group-hover/sidebar:px-3 transition-all duration-300">
-          {navItems.map((item) => (
+        <nav className="flex-1 py-4 space-y-1 overflow-y-auto scrollbar-hide px-1.5 group-hover/sidebar:px-3 transition-all duration-300">
+          {/* 分区标签 */}
+          <div className="hidden group-hover/sidebar:block text-[10px] text-gray-600 uppercase tracking-wider px-4 pt-1 pb-2 font-semibold">{sidebarLabel}</div>
+          {sidebarItems.map((item) => (
             <Link
               key={item.path}
               to={item.path}
               title={item.label}
-              className={`flex items-center justify-center group-hover/sidebar:justify-start px-0 group-hover/sidebar:px-4 py-3 rounded-xl transition-all duration-200 ${
+              className={`flex items-center justify-center group-hover/sidebar:justify-start px-0 group-hover/sidebar:px-4 py-2.5 rounded-xl transition-all duration-200 ${
                 isActive(item.path)
                   ? 'bg-primary text-white shadow-glow-blue'
                   : 'text-gray-400 hover:bg-dark-light hover:text-white'

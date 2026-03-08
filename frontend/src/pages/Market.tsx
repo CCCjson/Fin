@@ -26,7 +26,7 @@ export const Market: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [updating, setUpdating] = useState(false);  // 后台静默刷新中
   const [error, setError] = useState<string | null>(null);
-  const [startDate, setStartDate] = useState('2025-01-01');
+  const [startDate, setStartDate] = useState('2010-01-01');
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [indicatorConfig, setIndicatorConfig] = useState<IndicatorConfig>(DEFAULT_INDICATOR_CONFIG);
   const hasLoadedRef = useRef(false);

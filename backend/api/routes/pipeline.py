@@ -84,7 +84,7 @@ async def fetch(req: PipelineFetchRequest):
     """提交数据抓取任务"""
     body = req.model_dump()
     # 强制走快代理（Clash TUN 会劫持 eastmoney 直连请求导致失败）
-    body["proxy_api_url"] = os.getenv("kuaidaili_api", "")
+    body["proxy_api_url"] = os.getenv("kuaidaili_api_backup", "")
     if not body["proxy_api_url"]:
         logger.warning("未配置 kuaidaili_api，将直连（可能因 Clash 而失败）")
     # 移除前端专用字段，C++ 不需要

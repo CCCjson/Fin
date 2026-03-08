@@ -1,8 +1,10 @@
 """
-股价预测 API
+股价预测 API — 支持远程 GPU 训练
 """
 import asyncio
 import json
+import queue
+import threading
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -21,6 +23,9 @@ class TrainRequest(BaseModel):
     symbol: str = Field(..., description="股票代码", example="000001.SZ")
     period: str = Field("2y", description="训练数据周期", example="2y")
     forward_days: int = Field(5, description="预测天数", ge=1, le=30)
+    epochs: int = Field(100, description="LSTM 训练轮数", ge=10, le=500)
+    hidden_dim: int = Field(256, description="LSTM 隐藏层维度", ge=64, le=1024)
+    batch_size: int = Field(64, description="Batch size", ge=8, le=256)
 
 
 class PredictRequest(BaseModel):
@@ -32,80 +37,82 @@ class BackfillRequest(BaseModel):
     pass  # 无需参数
 
 
-# ──────────────────── 训练（流式进度） ────────────────────
+# ──────────────────── 训练（远程 GPU 流式进度） ────────────────────
 
-@router.post("/train", summary="训练预测模型（流式进度）")
+@router.post("/train", summary="训练预测模型（远程 GPU，流式进度）")
 async def train_model(request: TrainRequest):
     """
-    训练 LSTM + XGBoost 模型，流式返回进度。
+    通过 SSH 在远程 GPU 服务器训练 LSTM + XGBoost 模型，流式返回进度。
     """
-    engine = PredictionEngine()
+    from prediction_engine.remote_predict import run_training, is_training
 
-    # 用队列在同步回调和异步生成器之间传递进度
-    queue: asyncio.Queue = asyncio.Queue()
-
-    def progress_cb(stage: str, progress: float, message: str):
-        queue.put_nowait(json.dumps({
-            "event": "progress",
-            "stage": stage,
-            "progress": round(progress, 2),
-            "message": message,
-        }, ensure_ascii=False) + "\n")
+    if is_training(request.symbol):
+        raise HTTPException(status_code=409, detail=f"{request.symbol} 正在训练中")
 
     async def _stream():
-        yield json.dumps({
-            "event": "start",
-            "message": f"开始训练 {request.symbol} ...",
-        }, ensure_ascii=False) + "\n"
-
-        loop = asyncio.get_event_loop()
-
-        # 在线程池中运行训练（CPU 密集型）
-        train_task = loop.run_in_executor(
-            None,
-            lambda: engine.train(
-                symbol=request.symbol,
-                period=request.period,
-                forward_days=request.forward_days,
-                progress_cb=progress_cb,
-            )
+        sync_gen = run_training(
+            symbol=request.symbol,
+            period=request.period,
+            forward_days=request.forward_days,
+            epochs=request.epochs,
+            hidden_dim=request.hidden_dim,
+            batch_size=request.batch_size,
         )
 
-        # 持续读取进度队列
+        # 同步生成器 → 异步流
+        chunk_queue: queue.Queue = queue.Queue()
+        _SENTINEL = object()
+
+        def _drain():
+            try:
+                for item in sync_gen:
+                    chunk_queue.put(item)
+            except Exception as exc:
+                chunk_queue.put(exc)
+            finally:
+                chunk_queue.put(_SENTINEL)
+
+        thread = threading.Thread(target=_drain, daemon=True)
+        thread.start()
+
         while True:
             try:
-                msg = queue.get_nowait()
-                yield msg
-            except asyncio.QueueEmpty:
-                pass
+                item = chunk_queue.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.05)
+                continue
 
-            if train_task.done():
-                # 排空剩余消息
-                while not queue.empty():
-                    yield queue.get_nowait()
+            if item is _SENTINEL:
+                break
+            if isinstance(item, Exception):
+                yield json.dumps({"event": "error", "message": str(item)}, ensure_ascii=False) + "\n"
                 break
 
-            await asyncio.sleep(0.1)
-
-        try:
-            result = train_task.result()
-            yield json.dumps({
-                "event": "complete",
-                "progress": 1.0,
-                "result": result,
-            }, ensure_ascii=False) + "\n"
-        except Exception as e:
-            logger.error(f"训练失败: {e}")
-            yield json.dumps({
-                "event": "error",
-                "message": str(e),
-            }, ensure_ascii=False) + "\n"
+            yield item
+            await asyncio.sleep(0)
 
     return StreamingResponse(
         _stream(),
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/train/stop", summary="终止训练")
+async def stop_training(symbol: str = ""):
+    """终止指定股票的远程训练"""
+    from prediction_engine.remote_predict import stop_training
+    if not symbol:
+        raise HTTPException(status_code=400, detail="请指定 symbol")
+    stopped = stop_training(symbol)
+    return {"stopped": stopped}
+
+
+@router.get("/train/status", summary="训练状态")
+async def training_status(symbol: Optional[str] = None):
+    """检查是否有远程训练正在进行"""
+    from prediction_engine.remote_predict import is_training
+    return {"running": is_training(symbol)}
 
 
 # ──────────────────── 模型列表 ────────────────────

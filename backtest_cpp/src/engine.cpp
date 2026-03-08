@@ -12,9 +12,10 @@
 
 namespace backtest {
 
-BacktestEngine::BacktestEngine(double initial_capital, CommissionConfig commission)
+BacktestEngine::BacktestEngine(double initial_capital, CommissionConfig commission, RiskConfig risk_config)
     : initial_capital_(initial_capital)
     , commission_config_(std::move(commission))
+    , risk_config_(risk_config)
 {
 }
 
@@ -101,15 +102,11 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
         }
     }
 
-    // ── Step 4: 初始化策略 ──
+    // ── Step 4: 初始化策略和风控 ──
     strategy_->on_init();
+    RiskManager risk_mgr(risk_config_);
 
     // ── Step 5: 逐 bar 循环 ──
-    /*
-     * history 是一个不断增长的 vector，
-     * 包含从第一天到当前天的所有 K 线。
-     * 策略可以用 history 来计算技术指标（如均线）。
-     */
     std::vector<Bar> history;
 
     for (int i = start_idx; i <= end_idx; ++i) {
@@ -126,29 +123,64 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
         ctx.symbol = symbol_;
         ctx.bar_index = i - start_idx;
         ctx.current_bar = bar;
-        ctx.history = &history;        // 传指针，避免拷贝
+        ctx.history = &history;
         ctx.cash = portfolio.get_cash();
         ctx.position_quantity = portfolio.get_position_quantity(symbol_);
         ctx.position_avg_price = portfolio.get_position_avg_price(symbol_);
         ctx.total_value = portfolio.get_total_value();
 
-        // (d) 调用策略的 on_bar() 方法
-        /*
-         * 策略分析当前状态，返回一组订单（可能是空的 = 不交易）
-         *
-         * auto：让编译器自动推断变量类型。
-         * 这里 auto 等价于 std::vector<Order>。
-         * 使用 auto 可以少打很多字，代码更简洁。
-         */
-        auto orders = strategy_->on_bar(ctx);
+        // (d) 风控检查：是否触发止损（在策略决策之前）
+        auto risk_orders = risk_mgr.check_stop_loss(
+            symbol_, bar.close, ctx.position_quantity,
+            ctx.position_avg_price, ctx.total_value);
 
-        // (e) 执行所有订单
-        for (auto& order : orders) {
-            order.symbol = symbol_;   // 确保订单的股票代码正确
-            portfolio.execute_order(order, bar.close, bar.date);
+        if (!risk_orders.empty()) {
+            // 强制止损，执行风控订单
+            for (auto& order : risk_orders) {
+                auto fill = portfolio.execute_order(order, bar.close, bar.date);
+                if (fill) {
+                    // order_id = "RISK_stop_loss" or "RISK_trailing_stop"
+                    std::string reason = order.order_id.length() > 5
+                        ? order.order_id.substr(5) : "stop_loss";
+                    portfolio.set_last_fill_reason(reason);
+                }
+            }
+            risk_mgr.reset_tracking(symbol_);
+            // 止损后跳过策略决策，直接记录净值
+            portfolio.record_equity(bar.date);
+            continue;
         }
 
-        // (f) 记录今天的净值
+        // (e) 调用策略的 on_bar() 方法
+        auto orders = strategy_->on_bar(ctx);
+
+        // (f) 执行所有订单（风控过滤买入量）
+        for (auto& order : orders) {
+            order.symbol = symbol_;
+
+            // 风控：限制买入仓位
+            if (risk_mgr.is_enabled() && order.side == Side::BUY) {
+                int adjusted = risk_mgr.filter_buy_quantity(
+                    order.quantity, bar.close, portfolio.get_total_value());
+                if (adjusted <= 0) continue;  // 拒绝买入
+                order.quantity = adjusted;
+            }
+
+            auto fill = portfolio.execute_order(order, bar.close, bar.date);
+
+            // 买入后开始追踪止损
+            if (fill && order.side == Side::BUY && risk_mgr.is_enabled()) {
+                // trailing state 会在 check_stop_loss 中自动初始化
+            }
+            // 卖出后重置追踪
+            if (fill && order.side == Side::SELL) {
+                if (!portfolio.has_position(symbol_)) {
+                    risk_mgr.reset_tracking(symbol_);
+                }
+            }
+        }
+
+        // (g) 记录今天的净值
         portfolio.record_equity(bar.date);
     }
 

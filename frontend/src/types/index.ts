@@ -105,6 +105,79 @@ export interface TradeRecord {
   amount: number;
 }
 
+// ── 批量回测 ──
+
+export type BatchMode = 'multi_symbol' | 'multi_strategy' | 'param_optimize';
+
+export interface BatchBacktestConfig {
+  mode: BatchMode;
+  start_date: string;
+  end_date: string;
+  initial_capital: number;
+  market: string;
+  name?: string;
+  // multi_symbol
+  symbols?: string[];
+  strategy?: string;
+  params?: Record<string, any>;
+  // multi_strategy
+  symbol?: string;
+  strategies?: { strategy: string; params: Record<string, any> }[];
+  // param_optimize
+  param_grid?: Record<string, number[]>;
+}
+
+export interface BatchProgressEvent {
+  event: 'start' | 'progress' | 'complete' | 'error';
+  batch_id?: string;
+  mode?: string;
+  total?: number;
+  current?: number;
+  completed?: number;
+  failed?: number;
+  latest?: {
+    label: string;
+    symbol: string;
+    strategy: string;
+    status: string;
+    task_id: string;
+    sharpe_ratio?: number;
+    total_return_pct?: number;
+    error?: string;
+  };
+  ranking?: BatchRankingItem[];
+  error?: string;
+}
+
+export interface BatchRankingItem {
+  rank: number;
+  task_id: string;
+  symbol: string;
+  strategy: string;
+  params: Record<string, any>;
+  label: string;
+  total_return_pct: number;
+  annual_return: number;
+  sharpe_ratio: number;
+  max_drawdown_pct: number;
+  win_rate: number;
+  profit_factor: number;
+  total_trades: number;
+}
+
+export interface BatchBacktestSummary {
+  batch_id: string;
+  name: string;
+  mode: BatchMode;
+  status: string;
+  total_tasks: number;
+  completed_tasks: number;
+  failed_tasks: number;
+  market?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
 export interface BacktestResult {
   task_id: string;
   task_info: {
@@ -128,6 +201,7 @@ export interface BacktestResult {
     losing_trades: number;
     win_rate: number;
     profit_factor: number;
+    total_commission?: number;
   };
   daily_records?: DailyRecord[];
   trade_records?: TradeRecord[];

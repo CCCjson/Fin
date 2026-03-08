@@ -141,8 +141,8 @@ class AShareFetcher(BaseFetcher):
 
     def validate_symbol(self, symbol: str) -> bool:
         """验证股票代码"""
-        # A股代码格式: 6位数字 + 市场后缀 (.SH/.SZ)
-        pattern = r"^\d{6}\.(SH|SZ)$"
+        # A股代码格式: 6位数字 + 市场后缀 (.SH/.SZ/.BJ)
+        pattern = r"^\d{6}\.(SH|SZ|BJ)$"
         return bool(re.match(pattern, symbol))
 
     def search_symbol(self, keyword: str) -> List[Dict]:

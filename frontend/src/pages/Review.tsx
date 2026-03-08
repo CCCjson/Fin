@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MarketSelector } from '../components/common/MarketSelector';
 import { reviewService } from '../services/reviewService';
 import type {
   ReviewData,
@@ -282,6 +283,7 @@ export const Review: React.FC = () => {
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2 md:gap-4 flex-wrap">
             <h1 className="text-2xl md:text-3xl font-bold text-white">每日复盘</h1>
+            <MarketSelector />
             <div className="flex items-center gap-2 bg-dark-card border border-border rounded-xl px-2 py-1">
               <button
                 onClick={() => goDay(-1)}

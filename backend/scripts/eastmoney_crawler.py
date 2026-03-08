@@ -170,6 +170,22 @@ class RateLimiter:
         self.consecutive_fail = 0
 
 
+# 上海指数代码集合（代码与深市股票重叠，需要硬编码区分）
+SH_INDEX_CODES = {
+    "000001", "000002", "000003", "000010", "000015", "000016",
+    "000300", "000688", "000852", "000905", "000906", "000985",
+    "000986", "000991", "000992",
+}
+
+
+def resolve_eastmoney_market(code: str) -> int:
+    """推断东财 secid 的市场编号 (0=SZ/BJ, 1=SH)"""
+    if code.startswith("6"):               return 1   # 沪市股票
+    if code.startswith(("51", "56", "58")): return 1   # 沪市 ETF
+    if code in SH_INDEX_CODES:             return 1   # 沪市指数
+    return 0  # 深市股票/ETF、北交所、深市指数(399xxx)
+
+
 class EastMoneyCrawler:
     """东方财富爬虫"""
 
@@ -219,6 +235,9 @@ class EastMoneyCrawler:
 
         session.mount("http://", adapter)
         session.mount("https://", adapter)
+
+        # 绕过系统代理（macOS Clash 等），只用显式传入的快代理
+        session.trust_env = False
 
         return session
 
@@ -301,7 +320,8 @@ class EastMoneyCrawler:
         code: str,
         start_date: str,
         end_date: str,
-        proxies: Optional[Dict[str, str]] = None
+        proxies: Optional[Dict[str, str]] = None,
+        secid_market: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         获取股票历史数据
@@ -311,6 +331,8 @@ class EastMoneyCrawler:
             start_date: 开始日期 YYYYMMDD
             end_date: 结束日期 YYYYMMDD
             proxies: 代理配置，如 {"http": "http://ip:port", "https": "http://ip:port"}
+            secid_market: 强制指定东财 secid 的市场编号 (0=SZ/BJ, 1=SH)。
+                          不传则自动推断。
 
         Returns:
             数据字典或 None
@@ -318,11 +340,11 @@ class EastMoneyCrawler:
         Raises:
             ProxyTimeoutError: 代理超时/连接失败，需要上层切换 IP
         """
-        # 判断市场（0=深圳，1=上海）
-        if code.startswith("6"):
-            market = 1
+        # 判断市场
+        if secid_market is not None:
+            market = secid_market
         else:
-            market = 0
+            market = resolve_eastmoney_market(code)
 
         params = self._build_hist_params(code, market, start_date, end_date)
 

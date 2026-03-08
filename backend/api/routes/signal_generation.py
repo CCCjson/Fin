@@ -232,6 +232,76 @@ async def scan_market_stream(request: MarketScanRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class BackfillSignalRequest(BaseModel):
+    """信号回补请求"""
+    lookback_days: int = Field(30, description="回溯天数，检测最近N天内缺失的信号", ge=1, le=90)
+    save_to_db: bool = Field(True, description="是否保存到数据库")
+    db_only: bool = Field(True, description="仅使用数据库数据")
+    limit: Optional[int] = Field(None, description="最多扫描股票数量")
+
+
+@router.get("/gaps", summary="检测缺失信号的交易日")
+async def detect_signal_gaps(lookback_days: int = 30):
+    """
+    检测最近 N 天内有行情数据但没有信号记录的交易日。
+
+    返回:
+    - missing_dates: 缺失信号的日期列表
+    - count: 缺失天数
+    """
+    try:
+        generator = SignalGenerator()
+        missing = generator.detect_signal_gaps(lookback_days=lookback_days)
+        return {
+            "missing_dates": missing,
+            "count": len(missing),
+            "lookback_days": lookback_days,
+        }
+    except Exception as e:
+        logger.error(f"检测信号缺口失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/backfill/stream", summary="流式回补缺失信号（带进度）")
+async def backfill_signals_stream(request: BackfillSignalRequest):
+    """
+    检测并回补缺失信号。
+
+    自动找出最近 lookback_days 内有行情但无信号的交易日，
+    逐日生成信号并保存。
+
+    返回 NDJSON 事件流:
+    - start: 开始回补，包含缺失日期列表
+    - day_complete: 每天回补完成
+    - complete: 全部回补完成
+    """
+    try:
+        generator = SignalGenerator()
+        sync_gen = generator.backfill_signals_stream(
+            lookback_days=request.lookback_days,
+            save_to_db=request.save_to_db,
+            db_only=request.db_only,
+            limit=request.limit,
+        )
+
+        async def _flushing_wrapper():
+            for chunk in sync_gen:
+                yield chunk
+                await asyncio.sleep(0)
+
+        return StreamingResponse(
+            _flushing_wrapper(),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            }
+        )
+    except Exception as e:
+        logger.error(f"信号回补失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/strategies", summary="获取可用策略列表")
 async def get_strategies():
     """获取所有可用的交易策略"""

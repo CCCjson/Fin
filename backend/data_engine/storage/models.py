@@ -170,6 +170,7 @@ class BacktestTask(Base):
     __tablename__ = "backtest_tasks"
 
     task_id = Column(String(50), primary_key=True)
+    batch_id = Column(String(50), nullable=True, index=True)  # 关联批量回测
     name = Column(String(200))
     status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed
     strategy_type = Column(String(50), nullable=False)
@@ -748,6 +749,32 @@ class ClosedTrade(Base):
 
     def __repr__(self):
         return f"<ClosedTrade(symbol={self.symbol}, buy={self.buy_date}, sell={self.sell_date}, pnl={self.pnl_pct}%)>"
+
+
+class BatchBacktest(Base):
+    """批量回测任务表"""
+    __tablename__ = "batch_backtests"
+
+    batch_id = Column(String(50), primary_key=True)
+    name = Column(String(200))
+    mode = Column(String(20), nullable=False)               # multi_symbol / multi_strategy / param_optimize
+    status = Column(String(20), nullable=False, index=True)  # pending / running / completed / failed
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=False)
+    initial_capital = Column(Float, nullable=False)
+    market = Column(String(20), default="a_share")
+    config = Column(Text, nullable=False)                   # JSON: 模式特定配置
+    total_tasks = Column(Integer, default=0)
+    completed_tasks = Column(Integer, default=0)
+    failed_tasks = Column(Integer, default=0)
+    child_task_ids = Column(Text)                           # JSON list
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    error_message = Column(Text)
+
+    def __repr__(self):
+        return f"<BatchBacktest(batch_id={self.batch_id}, mode={self.mode}, status={self.status})>"
 
 
 class AlphaLabSession(Base):

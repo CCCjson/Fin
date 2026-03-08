@@ -50,26 +50,26 @@ std::optional<Fill> Portfolio::execute_order(const Order& order,
     // ── Step 1: 确定成交价 ──
     double fill_price = current_price;
     if (order.type == OrderType::LIMIT) {
-        /*
-         * 限价单逻辑：
-         * - 买入限价单：只有当市场价 ≤ 限价才成交
-         *   （你说"最多出100块"，如果市场价105就不买）
-         * - 卖出限价单：只有当市场价 ≥ 限价才成交
-         *   （你说"最少卖100块"，如果市场价95就不卖）
-         */
         if (order.side == Side::BUY && current_price > order.price) {
-            return std::nullopt;   // 价格太高，不买
+            return std::nullopt;
         }
         if (order.side == Side::SELL && current_price < order.price) {
-            return std::nullopt;   // 价格太低，不卖
+            return std::nullopt;
         }
-        fill_price = current_price;  // 按市场价成交（更保守的模拟）
+        fill_price = current_price;
     }
 
+    // ── Step 1.5: 应用滑点 ──
+    bool is_buy = (order.side == Side::BUY);
+    double pre_slippage_price = fill_price;
+    fill_price = commission_config_.apply_slippage(fill_price, is_buy);
+    double slippage_per_share = std::abs(fill_price - pre_slippage_price);
+
     // ── Step 2: 检查是否能执行 ──
-    double amount = fill_price * order.quantity;    // 成交金额
+    double amount = fill_price * order.quantity;    // 成交金额（含滑点）
     bool is_sell = (order.side == Side::SELL);
     double commission = commission_config_.calculate(amount, is_sell);
+    double slippage_cost = slippage_per_share * order.quantity;
 
     if (order.side == Side::BUY) {
         // 买入检查：现金是否足够支付 金额 + 手续费
@@ -91,6 +91,7 @@ std::optional<Fill> Portfolio::execute_order(const Order& order,
         cash_ += (amount - commission);    // 卖出：加钱（扣除手续费）
     }
     total_commission_ += commission;
+    total_slippage_ += slippage_cost;
 
     // ── Step 4: 更新持仓 ──
     if (order.side == Side::BUY) {
@@ -133,7 +134,9 @@ std::optional<Fill> Portfolio::execute_order(const Order& order,
     fill.price = fill_price;
     fill.quantity = order.quantity;
     fill.commission = commission;
+    fill.slippage = slippage_cost;
     fill.date = date;
+    fill.reason = "signal";
 
     fills_.push_back(fill);   // 添加到成交历史
 

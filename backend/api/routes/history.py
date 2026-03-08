@@ -238,6 +238,7 @@ async def delete_backtest_task(task_id: str):
         task = repo.session.query(_BT).filter(_BT.task_id == task_id).first()
 
         if not task:
+            repo.close()
             raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
         # 删除任务（通过直接删除数据库记录）
@@ -250,68 +251,6 @@ async def delete_backtest_task(task_id: str):
         return {
             "message": "任务删除成功",
             "task_id": task_id
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/backtests/{task_id}")
-async def get_backtest_result(task_id: str):
-    """
-    获取回测结果详情
-
-    Args:
-        task_id: 回测任务ID
-    """
-    try:
-        repo = HistoryRepository()
-        result = repo.get_backtest_result(task_id)
-
-        if not result:
-            raise HTTPException(status_code=404, detail=f"未找到回测结果: {task_id}")
-
-        # 直接按 task_id 查询任务信息，避免 limit=1000 全扫
-        from data_engine.storage.models import BacktestTask as _BT
-        task = repo.session.query(_BT).filter(_BT.task_id == task_id).first()
-
-        repo.close()
-
-        import json
-
-        # 解析 JSON 字段
-        daily_records = json.loads(result.daily_records) if result.daily_records else []
-        trade_records = json.loads(result.trade_records) if result.trade_records else []
-
-        return {
-            "task_id": result.task_id,
-            "task_info": {
-                "name": task.name if task else None,
-                "strategy_type": task.strategy_type if task else None,
-                "start_date": str(task.start_date) if task else None,
-                "end_date": str(task.end_date) if task else None,
-            },
-            "metrics": {
-                "total_return": result.total_return,
-                "total_return_pct": result.total_return_pct,
-                "annual_return": result.annual_return,
-                "final_value": result.final_value,
-                "max_drawdown": result.max_drawdown,
-                "max_drawdown_pct": result.max_drawdown_pct,
-                "volatility": result.volatility,
-                "sharpe_ratio": result.sharpe_ratio,
-                "sortino_ratio": result.sortino_ratio,
-                "total_trades": result.total_trades,
-                "winning_trades": result.winning_trades,
-                "losing_trades": result.losing_trades,
-                "win_rate": result.win_rate,
-                "profit_factor": result.profit_factor
-            },
-            "daily_records": daily_records,
-            "trade_records": trade_records,
-            "created_at": result.created_at.isoformat() if result.created_at else None
         }
 
     except HTTPException:
@@ -340,6 +279,206 @@ async def compare_backtests(
             "count": len(comparison)
         }
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/backtests/compare")
+async def compare_backtests_by_ids(request: dict):
+    """
+    按 task_id 列表对比多个回测结果（含资金曲线）
+
+    Args:
+        request: { "task_ids": ["id1", "id2", ...] }
+    """
+    try:
+        import json as json_module
+
+        task_ids = request.get("task_ids", [])
+        if not task_ids or len(task_ids) < 1:
+            raise HTTPException(status_code=400, detail="至少需要1个task_id")
+
+        repo = HistoryRepository()
+        from data_engine.storage.models import BacktestTask as _BT
+
+        comparisons = []
+        for tid in task_ids:
+            result = repo.get_backtest_result(tid)
+            task = repo.session.query(_BT).filter(_BT.task_id == tid).first()
+
+            if not result or not task:
+                continue
+
+            symbols = json_module.loads(task.symbols) if task.symbols else []
+            daily_records = json_module.loads(result.daily_records) if result.daily_records else []
+
+            comparisons.append({
+                "task_id": tid,
+                "name": task.name,
+                "strategy_type": task.strategy_type,
+                "symbols": symbols,
+                "metrics": {
+                    "total_return": result.total_return,
+                    "total_return_pct": result.total_return_pct,
+                    "annual_return": result.annual_return,
+                    "final_value": result.final_value,
+                    "max_drawdown": result.max_drawdown,
+                    "max_drawdown_pct": result.max_drawdown_pct,
+                    "volatility": result.volatility,
+                    "sharpe_ratio": result.sharpe_ratio,
+                    "sortino_ratio": result.sortino_ratio,
+                    "total_trades": result.total_trades,
+                    "winning_trades": result.winning_trades,
+                    "losing_trades": result.losing_trades,
+                    "win_rate": result.win_rate,
+                    "profit_factor": result.profit_factor,
+                },
+                "equity_curve": daily_records,
+            })
+
+        repo.close()
+
+        return {
+            "comparisons": comparisons,
+            "count": len(comparisons)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/backtests/{task_id}")
+async def get_backtest_result(task_id: str):
+    """
+    获取回测结果详情
+
+    Args:
+        task_id: 回测任务ID
+    """
+    try:
+        import json
+        import asyncio
+
+        repo = HistoryRepository()
+        result = repo.get_backtest_result(task_id)
+
+        if not result:
+            raise HTTPException(status_code=404, detail=f"未找到回测结果: {task_id}")
+
+        # 直接按 task_id 查询任务信息，避免 limit=1000 全扫
+        from data_engine.storage.models import BacktestTask as _BT
+        task = repo.session.query(_BT).filter(_BT.task_id == task_id).first()
+
+        # 推断市场类型
+        market = "a_share"
+        start_date_str = None
+        end_date_str = None
+        initial_capital = 100000.0
+
+        if task:
+            # 从 strategy_params 提取 market
+            if task.strategy_params:
+                try:
+                    params = json.loads(task.strategy_params)
+                    market = params.get("market", "a_share")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # 如果 market 还是默认值，尝试从 symbols 后缀推断
+            if market == "a_share" and task.symbols:
+                try:
+                    symbols = json.loads(task.symbols)
+                    if symbols:
+                        sym = symbols[0].upper()
+                        if sym.endswith((".HK",)):
+                            market = "hk"
+                        elif not sym.endswith((".SH", ".SZ")):
+                            market = "us"
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            start_date_str = str(task.start_date) if task.start_date else None
+            end_date_str = str(task.end_date) if task.end_date else None
+            initial_capital = task.initial_capital or 100000.0
+
+        repo.close()
+
+        # 解析 JSON 字段
+        daily_records = json.loads(result.daily_records) if result.daily_records else []
+        trade_records = json.loads(result.trade_records) if result.trade_records else []
+
+        # 获取基准数据
+        benchmark_data = None
+        if start_date_str and end_date_str:
+            try:
+                def _fetch_benchmark():
+                    from services.benchmark_service import BenchmarkService
+                    svc = BenchmarkService()
+                    return svc.get_benchmark_curve(
+                        market=market,
+                        start_date=start_date_str,
+                        end_date=end_date_str,
+                        initial_capital=initial_capital,
+                    )
+                benchmark_data = await asyncio.to_thread(_fetch_benchmark)
+            except Exception:
+                pass
+
+        # 提取 symbol 和 strategy_name 供前端组件使用
+        symbol = ""
+        strategy_name = ""
+        if task:
+            if task.symbols:
+                try:
+                    syms = json.loads(task.symbols)
+                    symbol = syms[0] if syms else ""
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if task.strategy_type:
+                strategy_name = task.strategy_type.replace("CPP_", "")
+
+        resp = {
+            "task_id": result.task_id,
+            "symbol": symbol,
+            "strategy_name": strategy_name,
+            "task_info": {
+                "name": task.name if task else None,
+                "strategy_type": task.strategy_type if task else None,
+                "start_date": str(task.start_date) if task else None,
+                "end_date": str(task.end_date) if task else None,
+            },
+            "metrics": {
+                "total_return": result.total_return,
+                "total_return_pct": result.total_return_pct,
+                "annual_return": result.annual_return,
+                "final_value": result.final_value,
+                "max_drawdown": result.max_drawdown,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "volatility": result.volatility,
+                "sharpe_ratio": result.sharpe_ratio,
+                "sortino_ratio": result.sortino_ratio,
+                "total_trades": result.total_trades,
+                "winning_trades": result.winning_trades,
+                "losing_trades": result.losing_trades,
+                "win_rate": result.win_rate,
+                "profit_factor": result.profit_factor,
+            },
+            "daily_records": daily_records,
+            "trade_records": trade_records,
+            "created_at": result.created_at.isoformat() if result.created_at else None,
+        }
+        if benchmark_data:
+            resp["benchmark"] = benchmark_data
+            resp["metrics"]["benchmark_return_pct"] = benchmark_data["benchmark_return_pct"]
+            resp["metrics"]["excess_return_pct"] = round(
+                (result.total_return_pct or 0) - benchmark_data["benchmark_return_pct"], 2
+            )
+        return resp
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

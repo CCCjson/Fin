@@ -53,7 +53,7 @@ export const FineTune: React.FC = () => {
   // --- 配置状态 ---
   const [iters, setIters] = useState(5000);
   const [lr, setLr] = useState(2e-4);
-  const [batchSize, setBatchSize] = useState(1);
+  const [batchSize, setBatchSize] = useState(4);
 
   // --- 运行状态 ---
   const [runStatus, setRunStatus] = useState<RunStatus>('idle');
@@ -383,6 +383,8 @@ export const FineTune: React.FC = () => {
                   <option value={1}>1</option>
                   <option value={2}>2</option>
                   <option value={4}>4</option>
+                  <option value={8}>8</option>
+                  <option value={16}>16</option>
                 </select>
               </div>
               <div>

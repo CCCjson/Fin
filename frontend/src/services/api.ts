@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AxiosRequestConfig } from 'axios';
 
 const TOKEN_KEY = 'fin_auth_token';
 
@@ -19,7 +20,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// 响应拦截器
+// 响应拦截器 — 直接返回 response.data
 api.interceptors.response.use(
   (response) => response.data,
   (error) => {
@@ -35,4 +36,13 @@ api.interceptors.response.use(
   }
 );
 
-export default api;
+// 响应拦截器已提取 response.data，重新声明方法签名使 TS 类型与运行时一致
+interface TypedApi {
+  get<T = any>(url: string, config?: AxiosRequestConfig): Promise<T>;
+  post<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T>;
+  put<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T>;
+  delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<T>;
+  patch<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T>;
+}
+
+export default api as unknown as TypedApi;

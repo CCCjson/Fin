@@ -385,6 +385,157 @@ class SignalGenerator:
             'results': results
         }
 
+    def detect_signal_gaps(self, lookback_days: int = 30) -> List[str]:
+        """
+        检测缺失信号的交易日。
+
+        比较 DailyQuote 中的交易日和 Signal 中已有信号的日期，
+        找出有行情数据但没有信号记录的日期。
+
+        Args:
+            lookback_days: 回溯天数（只检查最近 N 天）
+
+        Returns:
+            缺失信号的日期列表 (YYYY-MM-DD)，按时间升序
+        """
+        from datetime import datetime, timedelta
+        from sqlalchemy import func, distinct
+        from data_engine.storage.database import get_session
+        from data_engine.storage.models import DailyQuote, Signal as SignalModel
+
+        session = get_session()
+        try:
+            cutoff = (datetime.now() - timedelta(days=lookback_days)).date()
+
+            # 数据库中有行情的交易日（去重）
+            quote_dates = session.query(distinct(DailyQuote.date)).filter(
+                DailyQuote.date >= cutoff
+            ).all()
+            quote_date_set = {row[0] for row in quote_dates}
+
+            # 数据库中有信号的日期（去重）
+            signal_dates = session.query(distinct(SignalModel.date)).filter(
+                SignalModel.date >= cutoff
+            ).all()
+            signal_date_set = {row[0] for row in signal_dates}
+
+            # 有行情但无信号的日期
+            missing = sorted(quote_date_set - signal_date_set)
+
+            # 过滤掉周末（理论上不应该有，但以防万一）
+            missing = [d for d in missing if d.weekday() < 5]
+
+            logger.info(f"信号缺口检测: 行情日 {len(quote_date_set)} 天, "
+                        f"信号日 {len(signal_date_set)} 天, "
+                        f"缺失 {len(missing)} 天")
+
+            return [d.strftime('%Y-%m-%d') if hasattr(d, 'strftime') else str(d) for d in missing]
+        finally:
+            session.close()
+
+    def backfill_signals_stream(self,
+                                lookback_days: int = 30,
+                                save_to_db: bool = True,
+                                db_only: bool = True,
+                                limit: Optional[int] = None) -> Generator[str, None, None]:
+        """
+        流式回补缺失信号。
+
+        检测最近 lookback_days 内有行情但无信号的交易日，
+        逐日回补信号生成。
+
+        Yields:
+            NDJSON 事件流
+        """
+        from datetime import datetime, timedelta
+
+        missing_dates = self.detect_signal_gaps(lookback_days)
+        if not missing_dates:
+            yield json.dumps({
+                "event": "complete",
+                "message": "无需回补，所有交易日均已有信号",
+                "backfilled_days": 0,
+                "total_signals": 0,
+            }, ensure_ascii=False) + "\n"
+            return
+
+        # 获取股票列表
+        symbols, _, _ = self._resolve_scan_params(None, lookback_days=60, limit=limit)
+        total_days = len(missing_dates)
+
+        yield json.dumps({
+            "event": "start",
+            "message": f"检测到 {total_days} 个交易日缺失信号，开始回补...",
+            "missing_dates": missing_dates,
+            "symbols_count": len(symbols),
+        }, ensure_ascii=False) + "\n"
+
+        grand_total_signals = 0
+        grand_buy = 0
+        grand_sell = 0
+
+        for day_idx, target_date in enumerate(missing_dates):
+            # 回溯 60 个自然日的数据来计算指标，end_date 设为目标日
+            target_dt = datetime.strptime(target_date, '%Y-%m-%d')
+            start_date = (target_dt - timedelta(days=60)).strftime('%Y-%m-%d')
+
+            day_signals = 0
+            day_buy = 0
+            day_sell = 0
+            day_failed = 0
+
+            max_workers = min(_DEFAULT_WORKERS, len(symbols)) if symbols else 1
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        _process_symbol, symbol, start_date, target_date, save_to_db, db_only
+                    ): symbol
+                    for symbol in symbols
+                }
+                for future in as_completed(futures):
+                    try:
+                        _, signals, error = future.result()
+                        if error:
+                            day_failed += 1
+                        else:
+                            day_signals += len(signals)
+                            day_buy += sum(1 for s in signals if s.signal_type.upper() == 'BUY')
+                            day_sell += sum(1 for s in signals if s.signal_type.upper() == 'SELL')
+                    except Exception:
+                        day_failed += 1
+
+            grand_total_signals += day_signals
+            grand_buy += day_buy
+            grand_sell += day_sell
+
+            yield json.dumps({
+                "event": "day_complete",
+                "date": target_date,
+                "day_index": day_idx + 1,
+                "total_days": total_days,
+                "day_signals": day_signals,
+                "day_buy": day_buy,
+                "day_sell": day_sell,
+                "day_failed": day_failed,
+                "cumulative_signals": grand_total_signals,
+            }, ensure_ascii=False) + "\n"
+
+            logger.info(f"回补 {target_date} 完成: {day_signals} 信号 "
+                        f"(买{day_buy}/卖{day_sell}), 失败{day_failed}")
+
+        yield json.dumps({
+            "event": "complete",
+            "message": f"信号回补完成！共回补 {total_days} 天",
+            "backfilled_days": total_days,
+            "total_signals": grand_total_signals,
+            "buy_signals": grand_buy,
+            "sell_signals": grand_sell,
+        }, ensure_ascii=False) + "\n"
+
+        logger.success(f"信号回补完成: {total_days} 天, "
+                       f"{grand_total_signals} 信号 (买{grand_buy}/卖{grand_sell})")
+
     def scan_market_stream(self,
                            symbols: Optional[List[str]] = None,
                            lookback_days: int = 60,

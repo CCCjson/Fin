@@ -36,7 +36,7 @@ export const AlphaLab: React.FC = () => {
   // --- 表单状态 ---
   const [symbol, setSymbol] = useState('600519.SH');
   const [goal, setGoal] = useState('sharpe');
-  const [dataStart, setDataStart] = useState('2023-01-01');
+  const [dataStart, setDataStart] = useState('2010-01-01');
   const [dataEnd, setDataEnd] = useState('2025-12-31');
   const [maxIter, setMaxIter] = useState(10);
 

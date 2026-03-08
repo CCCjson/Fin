@@ -56,6 +56,41 @@ export interface ScanProgressEvent {
   failed?: number;
 }
 
+export interface SignalGaps {
+  missing_dates: string[];
+  count: number;
+  lookback_days: number;
+}
+
+export interface BackfillParams {
+  lookback_days?: number;
+  save_to_db?: boolean;
+  db_only?: boolean;
+  limit?: number;
+}
+
+export interface BackfillProgressEvent {
+  event: 'start' | 'day_complete' | 'complete';
+  // start
+  message?: string;
+  missing_dates?: string[];
+  symbols_count?: number;
+  // day_complete
+  date?: string;
+  day_index?: number;
+  total_days?: number;
+  day_signals?: number;
+  day_buy?: number;
+  day_sell?: number;
+  day_failed?: number;
+  cumulative_signals?: number;
+  // complete
+  backfilled_days?: number;
+  total_signals?: number;
+  buy_signals?: number;
+  sell_signals?: number;
+}
+
 export const signalService = {
   // 查询数据新鲜度
   getDataFreshness: async (): Promise<DataFreshness> => {
@@ -90,6 +125,62 @@ export const signalService = {
   // 扫描市场生成信号（原始非流式）
   scanMarket: async (params?: ScanMarketParams): Promise<ScanMarketResult> => {
     return api.post('/signals/scan', params || {});
+  },
+
+  // 检测信号缺口
+  detectGaps: async (lookbackDays: number = 30): Promise<SignalGaps> => {
+    return api.get('/signals/gaps', { params: { lookback_days: lookbackDays } });
+  },
+
+  // 流式回补缺失信号
+  backfillStream: async (
+    params: BackfillParams,
+    onProgress: (event: BackfillProgressEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const response = await fetch(`${API_BASE}/signals/backfill/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+      signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`信号回补请求失败: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('无法获取响应流');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          onProgress(JSON.parse(trimmed));
+        } catch (e) {
+          console.warn('解析回补事件失败:', trimmed, e);
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      try {
+        onProgress(JSON.parse(buffer.trim()));
+      } catch (e) {
+        console.warn('解析最后的回补事件失败:', buffer, e);
+      }
+    }
   },
 
   // 流式扫描市场（带进度回调）

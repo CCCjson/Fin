@@ -103,6 +103,14 @@ public:
 
     // ── 统计 ──
     double get_total_commission() const { return total_commission_; }
+    double get_total_slippage() const { return total_slippage_; }
+
+    /* Set the reason on the most recent fill (for risk manager tagging). */
+    void set_last_fill_reason(const std::string& reason) {
+        if (!fills_.empty()) {
+            fills_.back().reason = reason;
+        }
+    }
     int get_total_trades() const { return static_cast<int>(fills_.size()); }
 
 private:
@@ -120,6 +128,7 @@ private:
     std::vector<Fill> fills_;                       // 所有成交记录
     std::vector<EquitySnapshot> equity_curve_;       // 每日净值曲线
     double total_commission_ = 0.0;                 // 累计手续费
+    double total_slippage_ = 0.0;                   // 累计滑点成本
 
     double prev_total_value_ = 0.0;                 // 前一天的总资产（用于计算日收益率）
 };

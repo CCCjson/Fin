@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
+import { MarketSelector } from '../components/common/MarketSelector';
 import { ClosedTradesTab } from '../components/ClosedTradesTab';
 import { portfolioService } from '../services/portfolioService';
 import { reportService } from '../services/reportService';
@@ -406,7 +407,10 @@ export const Portfolio: React.FC = () => {
       <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <h1 className="text-2xl md:text-3xl font-bold text-white">交易记录</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-2xl md:text-3xl font-bold text-white">交易记录</h1>
+            <MarketSelector />
+          </div>
           <div className="flex items-center gap-3">
             <button
               onClick={openImportModal}

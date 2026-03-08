@@ -23,6 +23,12 @@
 /* ─ 策略头文件 ─ */
 #include "strategies/ma_cross_strategy.h"
 #include "strategies/momentum_strategy.h"
+#include "strategies/macd_strategy.h"
+#include "strategies/rsi_strategy.h"
+#include "strategies/kdj_strategy.h"
+#include "strategies/bollinger_strategy.h"
+#include "strategies/combo_strategy.h"
+#include "strategies/pairs_strategy.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -78,6 +84,67 @@ static std::unique_ptr<IStrategy> create_strategy(
         double pct = params.value("position_pct", 0.95);
         return std::make_unique<MomentumStrategy>(lookback, buy_th, sell_th, pct);
     }
+    else if (name == "MACD") {
+        int fast = params.value("fast_period", 12);
+        int slow = params.value("slow_period", 26);
+        int signal = params.value("signal_period", 9);
+        double pct = params.value("position_pct", 0.95);
+        return std::make_unique<MACDStrategy>(fast, slow, signal, pct);
+    }
+    else if (name == "RSI") {
+        int period = params.value("period", 14);
+        double oversold = params.value("oversold", 30.0);
+        double overbought = params.value("overbought", 70.0);
+        double pct = params.value("position_pct", 0.95);
+        return std::make_unique<RSIStrategy>(period, oversold, overbought, pct);
+    }
+    else if (name == "KDJ") {
+        int n = params.value("n", 9);
+        int m1 = params.value("m1", 3);
+        int m2 = params.value("m2", 3);
+        double oversold = params.value("oversold", 20.0);
+        double overbought = params.value("overbought", 80.0);
+        double pct = params.value("position_pct", 0.95);
+        return std::make_unique<KDJStrategy>(n, m1, m2, oversold, overbought, pct);
+    }
+    else if (name == "BOLLINGER") {
+        int period = params.value("period", 20);
+        double num_std = params.value("num_std", 2.0);
+        double pct = params.value("position_pct", 0.95);
+        return std::make_unique<BollingerStrategy>(period, num_std, pct);
+    }
+    else if (name == "COMBO") {
+        double threshold = params.value("threshold", 0.5);
+        double pct = params.value("position_pct", 0.95);
+        auto combo = std::make_unique<ComboStrategy>(threshold, pct);
+
+        if (params.contains("sub_strategies") && params["sub_strategies"].is_array()) {
+            for (const auto& sub : params["sub_strategies"]) {
+                std::string sub_name = sub.value("name", "");
+                double weight = sub.value("weight", 1.0);
+                json sub_params = sub.value("params", json::object());
+                auto sub_strategy = create_strategy(sub_name, sub_params);
+                if (sub_strategy) {
+                    combo->add_sub_strategy(sub_name, weight, std::move(sub_strategy));
+                }
+            }
+        }
+        return combo;
+    }
+    else if (name == "PAIRS") {
+        std::string symbol2 = params.value("symbol2", "");
+        int lookback = params.value("lookback", 60);
+        double entry_z = params.value("entry_z", 2.0);
+        double exit_z = params.value("exit_z", 0.5);
+        double pct = params.value("position_pct", 0.95);
+
+        // bars2 从 params 中提取
+        std::vector<Bar> bars2;
+        if (params.contains("bars2") && params["bars2"].is_array()) {
+            bars2 = DataLoader::from_json(params["bars2"]);
+        }
+        return std::make_unique<PairsStrategy>(symbol2, bars2, lookback, entry_z, exit_z, pct);
+    }
 
     return nullptr;   // 未知策略
 }
@@ -110,7 +177,8 @@ static json result_to_json(const BacktestResult& result) {
         {"profit_factor", m.profit_factor},
         {"avg_profit", m.avg_profit},
         {"avg_loss", m.avg_loss},
-        {"total_commission", m.total_commission}
+        {"total_commission", m.total_commission},
+        {"total_slippage", m.total_slippage}
     };
 
     // 资金曲线
@@ -136,7 +204,9 @@ static json result_to_json(const BacktestResult& result) {
             {"price", f.price},
             {"quantity", f.quantity},
             {"commission", f.commission},
-            {"date", f.date}
+            {"slippage", f.slippage},
+            {"date", f.date},
+            {"reason", f.reason}
         });
     }
     j["trades"] = trades;
@@ -179,6 +249,66 @@ void Server::setup_routes() {
         // MOMENTUM
         {
             MomentumStrategy s;
+            strategies.push_back({
+                {"name", s.name()},
+                {"description", s.description()},
+                {"params", s.param_schema()}
+            });
+        }
+
+        // MACD
+        {
+            MACDStrategy s;
+            strategies.push_back({
+                {"name", s.name()},
+                {"description", s.description()},
+                {"params", s.param_schema()}
+            });
+        }
+
+        // RSI
+        {
+            RSIStrategy s;
+            strategies.push_back({
+                {"name", s.name()},
+                {"description", s.description()},
+                {"params", s.param_schema()}
+            });
+        }
+
+        // KDJ
+        {
+            KDJStrategy s;
+            strategies.push_back({
+                {"name", s.name()},
+                {"description", s.description()},
+                {"params", s.param_schema()}
+            });
+        }
+
+        // BOLLINGER
+        {
+            BollingerStrategy s;
+            strategies.push_back({
+                {"name", s.name()},
+                {"description", s.description()},
+                {"params", s.param_schema()}
+            });
+        }
+
+        // COMBO
+        {
+            ComboStrategy s;
+            strategies.push_back({
+                {"name", s.name()},
+                {"description", s.description()},
+                {"params", s.param_schema()}
+            });
+        }
+
+        // PAIRS
+        {
+            PairsStrategy s("", {});
             strategies.push_back({
                 {"name", s.name()},
                 {"description", s.description()},
@@ -242,6 +372,23 @@ void Server::setup_routes() {
                 comm = CommissionConfig::a_share();
             }
 
+            // 自定义滑点（-1 表示用市场默认值）
+            double custom_slippage = body.value("slippage_pct", -1.0);
+            if (custom_slippage >= 0.0) {
+                comm.slippage_pct = custom_slippage;
+            }
+
+            // 风控配置
+            RiskConfig risk_cfg;
+            if (body.contains("risk_config")) {
+                auto rc = body["risk_config"];
+                risk_cfg.enabled = rc.value("enabled", false);
+                risk_cfg.stop_loss_pct = rc.value("stop_loss_pct", 0.05);
+                risk_cfg.trailing_stop = rc.value("trailing_stop", false);
+                risk_cfg.trailing_stop_pct = rc.value("trailing_stop_pct", 0.08);
+                risk_cfg.max_position_pct = rc.value("max_position_pct", 1.0);
+            }
+
             // 创建策略
             auto strategy = create_strategy(strategy_name, params);
             if (!strategy) {
@@ -253,7 +400,7 @@ void Server::setup_routes() {
             }
 
             // 运行回测
-            BacktestEngine engine(initial_capital, comm);
+            BacktestEngine engine(initial_capital, comm, risk_cfg);
             engine.set_strategy(std::move(strategy));
             engine.load_data(symbol, std::move(bars));
 

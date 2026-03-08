@@ -79,7 +79,25 @@ class DataEngine:
             df = self._fetch_and_save_daily_data(symbol, start_dt, end_dt, adjust)
             return df
 
-        # 检查数据是否够新：数据库最新日期 vs 请求的 end_date
+        # 检查头部覆盖：数据库最早日期 vs 请求的 start_date
+        earliest_in_db = df.index.min().date() if not df.empty else None
+        if earliest_in_db and earliest_in_db > start_dt.date():
+            head_gap = (earliest_in_db - start_dt.date()).days
+            if head_gap > 30:
+                # 头部缺口超过 30 天，尝试回填历史数据
+                head_end = datetime.combine(earliest_in_db - timedelta(days=1), datetime.min.time())
+                logger.info(f"数据头部缺口: 请求 {start_dt.date()} 但最早只有 {earliest_in_db}，回填 {start_dt.date()} ~ {head_end.date()}")
+                try:
+                    head_df = self._fetch_and_save_daily_data(symbol, start_dt, head_end, adjust)
+                    if not head_df.empty:
+                        df = pd.concat([head_df, df])
+                        df = df[~df.index.duplicated(keep='last')]
+                        df.sort_index(inplace=True)
+                        logger.info(f"头部回填后共 {len(df)} 条数据")
+                except Exception as e:
+                    logger.warning(f"头部回填失败（返回已有数据）: {e}")
+
+        # 检查尾部新鲜度：数据库最新日期 vs 请求的 end_date
         latest_in_db = self.quote_repo.get_latest_date(symbol)
         if latest_in_db and latest_in_db < end_dt.date():
             # 新鲜度容忍：如果差距 ≤ 3 天（覆盖周末/短假期），直接返回缓存

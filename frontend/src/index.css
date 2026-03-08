@@ -136,3 +136,21 @@ body {
 .animate-slide-in-right {
   animation: slide-in-right 0.3s ease-out both;
 }
+
+@layer components {
+  .form-input {
+    width: 100%;
+    padding: 0.5rem;
+    background: rgb(26 31 55);
+    color: white;
+    border-radius: 0.5rem;
+    border: 1px solid rgb(30 41 59);
+    font-size: 0.875rem;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .form-input:focus {
+    border-color: #3B82F6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  }
+}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { LoginOverlay } from '../components/LoginOverlay';
@@ -17,49 +17,26 @@ interface MarketModule {
   accentColor: string;
   available: boolean;
   route: string;
-  // 轨道参数
-  orbitRadius: number;   // px — 各不相同
-  orbitSpeed: number;     // 秒/圈
-  orbitDirection: 1 | -1; // 1=顺时针, -1=逆时针
-  startAngle: number;     // 初始角度(deg)
 }
 
 const markets: MarketModule[] = [
-  {
-    id: 'a-stock', name: 'A 股', subtitle: '中国大陆证券市场',
-    icon: '🇨🇳', accentColor: '#EF4444', available: true, route: '/app/realtime',
-    orbitRadius: 130, orbitSpeed: 50, orbitDirection: 1, startAngle: -90,
-  },
-  {
-    id: 'futures', name: '期 货', subtitle: '商品与金融衍生品',
-    icon: '📈', accentColor: '#F59E0B', available: false, route: '',
-    orbitRadius: 200, orbitSpeed: 70, orbitDirection: -1, startAngle: 45,
-  },
-  {
-    id: 'us-stock', name: '美 股', subtitle: '美国证券市场',
-    icon: '🇺🇸', accentColor: '#3B82F6', available: false, route: '',
-    orbitRadius: 250, orbitSpeed: 60, orbitDirection: 1, startAngle: 160,
-  },
-  {
-    id: 'hk-stock', name: '港 股', subtitle: '香港证券市场',
-    icon: '🇭🇰', accentColor: '#8B5CF6', available: false, route: '',
-    orbitRadius: 300, orbitSpeed: 80, orbitDirection: -1, startAngle: 220,
-  },
-  {
-    id: 'trading', name: '交 易', subtitle: '半自动交易系统',
-    icon: '💰', accentColor: '#10B981', available: true, route: '/trading',
-    orbitRadius: 225, orbitSpeed: 55, orbitDirection: -1, startAngle: 0,
-  },
-  {
-    id: 'alpha-lab', name: 'Alpha Lab', subtitle: 'AI 自动策略探索',
-    icon: '🧬', accentColor: '#A855F7', available: true, route: '/alpha-lab',
-    orbitRadius: 275, orbitSpeed: 90, orbitDirection: 1, startAngle: 280,
-  },
-  {
-    id: 'fine-tune', name: 'Fine-Tune', subtitle: '模型微调训练',
-    icon: '🔬', accentColor: '#EC4899', available: true, route: '/fine-tune',
-    orbitRadius: 175, orbitSpeed: 65, orbitDirection: -1, startAngle: 120,
-  },
+  // ── 市场板块 ──
+  { id: 'a-stock',   name: 'A 股',      subtitle: '中国大陆证券市场',     icon: '🇨🇳', accentColor: '#EF4444', available: true,  route: '/app/realtime' },
+  { id: 'hk-stock',  name: '港 股',      subtitle: '香港证券市场',         icon: '🇭🇰', accentColor: '#8B5CF6', available: false, route: '' },
+  { id: 'us-stock',  name: '美 股',      subtitle: '美国证券市场',         icon: '🇺🇸', accentColor: '#3B82F6', available: false, route: '' },
+  { id: 'futures',   name: '期 货',      subtitle: '商品与金融衍生品',     icon: '📈', accentColor: '#F59E0B', available: false, route: '' },
+  // ── 策略 · 交易 ──
+  { id: 'trading',   name: '交 易',     subtitle: '半自动交易系统',       icon: '💰', accentColor: '#10B981', available: true,  route: '/trading' },
+  { id: 'backtest',  name: '策略回测',   subtitle: '多策略回测与绩效评估', icon: '🔬', accentColor: '#06B6D4', available: true,  route: '/app/backtest' },
+  { id: 'portfolio', name: '交易记录',   subtitle: '持仓管理与盈亏跟踪',   icon: '📒', accentColor: '#14B8A6', available: true,  route: '/app/portfolio' },
+  { id: 'review',    name: '每日复盘',   subtitle: '交易日志与 AI 评分',   icon: '📝', accentColor: '#F97316', available: true,  route: '/app/review' },
+  { id: 'orderbook', name: '订单簿',     subtitle: '微观结构与深度分析',   icon: '📊', accentColor: '#6366F1', available: true,  route: '/app/orderbook' },
+  // ── AI 工具 ──
+  { id: 'reports',   name: 'AI 报告',   subtitle: '深度投资分析报告',     icon: '🤖', accentColor: '#A855F7', available: true,  route: '/app/reports' },
+  { id: 'advisor',   name: 'AI 顾问',   subtitle: '智能投资建议',         icon: '💬', accentColor: '#8B5CF6', available: true,  route: '/app/advisor' },
+  { id: 'news',      name: '新闻分析',   subtitle: '市场资讯与情感分析',   icon: '📰', accentColor: '#0EA5E9', available: true,  route: '/app/news' },
+  { id: 'alpha-lab', name: 'Alpha Lab', subtitle: 'AI 自动策略探索',     icon: '🧬', accentColor: '#A855F7', available: true,  route: '/alpha-lab' },
+  { id: 'fine-tune', name: 'Fine-Tune', subtitle: '模型微调训练',        icon: '🧪', accentColor: '#EC4899', available: true,  route: '/fine-tune' },
 ];
 
 interface FeaturePlanet {
@@ -75,34 +52,86 @@ const featureMap: Record<string, FeaturePlanet[]> = {
     { id: 'realtime', name: '实时行情', icon: '⚡', route: '/app/realtime', color: '#F59E0B' },
     { id: 'market', name: 'K线分析', icon: '📈', route: '/app/market', color: '#3B82F6' },
     { id: 'signals', name: '信号分析', icon: '🎯', route: '/app/signals', color: '#EF4444' },
-    { id: 'advisor', name: 'AI 顾问', icon: '💬', route: '/app/advisor', color: '#8B5CF6' },
-    { id: 'reports', name: 'AI 报告', icon: '🤖', route: '/app/reports', color: '#A855F7' },
-    { id: 'backtest', name: '策略回测', icon: '🔬', route: '/app/backtest', color: '#06B6D4' },
     { id: 'tracking', name: '信号追踪', icon: '📋', route: '/app/tracking', color: '#10B981' },
-    { id: 'review', name: '每日复盘', icon: '📝', route: '/app/review', color: '#F97316' },
-    { id: 'portfolio', name: '交易记录', icon: '📒', route: '/app/portfolio', color: '#14B8A6' },
-    { id: 'orderbook', name: '订单簿', icon: '📊', route: '/app/orderbook', color: '#6366F1' },
     { id: 'pipeline', name: '数据管道', icon: '🚀', route: '/app/pipeline', color: '#EC4899' },
     { id: 'prediction', name: '股价预测', icon: '🔮', route: '/app/prediction', color: '#8B5CF6' },
-    { id: 'news', name: '新闻分析', icon: '📰', route: '/app/news', color: '#0EA5E9' },
   ],
 };
 
-// 功能行星布局：内圈5 + 外圈8
-function getFeaturePositions(inner: number, outer: number, r1: number, r2: number) {
+// 功能行星布局：根据数量动态分配内外圈
+function getFeaturePositions(count: number, r1: number, r2: number) {
   const out: { x: number; y: number; ring: number }[] = [];
-  for (let i = 0; i < inner; i++) {
-    const a = (i / inner) * Math.PI * 2 - Math.PI / 2;
-    out.push({ x: Math.cos(a) * r1, y: Math.sin(a) * r1, ring: 1 });
-  }
-  for (let i = 0; i < outer; i++) {
-    const a = (i / outer) * Math.PI * 2 - Math.PI / 2 + Math.PI / outer;
-    out.push({ x: Math.cos(a) * r2, y: Math.sin(a) * r2, ring: 2 });
+  if (count <= 6) {
+    // 单圈均匀分布
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 - Math.PI / 2;
+      out.push({ x: Math.cos(a) * r1, y: Math.sin(a) * r1, ring: 1 });
+    }
+  } else {
+    // 内外双圈
+    const inner = Math.min(5, Math.ceil(count / 2));
+    const outer = count - inner;
+    for (let i = 0; i < inner; i++) {
+      const a = (i / inner) * Math.PI * 2 - Math.PI / 2;
+      out.push({ x: Math.cos(a) * r1, y: Math.sin(a) * r1, ring: 1 });
+    }
+    for (let i = 0; i < outer; i++) {
+      const a = (i / outer) * Math.PI * 2 - Math.PI / 2 + Math.PI / outer;
+      out.push({ x: Math.cos(a) * r2, y: Math.sin(a) * r2, ring: 2 });
+    }
   }
   return out;
 }
 
-const featurePositions = getFeaturePositions(5, 8, 135, 250);
+/* ================================================================
+   静态扇区布局 — Y 形三扇区
+   ================================================================ */
+
+interface SectorDef {
+  label: string;
+  labelX: number;
+  labelY: number;
+  items: { id: string; x: number; y: number }[];
+}
+
+const sectors: SectorDef[] = [
+  {
+    label: '市 场',
+    labelX: 0, labelY: -85,
+    items: [
+      { id: 'a-stock',  x: 0,    y: -150 },
+      { id: 'hk-stock', x: -140, y: -250 },
+      { id: 'us-stock', x: 140,  y: -250 },
+      { id: 'futures',  x: 0,    y: -310 },
+    ],
+  },
+  {
+    label: '策略 · 交易',
+    labelX: 80, labelY: 50,
+    items: [
+      { id: 'trading',   x: 130,  y: 95 },
+      { id: 'backtest',  x: 245,  y: 25 },
+      { id: 'portfolio', x: 275,  y: 145 },
+      { id: 'review',    x: 195,  y: 245 },
+      { id: 'orderbook', x: 85,   y: 275 },
+    ],
+  },
+  {
+    label: 'AI 工具',
+    labelX: -80, labelY: 50,
+    items: [
+      { id: 'reports',   x: -130, y: 95 },
+      { id: 'advisor',   x: -245, y: 25 },
+      { id: 'news',      x: -275, y: 145 },
+      { id: 'alpha-lab', x: -195, y: 245 },
+      { id: 'fine-tune', x: -85,  y: 275 },
+    ],
+  },
+];
+
+// 构建 id → position 的快查表
+const planetPositions: Record<string, { x: number; y: number }> = {};
+sectors.forEach(s => s.items.forEach(it => { planetPositions[it.id] = { x: it.x, y: it.y }; }));
 
 /* ================================================================
    Ticker Bar（行情滚动条）
@@ -118,8 +147,10 @@ const TickerBar: React.FC = () => {
     (async () => {
       try {
         const res: any = await api.get('/realtime/ticker');
+        console.log('[TickerBar] API response:', res);
         if (res.success && res.data?.length) { setItems(res.data); setIsTrading(res.is_trading); }
-      } catch { /* 静默 */ }
+        else { console.warn('[TickerBar] No data:', res); }
+      } catch (e) { console.error('[TickerBar] Fetch error:', e); }
     })();
   }, []);
 
@@ -140,8 +171,8 @@ const TickerBar: React.FC = () => {
   };
 
   return (
-    <div className="absolute top-4 left-0 right-0 z-30 overflow-hidden opacity-0"
-      style={{ animation: 'home-fadein 0.6s ease 0.8s both' }}>
+    <div className="absolute top-4 left-0 right-0 z-30 overflow-hidden"
+      style={{ opacity: 0, animation: 'home-fadein 0.6s ease 0.8s forwards' }}>
       <div className="animate-ticker flex whitespace-nowrap" style={{ width: 'max-content' }}>
         <div className="flex gap-8 flex-shrink-0 pr-8">{items.map((t, i) => renderItem(t, i))}</div>
         <div className="flex gap-8 flex-shrink-0 pr-8">{items.map((t, i) => renderItem(t, i + items.length))}</div>
@@ -165,15 +196,11 @@ const DynamicStyles: React.FC = () => (
       to { opacity: 1; transform: translateY(0); }
     }
 
-
-
-    /* 轨道公转 — 每个市场模块独立 */
-    ${markets.map((m, i) => `
-      @keyframes orbit-${i} {
-        from { transform: rotate(${m.startAngle}deg) translateX(${m.orbitRadius}px) rotate(${-m.startAngle}deg); }
-        to   { transform: rotate(${m.startAngle + 360 * m.orbitDirection}deg) translateX(${m.orbitRadius}px) rotate(${-m.startAngle - 360 * m.orbitDirection}deg); }
-      }
-    `).join('')}
+    /* 行星微浮动 — 4 种不同路径 */
+    @keyframes planet-float-0 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(3px,-5px); } }
+    @keyframes planet-float-1 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-4px,-3px); } }
+    @keyframes planet-float-2 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(4px,4px); } }
+    @keyframes planet-float-3 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-3px,5px); } }
 
     /* 连线呼吸 */
     @keyframes line-breathe {
@@ -220,24 +247,8 @@ export const Home: React.FC = () => {
   const [hoveredFeature, setHoveredFeature] = useState<number | null>(null);
   const [featuresPhase, setFeaturesPhase] = useState(0); // 0=未展开 1=展开中 2=稳定
 
-  // 每个市场模块当前角度（冻结公转用）
-  const orbitStartTimeRef = useRef(Date.now());
-  const [frozenAngles, setFrozenAngles] = useState<number[]>([]);
-
-  // 计算某个模块当前公转角度
-  const calcCurrentAngle = (m: MarketModule) => {
-    const elapsed = (Date.now() - orbitStartTimeRef.current) / 1000;
-    return m.startAngle + (360 * m.orbitDirection * elapsed) / m.orbitSpeed;
-  };
-
-  // 计算某个模块当前的屏幕相对中心偏移
-  const getModuleOffset = (m: MarketModule, angleDeg: number) => {
-    const rad = (angleDeg * Math.PI) / 180;
-    return { x: Math.cos(rad) * m.orbitRadius, y: Math.sin(rad) * m.orbitRadius };
-  };
-
   // 点击市场模块
-  const handleMarketClick = (market: MarketModule, index: number) => {
+  const handleMarketClick = (market: MarketModule) => {
     if (!market.available || !isAuthenticated || viewMode !== 'home') return;
 
     // 没有功能映射的市场，直接导航
@@ -246,14 +257,10 @@ export const Home: React.FC = () => {
       return;
     }
 
-    // 冻结所有模块的当前角度
-    const angles = markets.map(m => calcCurrentAngle(m));
-    setFrozenAngles(angles);
-
     setActiveMarket(market);
     setViewMode('zooming');
 
-    // 推镜头完成后展开功能行星（给足时间让镜头推进丝滑完成）
+    // 推镜头完成后展开功能行星
     setTimeout(() => {
       setViewMode('features');
       setTimeout(() => setFeaturesPhase(1), 150);
@@ -267,8 +274,6 @@ export const Home: React.FC = () => {
     setTimeout(() => {
       setViewMode('home');
       setActiveMarket(null);
-      setFrozenAngles([]);
-      orbitStartTimeRef.current = Date.now();
     }, 500);
   };
 
@@ -281,11 +286,10 @@ export const Home: React.FC = () => {
   let cameraTransform = 'translate(0, 0) scale(1)';
 
   if ((viewMode === 'zooming' || viewMode === 'features') && activeMarket) {
-    const idx = markets.indexOf(activeMarket);
-    const angle = frozenAngles[idx] ?? activeMarket.startAngle;
-    const offset = getModuleOffset(activeMarket, angle);
-    // 镜头推向模块：反向平移 + 放大
-    cameraTransform = `translate(${-offset.x}px, ${-offset.y}px) scale(2.5)`;
+    const pos = planetPositions[activeMarket.id];
+    if (pos) {
+      cameraTransform = `translate(${-pos.x}px, ${-pos.y}px) scale(2.5)`;
+    }
   }
 
   /* ============ 渲染 ============ */
@@ -353,39 +357,19 @@ export const Home: React.FC = () => {
           </h1>
         </div>
 
-        {/* ---- 轨道环 (装饰) ---- */}
-        {markets.map((m, i) => (
-          <div
-            key={`orbit-ring-${i}`}
-            className="absolute rounded-full border pointer-events-none"
-            style={{
-              width: m.orbitRadius * 2,
-              height: m.orbitRadius * 2,
-              borderColor: hoveredMarket === i ? `${m.accentColor}20` : '#1E293B30',
-              borderStyle: 'dashed',
-              borderWidth: 0.5,
-              opacity: viewMode === 'home' ? 0.5 : 0,
-              transition: 'opacity 0.5s ease, border-color 0.3s',
-            }}
-          />
-        ))}
-
         {/* ---- 连线：每个模块 → 中心 ---- */}
         <svg className="absolute pointer-events-none" style={{
-          width: 600, height: 600,
-          left: 'calc(50% - 300px)', top: 'calc(50% - 300px)',
+          width: 700, height: 700,
+          left: 'calc(50% - 350px)', top: 'calc(50% - 350px)',
           opacity: viewMode === 'home' ? 1 : 0,
           transition: 'opacity 0.4s ease',
         }}>
           {viewMode === 'home' && markets.map((m, i) => {
-            const elapsed = (Date.now() - orbitStartTimeRef.current) / 1000;
-            // 近似：用 CSS 动画的角度不好拿到，所以连线做静态近似（startAngle 位置）
-            const rad = (m.startAngle * Math.PI) / 180;
-            const ex = 300 + Math.cos(rad) * m.orbitRadius;
-            const ey = 300 + Math.sin(rad) * m.orbitRadius;
+            const pos = planetPositions[m.id];
+            if (!pos) return null;
             const isH = hoveredMarket === i;
             return (
-              <line key={i} x1={300} y1={300} x2={ex} y2={ey}
+              <line key={i} x1={350} y1={350} x2={350 + pos.x} y2={350 + pos.y}
                 stroke={isH ? `${m.accentColor}50` : '#8B5CF615'}
                 strokeWidth={isH ? 1 : 0.5}
                 strokeDasharray="4 6"
@@ -395,88 +379,102 @@ export const Home: React.FC = () => {
           })}
         </svg>
 
-        {/* ---- 市场模块节点（公转动画） ---- */}
+        {/* ---- 扇区标签 ---- */}
+        {sectors.map((sec, si) => (
+          <div
+            key={`sector-${si}`}
+            className="absolute z-5 pointer-events-none select-none"
+            style={{
+              transform: `translate(${sec.labelX}px, ${sec.labelY}px)`,
+              opacity: viewMode === 'home' ? 0.4 : 0,
+              transition: 'opacity 0.5s ease',
+            }}
+          >
+            <span className="text-[11px] md:text-xs font-semibold text-gray-500 tracking-widest uppercase">
+              {sec.label}
+            </span>
+          </div>
+        ))}
+
+        {/* ---- 市场模块节点（静态布局 + 微浮动） ---- */}
         {markets.map((m, i) => {
-          const isFrozen = frozenAngles.length > 0;
+          const pos = planetPositions[m.id];
+          if (!pos) return null;
           const isHovered = hoveredMarket === i;
           const nodeSize = m.available
             ? 'w-[56px] h-[56px] md:w-[72px] md:h-[72px]'
             : 'w-[48px] h-[48px] md:w-[64px] md:h-[64px]';
-
-          // 公转动画 or 冻结位置
-          const orbitStyle: React.CSSProperties = isFrozen
-            ? (() => {
-                const rad = (frozenAngles[i] * Math.PI) / 180;
-                const x = Math.cos(rad) * m.orbitRadius;
-                const y = Math.sin(rad) * m.orbitRadius;
-                return { transform: `translate(${x}px, ${y}px)` };
-              })()
-            : {
-                animation: `orbit-${i} ${m.orbitSpeed}s linear infinite`,
-              };
 
           return (
             <div
               key={m.id}
               className="absolute z-10"
               style={{
-                ...orbitStyle,
+                transform: `translate(${pos.x}px, ${pos.y}px)`,
                 opacity: viewMode === 'home' ? 1 : 0,
-                transition: viewMode === 'home' ? 'opacity 0.4s ease' : 'opacity 0.8s ease 0.2s',
+                transition: 'opacity 0.4s ease',
               }}
             >
-              <div
-                className={`${nodeSize} rounded-full flex flex-col items-center justify-center
-                  border relative
-                  ${m.available ? 'cursor-pointer' : 'cursor-default opacity-50'}`}
-                style={{
-                  background: `radial-gradient(circle at 50% 38%, ${m.accentColor}12, #111827 75%)`,
-                  borderColor: isHovered && m.available ? `${m.accentColor}60` : '#1E293B40',
-                  boxShadow: isHovered && m.available
-                    ? `0 0 30px ${m.accentColor}35, 0 0 60px ${m.accentColor}12`
-                    : `0 0 12px ${m.accentColor}06`,
-                  transform: isHovered && m.available ? 'scale(1.12)' : 'scale(1)',
-                  transition: 'transform 0.3s, border-color 0.3s, box-shadow 0.3s',
-                }}
-                onClick={() => handleMarketClick(m, i)}
-                onMouseEnter={() => setHoveredMarket(i)}
-                onMouseLeave={() => setHoveredMarket(null)}
-              >
-                {m.available && (
-                  <div className="absolute inset-0 rounded-full pointer-events-none"
-                    style={{
-                      border: `1px solid ${m.accentColor}15`,
-                      animation: `breath-ring ${4 + i * 0.5}s ease-in-out infinite`,
-                    }}
-                  />
-                )}
-                <span className="text-xl md:text-2xl mb-0.5">{m.icon}</span>
-                <span className="text-[9px] md:text-[11px] font-bold"
-                  style={{ color: m.available ? m.accentColor : '#6B7280' }}>
-                  {m.name}
-                </span>
-                {m.available && (
-                  <span className="absolute top-1.5 right-1.5 md:top-2 md:right-2 w-1.5 h-1.5 md:w-2 md:h-2 rounded-full animate-pulse"
-                    style={{ backgroundColor: '#10B981' }} />
+              <div style={{
+                animation: viewMode === 'home' ? `planet-float-${i % 4} ${5 + i * 0.4}s ease-in-out infinite` : 'none',
+              }}>
+                <div
+                  className={`${nodeSize} rounded-full flex flex-col items-center justify-center
+                    border relative
+                    ${m.available ? 'cursor-pointer' : 'cursor-default opacity-50'}`}
+                  style={{
+                    background: `radial-gradient(circle at 50% 38%, ${m.accentColor}12, #111827 75%)`,
+                    borderColor: isHovered && m.available ? `${m.accentColor}60` : '#1E293B40',
+                    boxShadow: isHovered && m.available
+                      ? `0 0 30px ${m.accentColor}35, 0 0 60px ${m.accentColor}12`
+                      : `0 0 12px ${m.accentColor}06`,
+                    transform: isHovered && m.available ? 'scale(1.12)' : 'scale(1)',
+                    transition: 'transform 0.3s, border-color 0.3s, box-shadow 0.3s',
+                  }}
+                  onClick={() => handleMarketClick(m)}
+                  onMouseEnter={() => setHoveredMarket(i)}
+                  onMouseLeave={() => setHoveredMarket(null)}
+                >
+                  {m.available && (
+                    <div className="absolute inset-0 rounded-full pointer-events-none"
+                      style={{
+                        border: `1px solid ${m.accentColor}15`,
+                        animation: `breath-ring ${4 + i * 0.5}s ease-in-out infinite`,
+                      }}
+                    />
+                  )}
+                  <span className="text-xl md:text-2xl mb-0.5">{m.icon}</span>
+                  <span className="text-[9px] md:text-[11px] font-bold"
+                    style={{ color: m.available ? m.accentColor : '#6B7280' }}>
+                    {m.name}
+                  </span>
+                  {m.available && (
+                    <span className="absolute top-1.5 right-1.5 md:top-2 md:right-2 w-1.5 h-1.5 md:w-2 md:h-2 rounded-full animate-pulse"
+                      style={{ backgroundColor: '#10B981' }} />
+                  )}
+                </div>
+
+                {/* hover tooltip */}
+                {isHovered && viewMode === 'home' && (
+                  <div className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-none whitespace-nowrap"
+                    style={{ top: '100%', marginTop: 6 }}>
+                    <span className="text-[10px] text-gray-400">{m.subtitle}</span>
+                    {m.available && <span className="text-[10px] mt-1 font-medium" style={{ color: m.accentColor }}>点击进入 →</span>}
+                    {!m.available && <span className="text-[10px] mt-1 text-gray-600">敬请期待</span>}
+                  </div>
                 )}
               </div>
-
-              {/* hover tooltip */}
-              {isHovered && viewMode === 'home' && (
-                <div className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-none whitespace-nowrap"
-                  style={{ top: '100%', marginTop: 6 }}>
-                  <span className="text-[10px] text-gray-400">{m.subtitle}</span>
-                  {m.available && <span className="text-[10px] mt-1 font-medium" style={{ color: m.accentColor }}>点击进入 →</span>}
-                  {!m.available && <span className="text-[10px] mt-1 text-gray-600">敬请期待</span>}
-                </div>
-              )}
             </div>
           );
         })}
       </div>
 
       {/* ======== 功能行星层（独立于镜头，固定在屏幕中央） ======== */}
-      {viewMode === 'features' && activeMarket && featureMap[activeMarket.id] && (
+      {viewMode === 'features' && activeMarket && featureMap[activeMarket.id] && (() => {
+        const features = featureMap[activeMarket.id];
+        const positions = getFeaturePositions(features.length, 135, 250);
+        const showOuterRing = features.length > 6;
+        return (
         <div className="fixed inset-0 z-30 flex items-center justify-center pointer-events-none">
           {/* 中心太阳 */}
           <div
@@ -503,16 +501,18 @@ export const Home: React.FC = () => {
               opacity: featuresPhase >= 1 ? 0.4 : 0,
               transition: 'opacity 0.6s ease 0.3s',
             }} />
-          <div className="absolute rounded-full border border-dashed pointer-events-none"
-            style={{
-              width: 500, height: 500, borderColor: '#1E293B',
-              opacity: featuresPhase >= 1 ? 0.3 : 0,
-              transition: 'opacity 0.6s ease 0.5s',
-            }} />
+          {showOuterRing && (
+            <div className="absolute rounded-full border border-dashed pointer-events-none"
+              style={{
+                width: 500, height: 500, borderColor: '#1E293B',
+                opacity: featuresPhase >= 1 ? 0.3 : 0,
+                transition: 'opacity 0.6s ease 0.5s',
+              }} />
+          )}
 
           {/* 连线 */}
-          {featureMap[activeMarket.id].map((planet, i) => {
-            const pos = featurePositions[i];
+          {features.map((planet, i) => {
+            const pos = positions[i];
             const dist = Math.sqrt(pos.x ** 2 + pos.y ** 2);
             const angle = Math.atan2(pos.y, pos.x) * (180 / Math.PI);
             const isH = hoveredFeature === i;
@@ -531,8 +531,8 @@ export const Home: React.FC = () => {
           })}
 
           {/* 功能行星 */}
-          {featureMap[activeMarket.id].map((planet, i) => {
-            const pos = featurePositions[i];
+          {features.map((planet, i) => {
+            const pos = positions[i];
             const isH = hoveredFeature === i;
             const delay = 0.1 + i * 0.05;
             const isInner = pos.ring === 1;
@@ -583,7 +583,8 @@ export const Home: React.FC = () => {
             );
           })}
         </div>
-      )}
+        );
+      })()}
 
       {/* footer */}
       {viewMode === 'home' && (

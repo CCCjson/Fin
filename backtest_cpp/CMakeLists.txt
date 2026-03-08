@@ -63,8 +63,15 @@ set(LIB_SOURCES
     src/metrics.cpp
     src/data_loader.cpp
     src/server.cpp
+    src/risk_manager.cpp
     src/strategies/ma_cross_strategy.cpp
     src/strategies/momentum_strategy.cpp
+    src/strategies/macd_strategy.cpp
+    src/strategies/rsi_strategy.cpp
+    src/strategies/kdj_strategy.cpp
+    src/strategies/bollinger_strategy.cpp
+    src/strategies/combo_strategy.cpp
+    src/strategies/pairs_strategy.cpp
 )
 
 # ── 主程序：backtest_server ──

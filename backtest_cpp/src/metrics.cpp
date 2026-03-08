@@ -224,13 +224,16 @@ Metrics::MaxDrawdown Metrics::calc_max_drawdown(const std::vector<EquitySnapshot
     for (size_t i = 1; i < curve.size(); ++i) {
         double value = curve[i].total_value;
 
+        // 安全保护：total_value 不应该为负，但防止脏数据
+        if (value < 0) value = 0.0;
+
         if (value > peak) {
             // 创新高，更新 peak
             peak = value;
             peak_idx = static_cast<int>(i);
-        } else {
-            // 计算当前回撤
-            double dd_pct = (peak - value) / peak;
+        } else if (peak > 0) {
+            // 计算当前回撤，cap 在 100%
+            double dd_pct = std::min((peak - value) / peak, 1.0);
             double dd_amount = peak - value;
 
             if (dd_pct > result.drawdown_pct) {
@@ -355,12 +358,15 @@ BacktestMetrics Metrics::calculate(const std::vector<EquitySnapshot>& equity_cur
     m.avg_profit = ts.avg_profit;
     m.avg_loss = ts.avg_loss;
 
-    // 手续费
+    // 手续费和滑点
     double total_comm = 0.0;
+    double total_slip = 0.0;
     for (const auto& f : fills) {
         total_comm += f.commission;
+        total_slip += f.slippage;
     }
     m.total_commission = total_comm;
+    m.total_slippage = total_slip;
 
     return m;
 }

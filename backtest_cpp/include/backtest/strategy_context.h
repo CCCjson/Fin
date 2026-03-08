@@ -25,6 +25,7 @@
 #include <string>
 #include <numeric>     // std::accumulate — 用于求和
 #include <algorithm>   // std::min_element, std::max_element
+#include <cmath>       // std::log, std::sqrt
 
 namespace backtest {
 
@@ -138,6 +139,226 @@ struct StrategyContext {
      */
     bool has_position() const {
         return position_quantity > 0;
+    }
+
+    // ── 扩展技术指标 ──
+
+    /*
+     * 指数移动平均线（EMA）
+     * EMA 给近期价格更高的权重，比 SMA 更灵敏。
+     * 权重因子 alpha = 2 / (period + 1)
+     */
+    double ema(int period) const {
+        if (!history || static_cast<int>(history->size()) < period) {
+            return 0.0;
+        }
+        double alpha = 2.0 / (period + 1);
+        int n = static_cast<int>(history->size());
+        // 用最早的 period 个数据的 SMA 作为初始值
+        double result = 0.0;
+        for (int i = 0; i < period; ++i) {
+            result += (*history)[i].close;
+        }
+        result /= period;
+        // 从 period 位置开始递推
+        for (int i = period; i < n; ++i) {
+            result = alpha * (*history)[i].close + (1.0 - alpha) * result;
+        }
+        return result;
+    }
+
+    /*
+     * 计算指定数据序列在特定 offset 处的 EMA（内部辅助）
+     * prices: 收盘价序列
+     * period: EMA 周期
+     * end_idx: 计算到哪个位置（包含）
+     */
+    static double ema_at(const std::vector<double>& prices, int period, int end_idx) {
+        if (end_idx < 0 || period <= 0) return 0.0;
+        double alpha = 2.0 / (period + 1);
+        int actual_start = std::min(period, end_idx + 1);
+        double result = 0.0;
+        for (int i = 0; i < actual_start; ++i) {
+            result += prices[i];
+        }
+        result /= actual_start;
+        for (int i = actual_start; i <= end_idx; ++i) {
+            result = alpha * prices[i] + (1.0 - alpha) * result;
+        }
+        return result;
+    }
+
+    /*
+     * MACD 指标（三线）
+     * DIF = EMA(fast) - EMA(slow)
+     * DEA = EMA(DIF, signal)
+     * HIST = 2 * (DIF - DEA)
+     */
+    struct MACDResult {
+        double dif = 0.0;
+        double dea = 0.0;
+        double hist = 0.0;
+    };
+
+    MACDResult macd(int fast_period = 12, int slow_period = 26, int signal_period = 9) const {
+        MACDResult r;
+        if (!history || static_cast<int>(history->size()) < slow_period) {
+            return r;
+        }
+        int n = static_cast<int>(history->size());
+        // 先算所有 bar 的收盘价
+        std::vector<double> closes(n);
+        for (int i = 0; i < n; ++i) {
+            closes[i] = (*history)[i].close;
+        }
+        // 计算每个 bar 的 DIF
+        std::vector<double> dif_series(n, 0.0);
+        double alpha_fast = 2.0 / (fast_period + 1);
+        double alpha_slow = 2.0 / (slow_period + 1);
+        // EMA fast
+        std::vector<double> ema_fast_arr(n, 0.0);
+        ema_fast_arr[0] = closes[0];
+        for (int i = 1; i < n; ++i) {
+            ema_fast_arr[i] = alpha_fast * closes[i] + (1.0 - alpha_fast) * ema_fast_arr[i - 1];
+        }
+        // EMA slow
+        std::vector<double> ema_slow_arr(n, 0.0);
+        ema_slow_arr[0] = closes[0];
+        for (int i = 1; i < n; ++i) {
+            ema_slow_arr[i] = alpha_slow * closes[i] + (1.0 - alpha_slow) * ema_slow_arr[i - 1];
+        }
+        // DIF = EMA(fast) - EMA(slow)
+        for (int i = 0; i < n; ++i) {
+            dif_series[i] = ema_fast_arr[i] - ema_slow_arr[i];
+        }
+        // DEA = EMA(DIF, signal_period)
+        double alpha_sig = 2.0 / (signal_period + 1);
+        std::vector<double> dea_series(n, 0.0);
+        dea_series[0] = dif_series[0];
+        for (int i = 1; i < n; ++i) {
+            dea_series[i] = alpha_sig * dif_series[i] + (1.0 - alpha_sig) * dea_series[i - 1];
+        }
+        r.dif = dif_series[n - 1];
+        r.dea = dea_series[n - 1];
+        r.hist = 2.0 * (r.dif - r.dea);
+        return r;
+    }
+
+    /*
+     * RSI（相对强弱指标）
+     * RSI = 100 - 100/(1 + RS)，RS = 平均涨幅 / 平均跌幅
+     * RSI < 30 → 超卖（买入信号）
+     * RSI > 70 → 超买（卖出信号）
+     */
+    double rsi(int period = 14) const {
+        if (!history || static_cast<int>(history->size()) < period + 1) {
+            return 50.0; // 数据不足返回中性值
+        }
+        int n = static_cast<int>(history->size());
+        // 计算价格变动
+        std::vector<double> changes(n - 1);
+        for (int i = 1; i < n; ++i) {
+            changes[i - 1] = (*history)[i].close - (*history)[i - 1].close;
+        }
+        // Wilder's smoothing（指数移动平均）
+        double avg_gain = 0.0, avg_loss = 0.0;
+        // 初始 period 个变化的平均
+        for (int i = 0; i < period && i < static_cast<int>(changes.size()); ++i) {
+            if (changes[i] > 0) avg_gain += changes[i];
+            else avg_loss += (-changes[i]);
+        }
+        avg_gain /= period;
+        avg_loss /= period;
+        // 递推
+        for (int i = period; i < static_cast<int>(changes.size()); ++i) {
+            double gain = changes[i] > 0 ? changes[i] : 0.0;
+            double loss = changes[i] < 0 ? -changes[i] : 0.0;
+            avg_gain = (avg_gain * (period - 1) + gain) / period;
+            avg_loss = (avg_loss * (period - 1) + loss) / period;
+        }
+        if (avg_loss == 0.0) return 100.0;
+        double rs = avg_gain / avg_loss;
+        return 100.0 - 100.0 / (1.0 + rs);
+    }
+
+    /*
+     * KDJ 指标
+     * RSV = (Close - LLV(N)) / (HHV(N) - LLV(N)) * 100
+     * K = EMA(RSV, m1)  （实际是 SMA 平滑）
+     * D = EMA(K, m2)
+     * J = 3K - 2D
+     */
+    struct KDJResult {
+        double k = 50.0;
+        double d = 50.0;
+        double j = 50.0;
+    };
+
+    KDJResult kdj(int n = 9, int m1 = 3, int m2 = 3) const {
+        KDJResult r;
+        if (!history || static_cast<int>(history->size()) < n) {
+            return r;
+        }
+        int len = static_cast<int>(history->size());
+        double k_val = 50.0, d_val = 50.0;
+        // 从第 n-1 根 bar 开始逐日计算
+        for (int i = n - 1; i < len; ++i) {
+            // 最近 n 天的最高价和最低价
+            double hhv = (*history)[i].high;
+            double llv = (*history)[i].low;
+            for (int j = i - n + 1; j < i; ++j) {
+                hhv = std::max(hhv, (*history)[j].high);
+                llv = std::min(llv, (*history)[j].low);
+            }
+            double rsv = (hhv == llv) ? 50.0 :
+                ((*history)[i].close - llv) / (hhv - llv) * 100.0;
+            // SMA 平滑
+            k_val = (rsv + (m1 - 1) * k_val) / m1;
+            d_val = (k_val + (m2 - 1) * d_val) / m2;
+        }
+        r.k = k_val;
+        r.d = d_val;
+        r.j = 3.0 * k_val - 2.0 * d_val;
+        return r;
+    }
+
+    /*
+     * 布林带（Bollinger Bands）
+     * 中轨 = SMA(period)
+     * 上轨 = 中轨 + num_std × 标准差
+     * 下轨 = 中轨 - num_std × 标准差
+     */
+    struct BollingerResult {
+        double upper = 0.0;
+        double middle = 0.0;
+        double lower = 0.0;
+    };
+
+    BollingerResult bollinger(int period = 20, double num_std = 2.0) const {
+        BollingerResult r;
+        r.middle = sma(period);
+        if (r.middle == 0.0) return r;
+        double sd = stddev(period);
+        r.upper = r.middle + num_std * sd;
+        r.lower = r.middle - num_std * sd;
+        return r;
+    }
+
+    /*
+     * 标准差
+     * 衡量价格波动的离散程度
+     */
+    double stddev(int period) const {
+        if (!history || static_cast<int>(history->size()) < period) {
+            return 0.0;
+        }
+        double mean = sma(period);
+        double sum_sq = 0.0;
+        for (size_t i = history->size() - period; i < history->size(); ++i) {
+            double diff = (*history)[i].close - mean;
+            sum_sq += diff * diff;
+        }
+        return std::sqrt(sum_sq / period);
     }
 };
 

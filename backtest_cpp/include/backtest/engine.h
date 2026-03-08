@@ -30,6 +30,7 @@
 #include "portfolio.h"
 #include "strategy_base.h"
 #include "metrics.h"
+#include "risk_manager.h"
 #include <memory>      // unique_ptr
 #include <vector>
 #include <string>
@@ -57,7 +58,8 @@ public:
      * 接受初始资金和手续费配置
      */
     explicit BacktestEngine(double initial_capital = 100000.0,
-                            CommissionConfig commission = CommissionConfig::a_share());
+                            CommissionConfig commission = CommissionConfig::a_share(),
+                            RiskConfig risk_config = RiskConfig{});
 
     /*
      * set_strategy — 设置要回测的策略
@@ -98,6 +100,7 @@ public:
 private:
     double initial_capital_;                        // 初始资金
     CommissionConfig commission_config_;             // 手续费配置
+    RiskConfig risk_config_;                        // 风控配置
     std::string symbol_;                            // 股票代码
     std::vector<Bar> bars_;                         // K 线数据
     std::unique_ptr<IStrategy> strategy_;            // 策略（独占所有权）
