@@ -12,6 +12,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from advisor_engine.service import AdvisorService
+from llm_config import get_best_model
 
 router = APIRouter(prefix="/advisor", tags=["AI投资顾问"])
 
@@ -25,7 +26,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="会话ID，首次不填自动创建")
     message: Optional[str] = Field(None, description="追问内容，首次分析不填")
     enable_web_search: bool = Field(False, description="是否联网搜索新闻")
-    model: str = Field("gpt-4o", description="模型: gpt-4o / gpt-4o-mini 等")
+    model: str = Field(default_factory=get_best_model, description="模型，默认最强档（投资建议）")
 
 
 @router.post("/chat", summary="AI投资顾问对话（流式）")

@@ -17,6 +17,7 @@ from report_engine.data_collector import ReportDataCollector
 from report_engine.prompt_builder import ReportPromptBuilder
 from report_engine.generator import ReportGenerator
 from report_engine.pdf_exporter import ReportPDFExporter
+from llm_config import get_best_model
 
 router = APIRouter(prefix="/reports", tags=["AI分析报告"])
 
@@ -24,8 +25,9 @@ router = APIRouter(prefix="/reports", tags=["AI分析报告"])
 class GenerateReportRequest(BaseModel):
     """生成报告请求"""
     report_type: str = Field("daily", description="报告类型: daily / weekly / monthly")
-    model: str = Field("gpt-4o", description="模型: gpt-4o / gpt-4o-mini")
+    model: str = Field(default_factory=get_best_model, description="模型，默认最强档（投资建议）")
     period_end: Optional[str] = Field(None, description="报告截止日期 (YYYY-MM-DD)，默认今天")
+    enable_web_search: bool = Field(False, description="定性段是否用真·联网搜索补充外部观点（默认关）")
 
 
 @router.post("/generate", summary="流式生成AI分析报告")
@@ -59,7 +61,8 @@ async def generate_report(request: GenerateReportRequest):
         # 1. 收集数据（在线程池中执行，避免阻塞事件循环）
         def _collect():
             collector = ReportDataCollector()
-            return collector.collect(report_type=request.report_type, period_end=period_end)
+            return collector.collect(report_type=request.report_type, period_end=period_end,
+                                     enable_web_search=request.enable_web_search)
 
         # 先发送 collecting 事件，然后开始异步数据采集
         async def _streaming():

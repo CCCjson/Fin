@@ -49,7 +49,7 @@ echo ""
 # ============================================================
 echo -e "${YELLOW}[2/3] 启动后端 (port 8000)...${NC}"
 cd "$BACKEND_DIR"
-nohup conda run --no-banner -n quant python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 > /tmp/fin-backend.log 2>&1 &
+nohup conda run -n quant --no-capture-output python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 > /tmp/fin-backend.log 2>&1 &
 BACKEND_PID=$!
 echo "  PID: $BACKEND_PID  日志: /tmp/fin-backend.log"
 echo ""

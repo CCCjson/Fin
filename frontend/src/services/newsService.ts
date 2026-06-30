@@ -65,7 +65,7 @@ export interface ReportParams {
 async function consumeNDJSON(
   response: Response,
   onEvent: (event: NewsStreamEvent) => void,
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
 ): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error('无法获取响应流');
@@ -151,7 +151,7 @@ export const newsService = {
     const response = await fetch(`${API_BASE}/news/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ article_id: params.article_id, model: params.model || 'gpt-4o' }),
+      body: JSON.stringify({ article_id: params.article_id, model: params.model || 'gpt-5.4-mini' }),
       signal,
     });
     if (!response.ok) throw new Error(`请求失败: ${response.status}`);
@@ -172,7 +172,7 @@ export const newsService = {
       body: JSON.stringify({
         symbol: params.symbol,
         market: params.market || 'a_share',
-        model: params.model || 'gpt-4o',
+        model: params.model || 'gpt-5.4-mini',
       }),
       signal,
     });

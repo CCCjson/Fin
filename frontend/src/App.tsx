@@ -1,20 +1,12 @@
-import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { Layout } from './components/layout/Layout';
-import { Home } from './pages/Home';
-import { Automation } from './pages/Automation';
-import { AlphaLab } from './pages/AlphaLab';
-import { FineTune } from './pages/FineTune';
+import { AppShell } from './components/shell/AppShell';
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/app/*" element={<Layout />} />
-        <Route path="/trading" element={<Automation />} />
-        <Route path="/alpha-lab" element={<AlphaLab />} />
-        <Route path="/fine-tune" element={<FineTune />} />
+        {/* 统一 ChatGPT 外壳：聊天为主入口，工具页在主区 keep-alive 打开 */}
+        <Route path="/*" element={<AppShell />} />
       </Routes>
     </BrowserRouter>
   );

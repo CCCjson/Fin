@@ -493,12 +493,11 @@ async def submit_broker_order(
     """统一手动下单入口"""
     from automation.pending_order_manager import get_paper_broker
     from trading_engine.risk.manager import RiskManager
-    from trading_engine.config import RISK_CONFIG
-    from trading_engine.risk.adapter import build_broker_info, get_total_capital
+    from trading_engine.risk.adapter import build_broker_info, get_total_capital, get_effective_risk_config
 
     # 风控检查
     try:
-        risk_mgr = RiskManager(RISK_CONFIG)
+        risk_mgr = RiskManager(get_effective_risk_config())
         total_capital = get_total_capital()
         broker_info = build_broker_info(total_capital)
         risk_passed, risk_results = risk_mgr.check_order(

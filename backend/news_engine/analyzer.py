@@ -10,11 +10,12 @@ from typing import Dict, Generator, List, Optional
 from dotenv import load_dotenv
 from loguru import logger
 from openai import OpenAI
-from httpx import Timeout as HttpxTimeout
 
 from data_engine.storage.database import get_session
 from data_engine.storage.models import NewsAnalysis, NewsArticle, NewsSentiment
 from news_engine.prompts import build_single_analysis_prompt, build_report_prompt
+from llm_config import get_cheap_model, normalize_chat_params
+from agents.llm_client import build_client
 
 load_dotenv(override=True)
 
@@ -34,30 +35,26 @@ class NewsAnalyzer:
     )
 
     def _get_client(self) -> OpenAI:
-        """创建 OpenAI 客户端"""
+        """创建 OpenAI 客户端（复用统一工厂，中转站自动清 x-stainless-* header）"""
         api_key = os.getenv("OPENAI_API_KEY", "")
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
         if not api_key:
             raise ValueError("OPENAI_API_KEY 未配置")
 
-        return OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=HttpxTimeout(connect=15.0, read=300.0, write=30.0, pool=30.0),
-            max_retries=2,
-        )
+        return build_client(base_url=base_url, api_key=api_key)
 
     def analyze_single_stream(
         self,
         article_id: str,
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
     ) -> Generator[str, None, None]:
         """
         单篇新闻深度分析（流式 NDJSON）。
 
         Events: start → chunk → done | error
         """
+        model = model or get_cheap_model()
         session = get_session()
         try:
             article = session.query(NewsArticle).filter_by(article_id=article_id).first()
@@ -110,13 +107,14 @@ class NewsAnalyzer:
         self,
         symbol: Optional[str] = None,
         market: str = "a_share",
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
     ) -> Generator[str, None, None]:
         """
         多篇新闻综合分析报告（流式 NDJSON）。
 
         Events: start → chunk → done | error
         """
+        model = model or get_cheap_model()
         session = get_session()
         try:
             query = session.query(NewsArticle, NewsSentiment).outerjoin(
@@ -186,12 +184,12 @@ class NewsAnalyzer:
                 {"role": "user", "content": user_prompt},
             ]
 
-            stream_kwargs = dict(
+            stream_kwargs = normalize_chat_params(dict(
                 model=model,
                 messages=messages,
                 temperature=0.5,
                 stream=True,
-            )
+            ))
 
             try:
                 stream = client.chat.completions.create(

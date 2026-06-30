@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { backtestService } from '../../services/backtestService';
+import { Card } from '../common/Card';
 import { StockSymbolInput } from '../common/StockSymbolInput';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -43,7 +44,7 @@ export const WalkForwardPanel: React.FC = () => {
   const [windowResults, setWindowResults] = useState<WalkForwardResult[]>([]);
   const [summary, setSummary] = useState<any>(null);
   const [oosEquity, setOosEquity] = useState<any[]>([]);
-  const [paramHistory, setParamHistory] = useState<Record<string, any>[]>([]);
+  const [, setParamHistory] = useState<Record<string, any>[]>([]);
   const [done, setDone] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -53,7 +54,7 @@ export const WalkForwardPanel: React.FC = () => {
     if (paramGridText.trim()) {
       try { return JSON.parse(paramGridText); } catch { return {}; }
     }
-    return selectedStrategy?.defaultGrid || {};
+    return (selectedStrategy?.defaultGrid || {}) as Record<string, any[]>;
   };
 
   const handleSubmit = async () => {
@@ -121,7 +122,7 @@ export const WalkForwardPanel: React.FC = () => {
     <div className="space-y-4">
       {/* Config Form */}
       {!loading && !done && (
-        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+        <Card className="p-3 md:p-6">
           <h2 className="text-base md:text-lg font-semibold text-white mb-1">Walk-Forward 验证</h2>
           <p className="text-gray-500 text-xs mb-4">滚动窗口训练+测试，检测参数过拟合</p>
 
@@ -198,12 +199,12 @@ export const WalkForwardPanel: React.FC = () => {
           </button>
 
           {error && <p className="text-red-400 text-sm mt-2 bg-red-400/10 px-3 py-2 rounded">{error}</p>}
-        </div>
+        </Card>
       )}
 
       {/* Progress */}
       {loading && (
-        <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl">
+        <Card className="p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-white">Walk-Forward 进度</span>
             <button onClick={handleCancel} className="text-xs text-bear hover:text-bear/80">取消</button>
@@ -230,7 +231,7 @@ export const WalkForwardPanel: React.FC = () => {
               ))}
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {/* Results */}
@@ -245,7 +246,7 @@ export const WalkForwardPanel: React.FC = () => {
           </div>
 
           {/* Overfit Dashboard */}
-          <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl">
+          <Card className="p-4">
             <h3 className="text-base font-semibold text-white mb-3">过拟合诊断</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="text-center p-3 bg-dark-light rounded-lg border border-border">
@@ -272,7 +273,7 @@ export const WalkForwardPanel: React.FC = () => {
                 </div>
               </div>
             </div>
-          </div>
+          </Card>
 
           {/* OOS Equity Curve */}
           {oosEquity.length > 0 && (
@@ -285,7 +286,7 @@ export const WalkForwardPanel: React.FC = () => {
                   <YAxis stroke="#9ca3af" tickFormatter={v => (v / 1000).toFixed(0) + 'k'} />
                   <Tooltip
                     contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #374151', borderRadius: 8 }}
-                    formatter={(v: number) => [`${v.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`, '净值']}
+                    formatter={(v: any) => [`${Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`, '净值']}
                   />
                   <Line type="monotone" dataKey="total_value" stroke="#22d3ee" strokeWidth={2} dot={false} />
                 </LineChart>
@@ -294,7 +295,7 @@ export const WalkForwardPanel: React.FC = () => {
           )}
 
           {/* Window Results Table */}
-          <div className="bg-gradient-card border border-border shadow-card p-4 rounded-xl">
+          <Card className="p-4">
             <h3 className="text-base font-semibold text-white mb-3">
               窗口详情 ({windowResults.filter(r => r.status === 'completed').length} 完成)
             </h3>
@@ -340,7 +341,7 @@ export const WalkForwardPanel: React.FC = () => {
                 </tbody>
               </table>
             </div>
-          </div>
+          </Card>
         </div>
       )}
     </div>

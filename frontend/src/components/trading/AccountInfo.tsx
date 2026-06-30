@@ -1,4 +1,5 @@
 import React from 'react';
+import { Card } from '../common/Card';
 import type { Account } from '../../types';
 
 interface AccountInfoProps {
@@ -16,7 +17,7 @@ export const AccountInfo: React.FC<AccountInfoProps> = ({ account }) => {
   const profitColor = profit >= 0 ? 'text-bull' : 'text-bear';
 
   return (
-    <div className="bg-gradient-card rounded-xl p-6 border border-border shadow-card">
+    <Card className="p-6">
       <h2 className="text-2xl font-bold text-white mb-6">账户信息</h2>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
@@ -95,6 +96,6 @@ export const AccountInfo: React.FC<AccountInfoProps> = ({ account }) => {
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 };

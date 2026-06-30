@@ -14,11 +14,13 @@ from data_engine.storage.models import (
     StockInfo,
     DailyQuote,
     RealtimeQuote,
-    DataUpdateLog
+    DataUpdateLog,
+    FinancialData
 )
 from data_engine.storage.repository import (
     StockRepository,
     QuoteRepository,
+    FinancialRepository,
     LogRepository
 )
 
@@ -34,7 +36,9 @@ __all__ = [
     'DailyQuote',
     'RealtimeQuote',
     'DataUpdateLog',
+    'FinancialData',
     'StockRepository',
     'QuoteRepository',
+    'FinancialRepository',
     'LogRepository'
 ]

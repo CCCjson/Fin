@@ -2,6 +2,8 @@
  * Tab 2: 持仓总览
  */
 import React, { useEffect, useState } from 'react';
+import { toast } from '../common/Toast';
+import { Card } from '../common/Card';
 import { useAutomationStore } from '../../stores/automationStore';
 import type { PositionItem } from '../../stores/automationStore';
 
@@ -13,7 +15,7 @@ const brokerFilters = [
 ];
 
 export const PositionsTab: React.FC = () => {
-  const { positions, brokerStatuses, fetchPositions, submitManualOrder } = useAutomationStore();
+  const { positions, fetchPositions, submitManualOrder } = useAutomationStore();
   const [brokerFilter, setBrokerFilter] = useState('');
   const [sellTarget, setSellTarget] = useState<PositionItem | null>(null);
   const [sellQty, setSellQty] = useState(0);
@@ -53,7 +55,7 @@ export const PositionsTab: React.FC = () => {
       setSellTarget(null);
       loadPositions();
     } else {
-      alert(result.message);
+      toast.error(result.message);
     }
   };
 
@@ -71,7 +73,7 @@ export const PositionsTab: React.FC = () => {
               onClick={() => setBrokerFilter(f.value)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                 brokerFilter === f.value
-                  ? 'bg-primary text-white'
+                  ? 'bg-primary text-dark'
                   : 'bg-dark-card text-gray-400 hover:text-white'
               }`}
             >
@@ -93,7 +95,7 @@ export const PositionsTab: React.FC = () => {
       </div>
 
       {/* 持仓表格 */}
-      <div className="bg-gradient-card rounded-xl border border-border shadow-card overflow-hidden">
+      <Card className="overflow-hidden">
         {positions.length === 0 ? (
           <div className="text-center py-16">
             <div className="text-4xl mb-3 opacity-40">📊</div>
@@ -154,7 +156,7 @@ export const PositionsTab: React.FC = () => {
             </table>
           </div>
         )}
-      </div>
+      </Card>
 
       {/* 快速卖出确认框 */}
       {sellTarget && (

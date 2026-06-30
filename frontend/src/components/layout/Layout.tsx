@@ -1,7 +1,8 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { Link, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
-import { RiskToastContainer } from '../RiskToast';
+import { RiskToastContainer, useRiskToastStore } from '../RiskToast';
+import wsService from '../../services/websocketService';
 
 // 路由懒加载 — 按页面拆分 chunk，首屏只加载当前页面的代码
 const Dashboard = React.lazy(() => import('../../pages/Dashboard').then(m => ({ default: m.Dashboard })));
@@ -19,7 +20,12 @@ const OrderBook = React.lazy(() => import('../../pages/OrderBook').then(m => ({ 
 const DataPipeline = React.lazy(() => import('../../pages/DataPipeline').then(m => ({ default: m.DataPipeline })));
 const Prediction = React.lazy(() => import('../../pages/Prediction').then(m => ({ default: m.Prediction })));
 const News = React.lazy(() => import('../../pages/News').then(m => ({ default: m.News })));
+const Cockpit = React.lazy(() => import('../../pages/Cockpit').then(m => ({ default: m.Cockpit })));
+const Watchlist = React.lazy(() => import('../../pages/Watchlist').then(m => ({ default: m.Watchlist })));
+const Screener = React.lazy(() => import('../../pages/Screener').then(m => ({ default: m.Screener })));
+const MoneyBill = React.lazy(() => import('../../pages/MoneyBill').then(m => ({ default: m.MoneyBill })));
 const routeConfig: { path: string; Component: React.LazyExoticComponent<React.FC> }[] = [
+  { path: '/app/moneybill', Component: MoneyBill },
   { path: '/app/dashboard', Component: Dashboard },
   { path: '/app/realtime', Component: Realtime },
   { path: '/app/market', Component: Market },
@@ -35,6 +41,9 @@ const routeConfig: { path: string; Component: React.LazyExoticComponent<React.FC
   { path: '/app/pipeline', Component: DataPipeline },
   { path: '/app/prediction', Component: Prediction },
   { path: '/app/news', Component: News },
+  { path: '/app/cockpit', Component: Cockpit },
+  { path: '/app/watchlist', Component: Watchlist },
+  { path: '/app/screener', Component: Screener },
 ];
 
 const PageLoader: React.FC = () => (
@@ -70,8 +79,29 @@ export const Layout: React.FC = () => {
     setMoreDrawerOpen(false);
   }, [currentPath]);
 
+  // 全局价格预警监听：连 WS，收到 price_alert 弹 RiskToast（任何 /app 页都生效）
+  useEffect(() => {
+    wsService.connect();
+    const off = wsService.on('price_alert', (d: any) => {
+      const base = d?.message || `${d?.name || d?.symbol} 触发预警`;
+      const s = d?.suggested;
+      const tip = s
+        ? (s.affordable ? `　💰按你的资金建议买 ${s.shares} 股(约¥${Number(s.amount).toLocaleString()})` : '　💰以你的资金买不起 1 手')
+        : '';
+      useRiskToastStore.getState().addToast({
+        rule: d?.rule || '到价预警',
+        message: base + tip,
+        severity: 'WARNING',
+      });
+    });
+    return off;
+  }, []);
+
   // A股专属功能
   const aStockItems = [
+    { path: '/app/cockpit', label: '决策驾驶舱', icon: '🎛️' },
+    { path: '/app/watchlist', label: '自选股', icon: '⭐' },
+    { path: '/app/screener', label: '选股器', icon: '🔎' },
     { path: '/app/realtime', label: '实时行情', icon: '⚡' },
     { path: '/app/market', label: 'K线分析', icon: '📈' },
     { path: '/app/signals', label: '信号分析', icon: '🎯' },
@@ -82,6 +112,7 @@ export const Layout: React.FC = () => {
 
   // 通用功能（跨市场共享）
   const sharedItems = [
+    { path: '/app/moneybill', label: 'MoneyBill', icon: '💰' },
     { path: '/app/backtest', label: '策略回测', icon: '🔬' },
     { path: '/app/portfolio', label: '交易记录', icon: '📒' },
     { path: '/app/review', label: '每日复盘', icon: '📝' },
@@ -92,7 +123,6 @@ export const Layout: React.FC = () => {
   ];
 
   // 判断当前处于哪个分区
-  const aStockPaths = aStockItems.map(i => i.path);
   const sharedPaths = sharedItems.map(i => i.path);
   const isInShared = sharedPaths.includes(currentPath);
 
@@ -146,7 +176,7 @@ export const Layout: React.FC = () => {
             onClick={() => nav('/')}
             title="返回主页"
           >
-            <span className="text-white text-sm font-bold">F</span>
+            <span className="text-dark text-sm font-bold">F</span>
           </div>
           <div className="hidden group-hover/sidebar:flex items-center gap-3">
             <div
@@ -154,7 +184,7 @@ export const Layout: React.FC = () => {
               onClick={() => nav('/')}
               title="返回主页"
             >
-              <span className="text-white text-sm font-bold">F</span>
+              <span className="text-dark text-sm font-bold">F</span>
             </div>
             <div>
               <h1
@@ -184,7 +214,7 @@ export const Layout: React.FC = () => {
               title={item.label}
               className={`flex items-center justify-center group-hover/sidebar:justify-start px-0 group-hover/sidebar:px-4 py-2.5 rounded-xl transition-all duration-200 ${
                 isActive(item.path)
-                  ? 'bg-primary text-white shadow-glow-blue'
+                  ? 'bg-primary text-dark shadow-glow-blue'
                   : 'text-gray-400 hover:bg-dark-light hover:text-white'
               }`}
             >

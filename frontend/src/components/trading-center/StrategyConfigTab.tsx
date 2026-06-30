@@ -2,6 +2,7 @@
  * Tab 3: 策略配置 — 提取自 Automation.tsx
  */
 import React, { useState } from 'react';
+import { Card } from '../common/Card';
 import { useAutomationStore } from '../../stores/automationStore';
 import type { AutomationConfigItem } from '../../stores/automationStore';
 
@@ -25,7 +26,7 @@ const ConfigsSection: React.FC<{
   const displayed = showAll ? configs : configs.slice(0, 4);
 
   return (
-    <div className="bg-gradient-card rounded-xl border border-border shadow-card p-4 md:p-5">
+    <Card className="p-4 md:p-5">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-white font-medium">策略配置</h2>
         <button
@@ -86,7 +87,7 @@ const ConfigsSection: React.FC<{
           )}
         </div>
       )}
-    </div>
+    </Card>
   );
 };
 
@@ -102,7 +103,7 @@ const LogsSection: React.FC<{ logs: any[] }> = ({ logs }) => {
   };
 
   return (
-    <div className="bg-gradient-card rounded-xl border border-border shadow-card p-4 md:p-5">
+    <Card className="p-4 md:p-5">
       <h2 className="text-white font-medium mb-4">最近运行</h2>
 
       {recentLogs.length === 0 ? (
@@ -115,7 +116,7 @@ const LogsSection: React.FC<{ logs: any[] }> = ({ logs }) => {
             <div key={log.id || idx} className="flex items-center gap-3 py-2 border-b border-border/50 last:border-0">
               <div className="flex-shrink-0 relative">
                 <div className={`w-2 h-2 rounded-full ${
-                  log.status === 'completed' ? 'bg-green-500' : log.status === 'failed' ? 'bg-red-500' : 'bg-blue-500 animate-pulse'
+                  log.status === 'completed' ? 'bg-green-500' : log.status === 'failed' ? 'bg-red-500' : 'bg-accent-cyan animate-pulse'
                 }`} />
                 {idx < recentLogs.length - 1 && (
                   <div className="absolute top-3 left-[3px] w-px h-4 bg-border/50" />
@@ -137,7 +138,7 @@ const LogsSection: React.FC<{ logs: any[] }> = ({ logs }) => {
                   {log.orders_created > 0 && (
                     <span className="text-xs text-primary">{log.orders_created}单</span>
                   )}
-                  <span className={`text-xs ${log.status === 'completed' ? 'text-green-500' : log.status === 'failed' ? 'text-red-500' : 'text-blue-400'}`}>
+                  <span className={`text-xs ${log.status === 'completed' ? 'text-green-500' : log.status === 'failed' ? 'text-red-500' : 'text-accent-cyan'}`}>
                     {log.status === 'completed' ? '✓' : log.status === 'failed' ? '✗' : '⏳'}
                   </span>
                 </div>
@@ -146,7 +147,7 @@ const LogsSection: React.FC<{ logs: any[] }> = ({ logs }) => {
           ))}
         </div>
       )}
-    </div>
+    </Card>
   );
 };
 
@@ -240,7 +241,7 @@ export const ConfigModal: React.FC<{
                     }}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                       form.strategies.includes(s)
-                        ? 'bg-primary text-white'
+                        ? 'bg-primary text-dark'
                         : 'bg-dark text-gray-400 hover:text-white'
                     }`}
                   >
@@ -318,7 +319,7 @@ export const ConfigModal: React.FC<{
             <button
               onClick={handleSave}
               disabled={saving || !form.name}
-              className="flex-1 py-2.5 bg-primary hover:bg-primary-light text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              className="flex-1 py-2.5 bg-primary hover:bg-primary-light text-dark rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
             >
               {saving ? '保存中...' : '保存'}
             </button>

@@ -31,6 +31,7 @@ class StartRequest(BaseModel):
     max_iterations: int = Field(15, description="最大迭代轮数", ge=3, le=30)
     initial_capital: float = Field(1000000.0, description="初始资金")
     constraints: Optional[Dict[str, Any]] = Field(None, description="额外约束")
+    provider: Optional[str] = Field(None, description="AI 模型提供商: local/openai/claude")
 
 
 class IterateRequest(BaseModel):
@@ -64,6 +65,7 @@ async def start_alpha_lab(request: StartRequest):
                 max_iterations=request.max_iterations,
                 initial_capital=request.initial_capital,
                 constraints=request.constraints,
+                provider=request.provider,
             )
 
             # 同步生成器 → 异步流（thread + queue 桥接）
@@ -115,6 +117,13 @@ async def start_alpha_lab(request: StartRequest):
 
 
 # ==================== REST 端点 ====================
+
+@router.get("/providers", summary="获取可用 AI 模型提供商列表")
+async def list_providers():
+    """获取所有可用的 AI provider"""
+    providers = _engine.get_providers()
+    return {"providers": providers}
+
 
 @router.get("/sessions", summary="获取会话列表")
 async def list_sessions(status: Optional[str] = None):

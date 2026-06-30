@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { trackingService } from '../services/trackingService';
 import type { TrackingStats, StrategyMetrics, TrackedSignal, UpdateResult } from '../services/trackingService';
+import { Card } from '../components/common/Card';
 
 export const SignalTracking: React.FC = () => {
   const [stats, setStats] = useState<TrackingStats | null>(null);
@@ -114,13 +115,13 @@ export const SignalTracking: React.FC = () => {
   const strategies = strategyEntries.map(([name]) => name);
 
   const renderMetricCard = (label: string, value: string | number, subLabel?: string, color?: string) => (
-    <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+    <Card glow className="p-3 md:p-6">
       <div className="text-gray-400 text-xs md:text-sm mb-2">{label}</div>
       <div className={`text-2xl md:text-3xl font-bold ${color || 'text-primary-light'}`}>
         {value}
       </div>
       {subLabel && <div className="text-xs text-gray-500 mt-1">{subLabel}</div>}
-    </div>
+    </Card>
   );
 
   const overall = stats?.overall;
@@ -202,7 +203,7 @@ export const SignalTracking: React.FC = () => {
 
         {/* Strategy Comparison Table */}
         {strategyEntries.length > 0 && (
-          <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+          <Card className="p-3 md:p-6">
             <h2 className="text-lg md:text-xl font-semibold text-white mb-4">策略对比</h2>
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">
@@ -255,11 +256,11 @@ export const SignalTracking: React.FC = () => {
                 </tbody>
               </table>
             </div>
-          </div>
+          </Card>
         )}
 
         {/* Filters */}
-        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+        <Card className="p-3 md:p-6">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">策略</label>
@@ -317,16 +318,16 @@ export const SignalTracking: React.FC = () => {
               <button
                 onClick={handleSearch}
                 disabled={loading}
-                className="w-full px-4 py-2 bg-primary text-white rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all disabled:opacity-50"
+                className="w-full px-4 py-2 bg-primary text-dark rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all disabled:opacity-50"
               >
                 {loading ? '查询中...' : '查询'}
               </button>
             </div>
           </div>
-        </div>
+        </Card>
 
         {/* Signal Detail Table */}
-        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+        <Card className="p-3 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg md:text-xl font-semibold text-white">追踪明细</h2>
             {totalSignals > 0 && (
@@ -503,7 +504,7 @@ export const SignalTracking: React.FC = () => {
                       disabled={loading}
                       className={`px-3 py-1.5 text-sm rounded-lg border transition-all ${
                         p === page
-                          ? 'bg-primary text-white border-primary shadow-glow-blue'
+                          ? 'bg-primary text-dark border-primary shadow-glow-blue'
                           : 'bg-dark-light text-gray-300 border-border hover:bg-border'
                       } disabled:cursor-not-allowed`}
                     >
@@ -528,7 +529,7 @@ export const SignalTracking: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
+        </Card>
       </div>
     </div>
   );

@@ -75,27 +75,40 @@ async def run_backtest(request: BacktestRequest):
 
         # 获取交易记录
         trades = []
-        for trade in portfolio.trade_history:
+        for trade in portfolio.trades:
             trades.append({
-                "date": str(trade["date"]),
+                "date": str(trade["timestamp"]),
                 "action": trade["action"],
                 "symbol": trade["symbol"],
                 "quantity": trade["quantity"],
                 "price": trade["price"],
-                "value": trade["value"],
+                "value": trade["quantity"] * trade["price"],
                 "commission": trade["commission"]
             })
 
         # 获取权益曲线
         equity_curve = []
-        for snapshot in portfolio.value_history:
+        for snapshot in portfolio.equity_curve:
             equity_curve.append({
-                "date": str(snapshot["date"]),
+                "date": str(snapshot["timestamp"]),
                 "cash": snapshot["cash"],
-                "holdings_value": snapshot["holdings_value"],
+                "holdings_value": snapshot["market_value"],
                 "total_value": snapshot["total_value"],
-                "returns": snapshot["returns"]
+                "returns": snapshot["return_pct"]
             })
+
+        # max_drawdown 是字典，提取数值
+        dd = metrics.get("max_drawdown", {})
+        if isinstance(dd, dict):
+            max_dd = dd.get("max_drawdown", 0.0)
+            max_dd_pct = dd.get("max_drawdown_pct", 0.0)
+        else:
+            max_dd = dd
+            max_dd_pct = 0.0
+
+        # 胜负场数：复用 MetricsCalculator 的单一配对逻辑（见 calculate_all）
+        winning = metrics.get("winning_trades", 0)
+        losing = metrics.get("losing_trades", 0)
 
         return BacktestResponse(
             strategy_name=request.strategy_name,
@@ -103,16 +116,16 @@ async def run_backtest(request: BacktestRequest):
             period=f"{request.start_date} ~ {request.end_date}",
             initial_capital=request.initial_capital,
             final_value=metrics["final_value"],
-            total_return=metrics["total_return"],
-            total_return_pct=metrics["total_return_pct"],
+            total_return=metrics["final_value"] - request.initial_capital,
+            total_return_pct=metrics["total_return"],
             sharpe_ratio=metrics.get("sharpe_ratio", 0.0),
-            max_drawdown=metrics.get("max_drawdown", 0.0),
-            max_drawdown_pct=metrics.get("max_drawdown_pct", 0.0),
+            max_drawdown=max_dd,
+            max_drawdown_pct=max_dd_pct,
             win_rate=metrics.get("win_rate", 0.0),
             profit_factor=metrics.get("profit_factor", 0.0),
-            total_trades=metrics["total_trades"],
-            winning_trades=metrics.get("winning_trades", 0),
-            losing_trades=metrics.get("losing_trades", 0),
+            total_trades=metrics.get("num_trades", 0),
+            winning_trades=winning,
+            losing_trades=losing,
             equity_curve=equity_curve,
             trades=trades
         )

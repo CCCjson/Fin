@@ -5,6 +5,8 @@ import { ClosedTradesTab } from '../components/ClosedTradesTab';
 import { portfolioService } from '../services/portfolioService';
 import { reportService } from '../services/reportService';
 import { useRiskToastStore } from '../components/RiskToast';
+import { toast } from '../components/common/Toast';
+import { Card } from '../components/common/Card';
 import type {
   ManualTrade,
   PortfolioPosition,
@@ -86,6 +88,9 @@ export const Portfolio: React.FC = () => {
   const [totalCapital, setTotalCapital] = useState<number>(200000);
   const [editingCapital, setEditingCapital] = useState(false);
   const [capitalInput, setCapitalInput] = useState('');
+  const [maxPositionPct, setMaxPositionPct] = useState<number>(0.5); // 单股上限（集中度）
+  const [editingMaxPct, setEditingMaxPct] = useState(false);
+  const [maxPctInput, setMaxPctInput] = useState('');
 
   // --- import modal ---
   const [showImportModal, setShowImportModal] = useState(false);
@@ -111,6 +116,9 @@ export const Portfolio: React.FC = () => {
       const data = await portfolioService.getSettings();
       if (data.total_capital) {
         setTotalCapital(parseFloat(data.total_capital.value) || 200000);
+      }
+      if (data.max_position_pct) {
+        setMaxPositionPct(parseFloat(data.max_position_pct.value) || 0.5);
       }
     } catch (e) {
       console.error('Failed to load settings:', e);
@@ -189,7 +197,20 @@ export const Portfolio: React.FC = () => {
       setEditingCapital(false);
     } catch (e) {
       console.error('Failed to update total_capital:', e);
-      alert('保存失败，请重试');
+      toast.error('保存失败，请重试');
+    }
+  };
+
+  const handleSaveMaxPct = async () => {
+    const pct = parseFloat(maxPctInput); // 用户输入 %
+    if (isNaN(pct) || pct <= 0 || pct > 100) { toast.warning('单股上限请填 1~100'); return; }
+    try {
+      await portfolioService.updateSetting('max_position_pct', String(pct / 100));
+      setMaxPositionPct(pct / 100);
+      setEditingMaxPct(false);
+    } catch (e) {
+      console.error('Failed to update max_position_pct:', e);
+      toast.error('保存失败，请重试');
     }
   };
 
@@ -283,7 +304,7 @@ export const Portfolio: React.FC = () => {
       await refreshAll();
     } catch (e) {
       console.error('Submit trade failed:', e);
-      alert('提交失败，请重试');
+      toast.error('提交失败，请重试');
     } finally {
       setSubmitting(false);
     }
@@ -373,7 +394,7 @@ export const Portfolio: React.FC = () => {
       await refreshAll();
     } catch (e) {
       console.error('Import failed:', e);
-      alert('导入失败，请重试');
+      toast.error('导入失败，请重试');
     } finally {
       setImporting(false);
     }
@@ -395,11 +416,11 @@ export const Portfolio: React.FC = () => {
   // ==================== RENDER ====================
 
   const renderStatCard = (label: string, value: string | number, sub?: string, color?: string) => (
-    <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+    <Card glow className="p-3 md:p-6 transition-all">
       <div className="text-gray-400 text-xs md:text-sm mb-2">{label}</div>
       <div className={`text-xl md:text-2xl font-bold ${color || 'text-primary-light'}`}>{value}</div>
       {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
-    </div>
+    </Card>
   );
 
   return (
@@ -423,7 +444,7 @@ export const Portfolio: React.FC = () => {
             </button>
             <button
               onClick={() => openTradeModal()}
-              className="px-3 py-1.5 md:px-5 md:py-2 text-sm md:text-base bg-gradient-to-r from-primary to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 shadow-lg shadow-primary/25 transition-all flex items-center gap-2"
+              className="px-3 py-1.5 md:px-5 md:py-2 text-sm md:text-base bg-gradient-to-r from-primary to-primary-dark text-dark rounded-xl hover:from-primary hover:to-primary-dark shadow-lg shadow-primary/25 transition-all flex items-center gap-2"
             >
               <svg className="h-4 w-4 md:h-5 md:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -437,7 +458,7 @@ export const Portfolio: React.FC = () => {
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {/* 总资金卡片（可编辑） */}
-            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+            <Card glow className="p-3 md:p-6 transition-all">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-gray-400 text-xs md:text-sm">总资金</span>
                 <button
@@ -483,13 +504,39 @@ export const Portfolio: React.FC = () => {
                   : '0%'}
                 {' '}| 投入: {formatMoney(stats.total_cost_holding)}
               </div>
-            </div>
+              {/* 单股上限（集中度）—— 同时作用于建议与下单风控 */}
+              <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                <span>单股上限:</span>
+                {editingMaxPct ? (
+                  <>
+                    <input
+                      type="number" min={1} max={100} value={maxPctInput}
+                      onChange={e => setMaxPctInput(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSaveMaxPct()}
+                      className="w-14 px-1 py-0.5 bg-dark-light text-white rounded border border-primary outline-none"
+                      autoFocus
+                    />
+                    <span>%</span>
+                    <button onClick={handleSaveMaxPct} className="text-bull hover:text-green-400" title="保存">✓</button>
+                    <button onClick={() => setEditingMaxPct(false)} className="text-gray-500 hover:text-gray-300" title="取消">✕</button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => { setMaxPctInput(String(Math.round(maxPositionPct * 100))); setEditingMaxPct(true); }}
+                    className="text-primary-light hover:underline"
+                    title="修改单股上限（集中度）"
+                  >
+                    {Math.round(maxPositionPct * 100)}% ✎
+                  </button>
+                )}
+              </div>
+            </Card>
             {renderStatCard(
               '当前市值',
               formatMoney(stats.current_value),
               `持仓成本: ${formatMoney(stats.total_cost_holding)}`,
             )}
-            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+            <Card glow className="p-3 md:p-6 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-2">总盈亏</div>
               <div className={`text-xl md:text-2xl font-bold ${pnlColor(stats.total_pnl)}`}>
                 {stats.total_pnl >= 0 ? '+' : ''}{formatMoney(stats.total_pnl)}
@@ -500,7 +547,7 @@ export const Portfolio: React.FC = () => {
               <div className="text-xs text-gray-500 mt-1">
                 已实现: {formatMoney(stats.realized_pnl)} | 未实现: {formatMoney(stats.unrealized_pnl)}
               </div>
-            </div>
+            </Card>
             {renderStatCard(
               '胜率',
               stats.total_closed_trades > 0 ? `${stats.win_rate}%` : '-',
@@ -543,7 +590,7 @@ export const Portfolio: React.FC = () => {
 
         {/* Risk Overview */}
         {riskOverview && (
-          <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+          <Card className="p-3 md:p-6">
             <h2 className="text-lg md:text-xl font-semibold text-white mb-4 flex items-center gap-2">
               风控监控
               {riskAlerts.length === 0
@@ -639,9 +686,6 @@ export const Portfolio: React.FC = () => {
                         safe:        { dot: 'bg-emerald-500', label: '安全',  labelCls: 'text-emerald-400 bg-emerald-500/15' },
                       };
                       const c = levelCfg[pr.level] || levelCfg.safe;
-                      // 迷你刻度条
-                      const range = pr.take_profit_pct - pr.stop_loss_pct;
-                      const ratio = Math.max(0, Math.min(1, (pr.pnl_pct - pr.stop_loss_pct) / range));
 
                       return (
                         <tr key={pr.symbol} className="border-t border-border/50 hover:bg-dark-light/50 transition-colors">
@@ -752,11 +796,11 @@ export const Portfolio: React.FC = () => {
                 })}
               </div>
             </>)}
-          </div>
+          </Card>
         )}
 
         {/* Current Positions */}
-        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+        <Card className="p-3 md:p-6">
           <h2 className="text-lg md:text-xl font-semibold text-white mb-4">当前持仓</h2>
           {/* Desktop table */}
           <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
@@ -899,7 +943,7 @@ export const Portfolio: React.FC = () => {
               );})
             )}
           </div>
-        </div>
+        </Card>
 
         </>}
 
@@ -907,7 +951,7 @@ export const Portfolio: React.FC = () => {
         {activeTab === 'trades' && <>
 
         {/* Filters */}
-        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+        <Card className="p-3 md:p-6">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">股票代码</label>
@@ -951,16 +995,16 @@ export const Portfolio: React.FC = () => {
               <button
                 onClick={handleSearch}
                 disabled={loading}
-                className="w-full px-4 py-2 bg-primary text-white rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all disabled:opacity-50"
+                className="w-full px-4 py-2 bg-primary text-dark rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all disabled:opacity-50"
               >
                 {loading ? '查询中...' : '查询'}
               </button>
             </div>
           </div>
-        </div>
+        </Card>
 
         {/* Trade History Table */}
-        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+        <Card className="p-3 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg md:text-xl font-semibold text-white">交易记录</h2>
             {totalTrades > 0 && (
@@ -1132,7 +1176,7 @@ export const Portfolio: React.FC = () => {
                       disabled={loading}
                       className={`px-3 py-1.5 text-sm rounded-lg border transition-all ${
                         p === page
-                          ? 'bg-primary text-white border-primary shadow-glow-blue'
+                          ? 'bg-primary text-dark border-primary shadow-glow-blue'
                           : 'bg-dark-light text-gray-300 border-border hover:bg-border'
                       } disabled:cursor-not-allowed`}
                     >
@@ -1145,7 +1189,7 @@ export const Portfolio: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
+        </Card>
 
         </>}
 
@@ -1417,7 +1461,7 @@ export const Portfolio: React.FC = () => {
                   <button
                     onClick={goToStep3}
                     disabled={Object.values(selectedRecs).filter(Boolean).length === 0}
-                    className="flex-1 py-2 bg-primary text-white rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 py-2 bg-primary text-dark rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     下一步 ({Object.values(selectedRecs).filter(Boolean).length} 只已选)
                   </button>

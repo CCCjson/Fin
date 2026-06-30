@@ -391,11 +391,11 @@ class AutomationScheduler:
 
             from portfolio.calculator import PortfolioCalculator
             from trading_engine.risk.manager import RiskManager
-            from trading_engine.config import RISK_CONFIG
+            from trading_engine.risk.adapter import get_effective_risk_config
 
             calculator = PortfolioCalculator()
             positions = calculator.get_current_positions()
-            risk_manager = RiskManager(RISK_CONFIG)
+            risk_manager = RiskManager(get_effective_risk_config())
 
             orders_created = 0
             alerts = []

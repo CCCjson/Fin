@@ -15,7 +15,7 @@ from data_engine.storage.models import ManualTrade, AnalysisReport, StockInfo
 from portfolio.calculator import PortfolioCalculator
 from portfolio.closed_trade_service import ClosedTradeService
 from trading_engine.risk.manager import RiskManager
-from trading_engine.risk.adapter import build_broker_info
+from trading_engine.risk.adapter import build_broker_info, get_effective_risk_config
 from trading_engine.config import RISK_CONFIG
 
 # A股代码格式: 6位数字 + .SH 或 .SZ
@@ -145,7 +145,7 @@ async def create_trade(req: TradeCreate):
         risk_warnings = []
         try:
             broker_info = build_broker_info()
-            rm = RiskManager(config=RISK_CONFIG)
+            rm = RiskManager(config=get_effective_risk_config())
             _, results = rm.check_order(
                 symbol=trade.symbol,
                 action=trade.side,
@@ -303,7 +303,8 @@ async def get_stats():
 async def get_risk_monitor():
     """全面的风控监控：总体概览 + 每只持仓的风控指标"""
     try:
-        rm = RiskManager(config=RISK_CONFIG)
+        eff_cfg = get_effective_risk_config()
+        rm = RiskManager(config=eff_cfg)
         broker_info = build_broker_info()
         total_capital = broker_info["total_value"]
         market_value = broker_info["market_value"]
@@ -313,8 +314,8 @@ async def get_risk_monitor():
 
         stop_loss_pct = RISK_CONFIG.get("stop_loss_pct", 0.05)
         take_profit_pct = RISK_CONFIG.get("take_profit_pct", 0.15)
-        max_pos_pct = RISK_CONFIG.get("max_position_pct", 0.20)
-        max_total_pct = RISK_CONFIG.get("max_total_position_pct", 0.80)
+        max_pos_pct = eff_cfg.get("max_position_pct", 0.20)
+        max_total_pct = eff_cfg.get("max_total_position_pct", 0.80)
 
         # --- 总体概览 ---
         total_position_pct = (market_value / total_capital) if total_capital > 0 else 0

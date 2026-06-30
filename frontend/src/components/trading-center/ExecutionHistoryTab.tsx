@@ -2,6 +2,7 @@
  * Tab 4: 执行历史
  */
 import React, { useEffect, useState } from 'react';
+import { Card } from '../common/Card';
 import { useAutomationStore } from '../../stores/automationStore';
 
 const statusLabels: Record<string, { text: string; color: string }> = {
@@ -9,7 +10,7 @@ const statusLabels: Record<string, { text: string; color: string }> = {
   REJECTED: { text: '已拒绝', color: 'text-red-400 bg-red-500/10' },
   EXPIRED: { text: '已过期', color: 'text-yellow-400 bg-yellow-500/10' },
   FAILED: { text: '失败', color: 'text-red-400 bg-red-500/10' },
-  EXECUTING: { text: '执行中', color: 'text-blue-400 bg-blue-500/10' },
+  EXECUTING: { text: '执行中', color: 'text-accent-cyan bg-accent-cyan/10' },
 };
 
 const brokerLabels: Record<string, string> = {
@@ -58,7 +59,7 @@ export const ExecutionHistoryTab: React.FC = () => {
                 onClick={() => setStatusFilter(f.value)}
                 className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
                   statusFilter === f.value
-                    ? 'bg-primary text-white'
+                    ? 'bg-primary text-dark'
                     : 'bg-dark-card text-gray-400 hover:text-white'
                 }`}
               >
@@ -76,7 +77,7 @@ export const ExecutionHistoryTab: React.FC = () => {
                 onClick={() => setBrokerFilter(f.value)}
                 className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
                   brokerFilter === f.value
-                    ? 'bg-primary text-white'
+                    ? 'bg-primary text-dark'
                     : 'bg-dark-card text-gray-400 hover:text-white'
                 }`}
               >
@@ -88,7 +89,7 @@ export const ExecutionHistoryTab: React.FC = () => {
       </div>
 
       {/* 表格 */}
-      <div className="bg-gradient-card rounded-xl border border-border shadow-card overflow-hidden">
+      <Card className="overflow-hidden">
         {executionHistory.length === 0 ? (
           <div className="text-center py-16">
             <div className="text-4xl mb-3 opacity-40">📜</div>
@@ -161,7 +162,7 @@ export const ExecutionHistoryTab: React.FC = () => {
             </table>
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 };

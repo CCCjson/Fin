@@ -19,11 +19,6 @@ function getFirstDayOfWeek(year: number, month: number) {
   return new Date(year, month, 1).getDay(); // 0=周日
 }
 
-function isSameDay(d1: string, day: number, month: number, year: number) {
-  const d = new Date(d1);
-  return d.getFullYear() === year && d.getMonth() === month && d.getDate() === day;
-}
-
 function isToday(day: number, month: number, year: number) {
   const now = new Date();
   return now.getFullYear() === year && now.getMonth() === month && now.getDate() === day;
@@ -199,7 +194,7 @@ export const Reports: React.FC = () => {
   const [totalReports, setTotalReports] = useState(0);
 
   const [reportType, setReportType] = useState('daily');
-  const [model, setModel] = useState('gpt-4.1');
+  const [model, setModel] = useState('gpt-5.5');
 
   const [view, setView] = useState<View>('list');
   const [generating, setGenerating] = useState(false);
@@ -501,15 +496,13 @@ export const Reports: React.FC = () => {
                     className="w-full px-3 py-2 bg-dark text-white rounded-xl border border-border
                       focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all text-sm"
                   >
-                    <optgroup label="推荐">
-                      <option value="gpt-4.1">GPT-4.1 ~¥1.0/份</option>
-                      <option value="gpt-4.1-mini">GPT-4.1 Mini ~¥0.2/份</option>
-                      <option value="gpt-4.1-nano">GPT-4.1 Nano ~¥0.05/份</option>
+                    <optgroup label="推荐（投资建议用最强）">
+                      <option value="gpt-5.5">GPT-5.5 ~¥3/份（最强）</option>
+                      <option value="gpt-5.4">GPT-5.4 ~¥1.5/份</option>
                     </optgroup>
-                    <optgroup label="其他">
-                      <option value="gpt-4o">GPT-4o ~¥1.5/份</option>
-                      <option value="gpt-4o-mini">GPT-4o Mini ~¥0.1/份</option>
-                      <option value="o3-mini">o3-mini ~¥0.7/份</option>
+                    <optgroup label="省钱">
+                      <option value="gpt-5.4-mini">GPT-5.4 Mini ~¥0.2/份</option>
+                      <option value="gpt-5.4-nano">GPT-5.4 Nano ~¥0.05/份</option>
                     </optgroup>
                   </select>
                 </div>

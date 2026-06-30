@@ -11,7 +11,7 @@ const gradients: Record<string, string> = {
   return: 'from-emerald-500/10 to-emerald-500/0',
   'return-negative': 'from-red-500/10 to-red-500/0',
   risk: 'from-red-500/10 to-red-500/0',
-  quality: 'from-blue-500/10 to-blue-500/0',
+  quality: 'from-primary/10 to-primary/0',
   neutral: 'from-gray-500/5 to-gray-500/0',
 };
 

@@ -57,10 +57,16 @@ class SessionState:
 class SessionManager:
     """会话管理器"""
 
-    # 模型费率（每 1K token 平均）
+    # 模型费率（每 1K token 平均，(输入价+输出价)/2 / 1000）
     COST_RATES = {
-        "gpt-4o-mini": 0.00038,  # ~$0.15/1M in + $0.60/1M out 平均
-        "gpt-4o": 0.00625,       # ~$2.5/1M in + $10/1M out 平均
+        # GPT-5 系列（2026 在售）
+        "gpt-5.5": 0.0175,         # $5/1M in + $30/1M out
+        "gpt-5.4": 0.00875,        # $2.5/1M in + $15/1M out
+        "gpt-5.4-mini": 0.001,     # 估算（官方未公布精确价，介于 nano 与 5.4 之间）
+        "gpt-5.4-nano": 0.000725,  # $0.20/1M in + $1.25/1M out
+        # 旧模型（保留兼容历史记录）
+        "gpt-4o-mini": 0.00038,    # ~$0.15/1M in + $0.60/1M out 平均
+        "gpt-4o": 0.00625,         # ~$2.5/1M in + $10/1M out 平均
     }
 
     def __init__(self):

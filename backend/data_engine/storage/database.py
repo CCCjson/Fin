@@ -172,6 +172,8 @@ def init_db():
                 "WHERE exchange IS NULL AND (symbol LIKE '4%' OR symbol LIKE '8%')"
             ))
 
+    # 自动迁移：确保 financial_data 表存在（新增表会由 create_all 自动创建）
+
     print("✓ 数据库初始化完成")
 
 

@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { IndicatorPanel } from '../components/charts/IndicatorPanel';
+import { Card } from '../components/common/Card';
 import { marketService } from '../services/marketService';
 import type { StockData } from '../types';
 import type { IndicatorConfig } from '../types/chart';
@@ -152,7 +153,7 @@ export const Market: React.FC = () => {
               <button
                 onClick={() => loadData(true)}
                 disabled={loading}
-                className="w-full px-4 py-2 bg-primary text-white rounded-xl hover:bg-primary-dark shadow-glow-blue transition disabled:opacity-50"
+                className="w-full px-4 py-2 bg-primary text-dark rounded-xl hover:bg-primary-dark shadow-glow-blue transition disabled:opacity-50"
               >
                 {loading ? '加载中...' : '查询'}
               </button>
@@ -163,32 +164,32 @@ export const Market: React.FC = () => {
         {/* 最新数据 */}
         {latestData && (
           <div className="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-4">
-            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-blue transition-all">
+            <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">最新价</div>
               <div className="text-lg md:text-2xl font-bold text-primary-light">¥{latestData.close.toFixed(2)}</div>
-            </div>
-            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-blue transition-all">
+            </Card>
+            <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">涨跌幅</div>
               <div className={`text-lg md:text-xl font-semibold ${priceChange >= 0 ? 'text-bull' : 'text-bear'}`}>
                 {priceChange >= 0 ? '+' : ''}{priceChangePct.toFixed(2)}%
               </div>
-            </div>
-            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-blue transition-all">
+            </Card>
+            <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">开盘价</div>
               <div className="text-lg md:text-xl font-semibold text-white">¥{latestData.open.toFixed(2)}</div>
-            </div>
-            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-green transition-all">
+            </Card>
+            <Card className="p-3 md:p-4 hover:shadow-glow-green transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">最高价</div>
               <div className="text-lg md:text-xl font-semibold text-bull">¥{latestData.high.toFixed(2)}</div>
-            </div>
-            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-red transition-all">
+            </Card>
+            <Card className="p-3 md:p-4 hover:shadow-glow-red transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">最低价</div>
               <div className="text-lg md:text-xl font-semibold text-bear">¥{latestData.low.toFixed(2)}</div>
-            </div>
-            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl hover:shadow-glow-blue transition-all">
+            </Card>
+            <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">成交量</div>
               <div className="text-lg md:text-xl font-semibold text-accent-cyan">{(latestData.volume / 10000).toFixed(2)}万</div>
-            </div>
+            </Card>
           </div>
         )}
 
@@ -226,7 +227,7 @@ export const Market: React.FC = () => {
                   <span className="text-red-400 text-sm text-center px-4">{error}</span>
                   <button
                     onClick={() => loadData(true)}
-                    className="px-4 py-1.5 bg-primary text-white rounded-lg hover:bg-primary-dark transition text-sm"
+                    className="px-4 py-1.5 bg-primary text-dark rounded-lg hover:bg-primary-dark transition text-sm"
                   >
                     重试
                   </button>

@@ -97,47 +97,17 @@ class AShareFetcher(BaseFetcher):
             raise
 
     def fetch_realtime(self, symbols: List[str]) -> List[Dict]:
-        """获取实时行情"""
-        try:
-            import akshare as ak
+        """获取实时行情（个股+指数）。
 
-            result = []
-
-            # 获取实时行情
-            df = ak.stock_zh_a_spot_em()
-
-            for symbol in symbols:
-                symbol_code = symbol[:6]
-
-                # 查找对应股票
-                stock = df[df["代码"] == symbol_code]
-
-                if stock.empty:
-                    logger.warning(f"未找到 {symbol} 的实时行情")
-                    continue
-
-                stock = stock.iloc[0]
-
-                result.append({
-                    "symbol": symbol,
-                    "name": stock["名称"],
-                    "price": float(stock["最新价"]),
-                    "change": float(stock["涨跌额"]),
-                    "change_percent": float(stock["涨跌幅"]),
-                    "volume": int(stock["成交量"]),
-                    "amount": float(stock["成交额"]),
-                    "open": float(stock["今开"]),
-                    "high": float(stock["最高"]),
-                    "low": float(stock["最低"]),
-                    "timestamp": datetime.now().isoformat()
-                })
-
-            logger.info(f"成功获取 {len(result)}/{len(symbols)} 只股票的实时行情")
-            return result
-
-        except Exception as e:
-            logger.error(f"获取实时行情失败: {e}")
-            raise
+        委托给 realtime.fetch_quotes_by_symbols：走东财 ulist.np 批量接口 +
+        快代理 IP 池 + 失败切 IP 重试（trust_env=False 绕开系统 Clash）。
+        secid 的「市场.代码」前缀天然区分沪深，000001.SH(上证指数) 与
+        000001.SZ(平安银行) 不再混淆。
+        """
+        from data_engine.fetchers.realtime import fetch_quotes_by_symbols
+        result = fetch_quotes_by_symbols(symbols)
+        logger.info(f"成功获取 {len(result)}/{len(symbols)} 只标的的实时行情")
+        return result
 
     def validate_symbol(self, symbol: str) -> bool:
         """验证股票代码"""

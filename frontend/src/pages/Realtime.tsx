@@ -232,7 +232,7 @@ export const Realtime: React.FC = () => {
           ) : (
             <button
               onClick={fetchData}
-              className="px-3 py-1.5 md:px-5 md:py-2 bg-primary hover:bg-primary-dark text-white rounded-lg font-medium transition-colors text-sm md:text-base"
+              className="px-3 py-1.5 md:px-5 md:py-2 bg-primary hover:bg-primary-dark text-dark rounded-lg font-medium transition-colors text-sm md:text-base"
             >
               获取行情
             </button>
@@ -252,7 +252,7 @@ export const Realtime: React.FC = () => {
           </div>
           <div className="w-full bg-dark rounded-full h-2 md:h-2.5 overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-primary to-blue-400 rounded-full transition-all duration-300 ease-out"
+              className="h-full bg-gradient-to-r from-primary to-accent-cyan rounded-full transition-all duration-300 ease-out"
               style={{ width: `${progress.percent}%` }}
             />
           </div>
@@ -330,7 +330,7 @@ export const Realtime: React.FC = () => {
                   onClick={() => { setBoard(opt.value); setCurrentPage(1); }}
                   className={`px-2 md:px-3 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap ${
                     board === opt.value
-                      ? 'bg-primary text-white'
+                      ? 'bg-primary text-dark'
                       : 'text-gray-400 hover:bg-dark-light hover:text-white'
                   }`}
                 >
@@ -495,7 +495,7 @@ export const Realtime: React.FC = () => {
                       onClick={() => setCurrentPage(page)}
                       className={`px-2.5 py-1 text-xs rounded ${
                         page === currentPage
-                          ? 'bg-primary text-white'
+                          ? 'bg-primary text-dark'
                           : 'bg-dark border border-border text-gray-400 hover:text-white'
                       }`}
                     >

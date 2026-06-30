@@ -11,11 +11,24 @@ from pathlib import Path
 # 添加项目根目录到sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# 在任何引擎/transformers import 之前同步代理 env（direct 模式清掉残留死代理，
+# 让 HF 模型加载/出网请求在 Clash 关时也能直连）。
+from net_proxy import apply_proxy_env
+apply_proxy_env()
+
 from data_engine import init_db
-from api.routes import data, analysis, backtest, trading, monitor, history, signal_generation, realtime, report, tracking, portfolio, review, advisor, orderbook, backtest_cpp, pipeline, prediction, news, auth, automation, ws, alpha_lab, fine_tune, stock_pools, walk_forward
+from api.routes import data, analysis, backtest, trading, monitor, history, signal_generation, realtime, report, tracking, portfolio, review, advisor, orderbook, backtest_cpp, pipeline, prediction, news, auth, automation, ws, alpha_lab, fine_tune, stock_pools, walk_forward, cockpit, watchlist, screener, agent, knowledge
 
 # 初始化数据库
 init_db()
+
+# 初始化外置金融大脑知识库（独立 knowledge.db + vec0 向量表，幂等）
+try:
+    from knowledge_engine.database import init_knowledge_db
+    init_knowledge_db()
+except Exception as _e:  # noqa: BLE001 — 知识库初始化失败不应阻断主服务启动
+    from loguru import logger as _logger
+    _logger.warning(f"知识库 knowledge_engine 初始化失败（不影响主服务）：{_e}")
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -58,7 +71,12 @@ app.include_router(alpha_lab.router)
 app.include_router(fine_tune.router)
 app.include_router(stock_pools.router)
 app.include_router(walk_forward.router)
+app.include_router(cockpit.router)
+app.include_router(watchlist.router)
+app.include_router(screener.router)
+app.include_router(knowledge.router)
 app.include_router(ws.router)
+app.include_router(agent.router)
 
 
 # 全局异常处理
@@ -113,10 +131,40 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"pytdx 预热失败（不影响其他功能）: {e}")
 
+    # 启动订单簿 WebSocket 后台推送任务（保存句柄，shutdown 时取消）
+    import asyncio
+    from api.routes.orderbook import start_bg_task
+    start_bg_task()
+    logger.info("订单簿 WebSocket 后台推送任务已启动")
+
+    # 启动价格预警常驻监控任务（开机自启，盘中自动检查）
+    from automation.price_alert_monitor import price_alert_loop
+    asyncio.create_task(price_alert_loop())
+    logger.info("价格预警监控任务已启动")
+
+    # 知识库定时摄入论文（双重门控：默认关，需显式开+配 query；只摄入不回测）
+    try:
+        from knowledge_engine.scheduler import knowledge_scheduler
+        knowledge_scheduler.start()
+    except Exception as e:
+        logger.warning(f"知识库定时摄入启动失败（不影响主服务）: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """应用关闭事件"""
+    # 先取消订单簿后台推送 task，再关 httpx 客户端
+    # （顺序很重要：task 若仍在跑，其 get_client() 会重建一个永不关闭的客户端）
+    from api.routes.orderbook import stop_bg_task, close_client
+    await stop_bg_task()
+    await close_client()
+
+    try:
+        from knowledge_engine.scheduler import knowledge_scheduler
+        knowledge_scheduler.stop()
+    except Exception:
+        pass
+
     logger.info("量化交易系统API关闭")
 
 

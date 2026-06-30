@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Card } from '../common/Card';
 import { StockSymbolInput } from '../common/StockSymbolInput';
 import { ComboStrategyBuilder } from './ComboStrategyBuilder';
 import type { SubStrategy } from './ComboStrategyBuilder';
@@ -233,7 +234,7 @@ export const CppBacktestForm: React.FC<CppBacktestFormProps> = ({
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   return (
-    <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+    <Card className="p-3 md:p-6">
       <h2 className="text-base md:text-lg font-semibold text-white mb-1">配置回测</h2>
       <p className="text-gray-500 text-xs mb-4">
         C++ 高性能引擎 | 支持 {STRATEGIES.length} 种策略 | 结果自动保存
@@ -365,12 +366,12 @@ export const CppBacktestForm: React.FC<CppBacktestFormProps> = ({
       )}
 
       <button onClick={onSubmit} disabled={loading}
-        className="mt-4 w-full py-3 bg-primary hover:bg-primary/80 text-white rounded-xl font-semibold disabled:opacity-50 transition-all">
+        className="mt-4 w-full py-3 bg-primary hover:bg-primary/80 text-dark rounded-xl font-semibold disabled:opacity-50 transition-all">
         {loading ? '回测运行中...' : '启动 C++ 回测'}
       </button>
 
       {error && <p className="text-red-400 text-sm mt-2 bg-red-400/10 px-3 py-2 rounded">{error}</p>}
-    </div>
+    </Card>
   );
 };
 

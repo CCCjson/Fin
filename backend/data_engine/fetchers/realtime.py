@@ -11,6 +11,7 @@ import random
 import threading
 import time
 from concurrent.futures import as_completed
+from datetime import datetime
 from typing import Optional, Dict, List, Any, Tuple
 
 import requests
@@ -26,7 +27,7 @@ FIELD_MAP = {
     "f6": "amount",         # 成交额
     "f7": "amplitude",      # 振幅
     "f8": "turnover",       # 换手率
-    "f9": "pe_ratio",       # 市盈率
+    "f9": "pe_ratio",       # 市盈率（静态）
     "f12": "code",          # 股票代码
     "f13": "market_id",     # 市场ID (0=深圳, 1=上海)
     "f14": "name",          # 股票名称
@@ -34,6 +35,10 @@ FIELD_MAP = {
     "f16": "low",           # 最低
     "f17": "open",          # 今开
     "f18": "prev_close",    # 昨收
+    "f20": "total_mv",      # 总市值
+    "f21": "circ_mv",       # 流通市值
+    "f23": "pb_ratio",      # 市净率
+    "f115": "pe_ttm",       # 市盈率(TTM)
 }
 
 FIELDS = ",".join(FIELD_MAP.keys())
@@ -407,6 +412,109 @@ def fetch_index_realtime(
     except requests.RequestException as e:
         logger.error(f"指数行情请求异常: {e}")
         return []
+
+
+def _symbol_to_secid(symbol: str) -> Optional[str]:
+    """A股/指数 symbol → 东财 secid（市场.代码）。1=沪 0=深；非沪深返回 None。"""
+    if "." not in symbol:
+        return None
+    code, suffix = symbol.split(".", 1)
+    suffix = suffix.upper()
+    if suffix == "SH":
+        return f"1.{code}"
+    if suffix == "SZ":
+        return f"0.{code}"
+    return None
+
+
+def _looks_like_index(symbol: str) -> bool:
+    """沪市 000xxx.SH / 深市 399xxx.SZ 视为指数（仅用于打 is_index 标记）。"""
+    code = symbol[:6]
+    return (symbol.endswith(".SH") and code.startswith("000")) or \
+           (symbol.endswith(".SZ") and code.startswith("399"))
+
+
+def fetch_quotes_by_symbols(symbols: List[str], max_rounds: int = 3) -> List[Dict[str, Any]]:
+    """按 symbols 批量取 A股/指数实时行情（东财 ulist.np，走快代理 + 失败切 IP 重试）。
+
+    secid 的「市场.代码」前缀天然区分沪深：个股与指数（含 000001.SH 上证指数
+    vs 000001.SZ 平安银行）一次取回、无歧义。非沪深标的（HK/US）忽略，交由各自
+    fetcher 处理。返回与 AShareFetcher.fetch_realtime 一致的 dict 形状。
+    """
+    secid_map: Dict[str, str] = {}  # secid -> 原始 symbol
+    for s in symbols:
+        sid = _symbol_to_secid(s)
+        if sid:
+            secid_map[sid] = s
+    if not secid_map:
+        return []
+
+    url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+    params = {
+        "fltt": 2,
+        "invt": 2,
+        "fields": "f2,f3,f4,f5,f6,f12,f13,f14,f15,f16,f17,f18",
+        "secids": ",".join(secid_map.keys()),
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        "_": str(int(time.time() * 1000)),
+    }
+
+    proxy_mgr = _get_proxy_manager()
+
+    def _num(v, cast=float, default=None):
+        if v is None or v == "-":
+            return default
+        try:
+            return cast(v)
+        except (TypeError, ValueError):
+            return default
+
+    for attempt in range(max_rounds):
+        proxies = None
+        if proxy_mgr:
+            p = proxy_mgr.fetch_one_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
+            if p:
+                proxies = p.to_requests_proxies()
+                logger.info(f"实时行情使用快代理: {p.ip}:{p.port}（第 {attempt + 1} 轮）")
+
+        session = _make_session(proxies)
+        try:
+            resp = session.get(url, params=params, headers=_build_headers(), timeout=8)
+            data = resp.json()
+            if data.get("rc") != 0 or not data.get("data"):
+                logger.warning(f"批量行情 rc={data.get('rc')}（第 {attempt + 1} 轮），换 IP 重试")
+                continue
+
+            out: List[Dict[str, Any]] = []
+            for it in data["data"].get("diff", []):
+                code = it.get("f12", "")
+                mid = it.get("f13")
+                symbol = f"{code}.SH" if mid == 1 else f"{code}.SZ"
+                out.append({
+                    "symbol": symbol,
+                    "name": it.get("f14", ""),
+                    "price": _num(it.get("f2")),
+                    "change": _num(it.get("f4"), float, 0),
+                    "change_percent": _num(it.get("f3"), float, 0),
+                    "volume": _num(it.get("f5"), int, 0),
+                    "amount": _num(it.get("f6"), float, 0),
+                    "open": _num(it.get("f17"), float, 0),
+                    "high": _num(it.get("f15"), float, 0),
+                    "low": _num(it.get("f16"), float, 0),
+                    "timestamp": datetime.now().isoformat(),
+                    "is_index": _looks_like_index(symbol),
+                })
+            logger.info(f"批量实时行情成功获取 {len(out)}/{len(secid_map)} 只标的")
+            return out
+
+        except requests.RequestException as e:
+            logger.warning(f"批量行情请求异常（第 {attempt + 1} 轮）: {type(e).__name__}，换 IP 重试")
+            continue
+        finally:
+            session.close()
+
+    logger.error(f"批量实时行情全部 {max_rounds} 轮均失败")
+    return []
 
 
 def _fetch_nasdaq() -> Optional[Dict[str, Any]]:

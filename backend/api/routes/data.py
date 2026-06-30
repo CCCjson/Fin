@@ -223,7 +223,8 @@ async def search_stocks(
 
 # 默认设置（启动时自动写入）
 _DEFAULT_SETTINGS = {
-    "total_capital": {"value": "200000", "description": "总资金（元），用于计算仓位占比"},
+    "total_capital": {"value": "5000", "description": "总资金（元），用于计算仓位占比与建议买入金额/股数"},
+    "max_position_pct": {"value": "0.5", "description": "单股最大仓位占比（集中度）：0.2 分散 / 0.5 集中 / 1.0 all-in"},
 }
 
 

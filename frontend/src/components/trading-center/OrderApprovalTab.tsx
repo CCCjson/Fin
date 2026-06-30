@@ -2,6 +2,7 @@
  * Tab 1: 订单审批 — 提取自 Automation.tsx
  */
 import React, { useState, useCallback } from 'react';
+import { Card } from '../common/Card';
 import { useAutomationStore } from '../../stores/automationStore';
 import { PendingOrderCard } from '../automation/PendingOrderCard';
 
@@ -65,9 +66,10 @@ const StatsRow: React.FC<{ stats: any; pendingCount: number }> = ({ stats, pendi
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
       {cards.map((c) => (
-        <div
+        <Card
           key={c.label}
-          className="bg-gradient-card p-3 md:p-5 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all duration-300"
+          glow
+          className="p-3 md:p-5 transition-all duration-300"
         >
           <div className="flex items-center gap-2 mb-2">
             {c.icon}
@@ -79,7 +81,7 @@ const StatsRow: React.FC<{ stats: any; pendingCount: number }> = ({ stats, pendi
               <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             )}
           </div>
-        </div>
+        </Card>
       ))}
     </div>
   );
@@ -130,7 +132,7 @@ export const OrderApprovalTab: React.FC = () => {
     <div className="space-y-4">
       <StatsRow stats={stats} pendingCount={pendingCount} />
 
-      <div className="bg-gradient-card rounded-xl border border-border shadow-card p-4 md:p-5">
+      <Card className="p-4 md:p-5">
         {/* 标题栏 */}
         <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
           <div className="flex items-center gap-3">
@@ -179,7 +181,7 @@ export const OrderApprovalTab: React.FC = () => {
             ))}
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 };

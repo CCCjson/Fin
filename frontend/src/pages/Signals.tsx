@@ -4,6 +4,7 @@ import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { signalService } from '../services/signalService';
 import type { ScanProgressEvent, DataFreshness, TodayStatus, BackfillProgressEvent } from '../services/signalService';
 import type { Signal, SignalStatistics } from '../types';
+import { Card } from '../components/common/Card';
 
 interface ScanProgress {
   current: number;
@@ -46,7 +47,7 @@ export const Signals: React.FC = () => {
   const [freshness, setFreshness] = useState<DataFreshness | null>(null);
   const [showStaleAlert, setShowStaleAlert] = useState(false);
   const [checkingFreshness, setCheckingFreshness] = useState(false);
-  const [todayStatus, setTodayStatus] = useState<TodayStatus | null>(null);
+  const [, setTodayStatus] = useState<TodayStatus | null>(null);
   const [backfilling, setBackfilling] = useState(false);
   const [backfillProgress, setBackfillProgress] = useState<BackfillProgress | null>(null);
   const [backfillResult, setBackfillResult] = useState<string | null>(null);
@@ -390,7 +391,7 @@ export const Signals: React.FC = () => {
 
         {/* 扫描进度条 */}
         {scanning && scanProgress && scanProgress.total > 0 && (
-          <div className="bg-gradient-card border border-border shadow-card p-5 rounded-xl space-y-3">
+          <Card className="p-5 space-y-3">
             <div className="flex items-center justify-between text-sm">
               <span className="text-gray-300">
                 正在扫描: <span className="text-primary-light font-medium">{scanProgress.symbol}</span>
@@ -426,7 +427,7 @@ export const Signals: React.FC = () => {
                 </span>
               )}
             </div>
-          </div>
+          </Card>
         )}
 
         {/* 信号回补进度条 */}
@@ -468,7 +469,7 @@ export const Signals: React.FC = () => {
             backfillResult.includes('失败') || backfillResult.includes('取消')
               ? 'bg-red-500/10 border-red-500/30 text-red-400'
               : backfillResult.includes('无需')
-              ? 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+              ? 'bg-primary/10 border-primary/40 text-primary-light'
               : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
           }`}>
             {backfillResult}
@@ -522,7 +523,7 @@ export const Signals: React.FC = () => {
             scanResult.includes('失败') || scanResult.includes('取消')
               ? 'bg-red-500/10 border-red-500/30 text-red-400'
               : scanResult.includes('无需重复')
-              ? 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+              ? 'bg-primary/10 border-primary/40 text-primary-light'
               : 'bg-green-500/10 border-green-500/30 text-green-400'
           }`}>
             {scanResult}
@@ -532,35 +533,35 @@ export const Signals: React.FC = () => {
         {/* 统计卡片 */}
         {statistics && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
-            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all">
+            <Card glow className="p-3 md:p-6">
               <div className="text-gray-400 text-xs md:text-sm mb-1 md:mb-2">总信号数</div>
               <div className="text-xl md:text-3xl font-bold text-primary-light">
                 {statistics.total_signals || 0}
               </div>
-            </div>
-            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-green transition-all">
+            </Card>
+            <Card className="p-3 md:p-6 hover:shadow-glow-green transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1 md:mb-2">买入信号</div>
               <div className="text-xl md:text-3xl font-bold text-bull">
                 {statistics.buy_signals || 0}
               </div>
-            </div>
-            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-red transition-all">
+            </Card>
+            <Card className="p-3 md:p-6 hover:shadow-glow-red transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1 md:mb-2">卖出信号</div>
               <div className="text-xl md:text-3xl font-bold text-bear">
                 {statistics.sell_signals || 0}
               </div>
-            </div>
-            <div className="bg-gradient-card p-3 md:p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all col-span-2 md:col-span-1">
+            </Card>
+            <Card glow className="p-3 md:p-6 col-span-2 md:col-span-1">
               <div className="text-gray-400 text-xs md:text-sm mb-1 md:mb-2">平均强度</div>
               <div className="text-xl md:text-3xl font-bold text-accent-cyan">
                 {statistics.avg_strength ? (statistics.avg_strength * 100).toFixed(1) : 0}%
               </div>
-            </div>
+            </Card>
           </div>
         )}
 
         {/* 筛选表单 */}
-        <div className="bg-gradient-card border border-border shadow-card p-4 md:p-6 rounded-xl">
+        <Card className="p-4 md:p-6">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -612,16 +613,16 @@ export const Signals: React.FC = () => {
               <button
                 onClick={handleSearch}
                 disabled={loading}
-                className="w-full px-4 py-2 bg-primary text-white rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all disabled:opacity-50"
+                className="w-full px-4 py-2 bg-primary text-dark rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all disabled:opacity-50"
               >
                 {loading ? '查询中...' : '查询'}
               </button>
             </div>
           </div>
-        </div>
+        </Card>
 
         {/* 信号列表 */}
-        <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+        <Card className="p-3 md:p-6">
           <div className="flex items-center justify-between mb-3 md:mb-4">
             <h2 className="text-lg md:text-xl font-semibold text-white">信号历史</h2>
             {totalSignals > 0 && (
@@ -790,7 +791,7 @@ export const Signals: React.FC = () => {
                       disabled={loading}
                       className={`px-3 py-1.5 text-sm rounded-lg border transition-all ${
                         p === page
-                          ? 'bg-primary text-white border-primary shadow-glow-blue'
+                          ? 'bg-primary text-dark border-primary shadow-glow-blue'
                           : 'bg-dark-light text-gray-300 border-border hover:bg-border'
                       } disabled:cursor-not-allowed`}
                     >
@@ -836,7 +837,7 @@ export const Signals: React.FC = () => {
               </button>
             </div>
           )}
-        </div>
+        </Card>
       </div>
     </div>
   );

@@ -11,7 +11,7 @@ import pandas as pd
 from loguru import logger
 
 from alpha_lab.sandbox import Sandbox, _ndjson
-from alpha_lab.code_generator import CodeGenerator
+from alpha_lab.code_generator import CodeGenerator, _get_all_provider_configs
 from alpha_lab.evaluator import Evaluator, EvaluationResult
 from alpha_lab.session_manager import SessionManager, SessionState, IterationRecord
 from alpha_lab.strategy_store import StrategyStore
@@ -33,6 +33,21 @@ class AlphaLabEngine:
         self.evaluator = Evaluator()
         self.strategy_store = StrategyStore()
 
+    @staticmethod
+    def get_providers() -> List[Dict]:
+        """获取所有可用的 AI provider 列表"""
+        configs = _get_all_provider_configs()
+        result = []
+        for key, cfg in configs.items():
+            result.append({
+                "id": key,
+                "label": cfg.get("label", key),
+                "available": cfg.get("available", False),
+                "explore_model": cfg.get("explore_model", cfg.get("model", "")),
+                "refine_model": cfg.get("refine_model", cfg.get("model", "")),
+            })
+        return result
+
     def start_session(
         self,
         target_symbols: List[str],
@@ -42,10 +57,19 @@ class AlphaLabEngine:
         max_iterations: int = 15,
         initial_capital: float = 1000000.0,
         constraints: Optional[Dict] = None,
+        provider: Optional[str] = None,
     ) -> Generator[str, None, None]:
         """
         启动新 Alpha Lab 会话（同步生成器，yield NDJSON 行）
         """
+        # 按本次请求的 provider 重建 code_generator。
+        # _engine 是模块单例，必须每次都反映本次请求：传 provider 用之，
+        # 不传则复位为 .env 默认，避免上一次的 provider 残留串到下一次请求（误走付费后端）。
+        if provider:
+            self.code_generator = CodeGenerator(provider=provider)
+            logger.info(f"Alpha Lab 切换 provider: {provider}")
+        else:
+            self.code_generator = CodeGenerator()  # 复位为 .env ALPHA_LAB_PROVIDER 默认
         # 1. 创建会话
         session = self.session_manager.create(
             target_symbols=target_symbols,

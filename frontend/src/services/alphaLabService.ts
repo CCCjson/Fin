@@ -61,6 +61,15 @@ export interface StartParams {
   max_iterations?: number;
   initial_capital?: number;
   constraints?: Record<string, unknown>;
+  provider?: string;
+}
+
+export interface ProviderInfo {
+  id: string;
+  label: string;
+  available: boolean;
+  explore_model: string;
+  refine_model: string;
 }
 
 export interface SessionSummary {
@@ -99,6 +108,13 @@ export interface StrategySummary {
 // ==================== API 方法 ====================
 
 export const alphaLabService = {
+  /**
+   * 获取可用 AI 模型提供商列表
+   */
+  getProviders: async (): Promise<{ providers: ProviderInfo[] }> => {
+    return api.get('/alpha-lab/providers') as any;
+  },
+
   /**
    * 启动 Alpha Lab 会话（NDJSON 流式）
    */

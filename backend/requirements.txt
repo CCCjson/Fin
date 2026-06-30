@@ -40,6 +40,15 @@ finnhub-python>=2.4.0
 transformers>=4.40.0
 torch>=2.0.0
 
+# 外置金融大脑 knowledge_engine（RAG 向量检索 + 本地 embedding + 联网摄入）
+sqlite-vec>=0.1.9            # vec0 虚拟表 + serialize_float32（向量存进 knowledge.db）
+sentence-transformers>=5.6.0 # 本地 embedding 模型 bge-m3 加载（零 API 成本）
+trafilatura>=2.1.0          # 网页正文去噪提取（read_url HTML 路径）
+PyMuPDF>=1.27.2             # PDF 正文抽取（read_url PDF 路径，import 名 fitz）
+curl_cffi>=0.13.0          # DDG 搜索的 TLS 指纹伪装
+beautifulsoup4>=4.12.0      # HTML 解析（DDG 结果 + read_url 回退）
+lxml>=5.0.0                 # bs4 解析器后端
+
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.3

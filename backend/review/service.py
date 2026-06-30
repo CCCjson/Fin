@@ -19,6 +19,7 @@ from data_engine.storage.models import (
     StockInfo, RealtimeSnapshot, PendingOrder,
 )
 from portfolio.calculator import PortfolioCalculator
+from llm_config import get_cheap_model, normalize_chat_params
 
 # 加载 .env
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -301,17 +302,20 @@ class ReviewService:
             if not api_key:
                 raise ValueError("OPENAI_API_KEY 未配置")
 
-            client = OpenAI(api_key=api_key, base_url=base_url)
+            from net_proxy import make_httpx_client
+            client = OpenAI(api_key=api_key, base_url=base_url, http_client=make_httpx_client())
             logger.info(f"AI评分请求 | date={review_date}")
 
             response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=2048,
-                temperature=0.5,
+                **normalize_chat_params(dict(
+                    model=get_cheap_model(),
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_tokens=4096,  # GPT-5 推理 token 也计入此额度，留足空间
+                    temperature=0.5,
+                ))
             )
 
             content = response.choices[0].message.content or ""

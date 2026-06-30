@@ -231,7 +231,7 @@ void Server::handle_submit_order(const httplib::Request& req, httplib::Response&
     order.price = body.value("price", 0.0);
     order.quantity = body.value("quantity", 100);
     order.timestamp = now_ns();
-    order.client_tag = "user";   // 标记为用户订单
+    order.client_tag = body.value("client_tag", "user");   // 默认用户订单，做市商传 "mm"
 
     // 提交撮合
     auto result = session->submit_order(std::move(order));

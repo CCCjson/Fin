@@ -187,22 +187,34 @@ class AdvisorContextCollector:
 
         # 联网搜索（可选）：个股新闻 + 基本面数据
         if enable_web_search:
-            try:
-                from report_engine.web_searcher import MarketWebSearcher
-                searcher = MarketWebSearcher(random_ip=True)
+            search_keyword = result["name"] or symbol.split(".")[0]
 
-                # 搜索个股相关新闻（用股票代码或名称搜索）
-                search_keyword = result["name"] or symbol.split(".")[0]
-                news = searcher.search_stock_news(search_keyword, limit=10)
-                result["web_news"] = news if news else None
+            # 个股新闻：真·DuckDuckGo 通用搜索（外置金融大脑 websearch）。
+            # 失败降级到东财站内搜索兜底（DDG 有 202 限速风险，东财是国内可用兜底）。
+            try:
+                from knowledge_engine.websearch import web_search
+                hits = web_search(f"{search_keyword} 股票 最新 消息 公告", max_results=10)
+                # 适配回 web_news 契约（prompt_builder 读 title/source/time/body，全 .get 容错）
+                result["web_news"] = [{
+                    "title": h["title"],
+                    "body": h["snippet"],
+                    "source": h["source"].replace("ddg_", ""),
+                    "time": "",
+                    "url": h["url"],
+                } for h in hits] or None
             except Exception:
-                logger.warning(f"搜索个股新闻失败: {symbol}\n{traceback.format_exc()}")
+                logger.warning(f"web_search 个股新闻失败，降级东财搜索: {symbol}\n{traceback.format_exc()}")
+                try:
+                    from report_engine.web_searcher import MarketWebSearcher
+                    news = MarketWebSearcher(random_ip=True).search_stock_news(search_keyword, limit=10)
+                    result["web_news"] = news if news else None
+                except Exception:
+                    logger.warning(f"东财兜底搜索也失败: {symbol}\n{traceback.format_exc()}")
 
+            # 基本面数据（PE/PB/市值/ROE）：保留东财结构化拉取，DDG 替不了精确数值，不动
             try:
                 from report_engine.web_searcher import MarketWebSearcher
                 searcher = MarketWebSearcher(random_ip=True)
-
-                # 获取基本面数据（PE/PB/市值/ROE）
                 fundamentals = searcher.fetch_stock_fundamentals([symbol])
                 if fundamentals and symbol in fundamentals:
                     result["fundamentals"] = fundamentals[symbol]

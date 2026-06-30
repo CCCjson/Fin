@@ -1,4 +1,6 @@
 import React from 'react';
+import { Card } from '../common/Card';
+import { EmptyState } from '../common/EmptyState';
 
 interface Trade {
   date: string;
@@ -31,13 +33,13 @@ export const TradeTable: React.FC<TradeTableProps> = ({ trades, maxRows = 50 }) 
   const hasSymbolColumn = displayed.some(t => !!t.symbol);
 
   return (
-    <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+    <Card className="p-3 md:p-6">
       <h3 className="text-lg font-semibold text-white mb-4">
         交易记录 ({trades.length}笔)
       </h3>
 
       {displayed.length === 0 ? (
-        <div className="text-center text-gray-500 py-8">暂无交易记录</div>
+        <EmptyState compact icon="📭" title="暂无交易记录" hint="回测完成后，这里会列出每一笔买卖。" />
       ) : (
         <>
           {/* Desktop */}
@@ -113,6 +115,6 @@ export const TradeTable: React.FC<TradeTableProps> = ({ trades, maxRows = 50 }) 
           </div>
         </>
       )}
-    </div>
+    </Card>
   );
 };

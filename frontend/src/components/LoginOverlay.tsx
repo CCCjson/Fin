@@ -77,7 +77,7 @@ export const LoginOverlay: React.FC = () => {
           <button
             type="submit"
             disabled={loading || !username.trim() || !password.trim()}
-            className="w-full py-3 rounded-xl bg-primary hover:bg-primary-dark text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full py-3 rounded-xl bg-primary hover:bg-primary-dark text-dark font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? '验证中...' : '登 录'}
           </button>

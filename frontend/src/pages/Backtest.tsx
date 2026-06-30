@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { MarketSelector } from '../components/common/MarketSelector';
+import { toast } from '../components/common/Toast';
 import { backtestService } from '../services/backtestService';
 import type { BacktestTask, BacktestResult } from '../types';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { CppBacktestPanel } from '../components/backtest/CppBacktestPanel';
+import { Card } from '../components/common/Card';
 
 // ── 主组件 ──
 
@@ -76,7 +78,7 @@ export const Backtest: React.FC = () => {
       setShowForm(false);
       setTimeout(() => loadTasks(), 1000);
     } catch (error: any) {
-      alert(error.response?.data?.detail || '回测启动失败');
+      toast.error(error.response?.data?.detail || '回测启动失败');
     } finally {
       setLoading(false);
     }
@@ -107,7 +109,7 @@ export const Backtest: React.FC = () => {
       // 重新加载任务列表
       loadTasks();
     } catch (error: any) {
-      alert('删除失败: ' + (error.response?.data?.detail || error.message));
+      toast.error('删除失败: ' + (error.response?.data?.detail || error.message));
     }
   };
 
@@ -132,7 +134,7 @@ export const Backtest: React.FC = () => {
               <button
                 onClick={() => setTab('python')}
                 className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                  tab === 'python' ? 'bg-primary text-white' : 'text-gray-400 hover:text-white'
+                  tab === 'python' ? 'bg-primary text-dark' : 'text-gray-400 hover:text-white'
                 }`}
               >
                 Python 回测
@@ -140,7 +142,7 @@ export const Backtest: React.FC = () => {
               <button
                 onClick={() => setTab('cpp')}
                 className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                  tab === 'cpp' ? 'bg-primary text-white' : 'text-gray-400 hover:text-white'
+                  tab === 'cpp' ? 'bg-primary text-dark' : 'text-gray-400 hover:text-white'
                 }`}
               >
                 C++ 回测
@@ -150,7 +152,7 @@ export const Backtest: React.FC = () => {
           {tab === 'python' && (
             <button
               onClick={() => setShowForm(!showForm)}
-              className="px-3 py-1.5 md:px-6 md:py-3 text-sm md:text-base bg-primary text-white rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all font-semibold"
+              className="px-3 py-1.5 md:px-6 md:py-3 text-sm md:text-base bg-primary text-dark rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all font-semibold"
             >
               {showForm ? '取消' : '+ 新建回测'}
             </button>
@@ -166,7 +168,7 @@ export const Backtest: React.FC = () => {
 
         {/* 回测表单 */}
         {showForm && (
-          <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+          <Card className="p-3 md:p-6">
             <h2 className="text-lg md:text-xl font-semibold text-white mb-4">配置回测任务</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -276,13 +278,13 @@ export const Backtest: React.FC = () => {
                 {loading ? '启动中...' : '启动回测'}
               </button>
             </form>
-          </div>
+          </Card>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* 任务列表 */}
           <div className="lg:col-span-1">
-            <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+            <Card className="p-3 md:p-6">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg md:text-xl font-semibold text-white">回测任务</h2>
                 <button
@@ -343,34 +345,34 @@ export const Backtest: React.FC = () => {
                   ))
                 )}
               </div>
-            </div>
+            </Card>
           </div>
 
           {/* 结果展示 */}
           <div className="lg:col-span-2">
             {!selectedTask ? (
-              <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl h-full flex items-center justify-center">
+              <Card className="p-6 h-full flex items-center justify-center">
                 <div className="text-center text-gray-500">
                   <div className="text-4xl mb-4">📊</div>
                   <div>选择一个回测任务查看详情</div>
                 </div>
-              </div>
+              </Card>
             ) : selectedTask.status !== 'completed' ? (
-              <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl h-full flex items-center justify-center">
+              <Card className="p-6 h-full flex items-center justify-center">
                 <div className="text-center text-gray-500">
                   <div className="text-4xl mb-4">⏳</div>
                   <div>任务状态: {selectedTask.status}</div>
                 </div>
-              </div>
+              </Card>
             ) : !result ? (
-              <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl h-full flex items-center justify-center">
+              <Card className="p-6 h-full flex items-center justify-center">
                 <div className="text-center text-gray-500">加载中...</div>
-              </div>
+              </Card>
             ) : (
               <div className="space-y-4 md:space-y-6">
                 {/* 统计指标 */}
                 {result.metrics && (
-                  <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+                  <Card className="p-3 md:p-6">
                     <h2 className="text-lg md:text-xl font-semibold text-white mb-4">
                       回测结果{result.task_info?.name ? ` - ${result.task_info.name}` : ''}
                     </h2>
@@ -430,7 +432,7 @@ export const Backtest: React.FC = () => {
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </Card>
                 )}
 
                 {/* 收益曲线 */}
@@ -474,16 +476,16 @@ export const Backtest: React.FC = () => {
                     </ResponsiveContainer>
                   </div>
                 ) : (
-                  <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+                  <Card className="p-3 md:p-6">
                     <h3 className="text-lg font-semibold text-white mb-4">资产曲线</h3>
                     <div className="text-center text-gray-500 py-8">
                       暂无每日数据
                     </div>
-                  </div>
+                  </Card>
                 )}
 
                 {/* 交易记录 */}
-                <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+                <Card className="p-3 md:p-6">
                   <h3 className="text-lg font-semibold text-white mb-4">
                     交易记录 ({result.metrics?.total_trades || 0}笔)
                   </h3>
@@ -556,7 +558,7 @@ export const Backtest: React.FC = () => {
                       暂无交易记录详情
                     </div>
                   )}
-                </div>
+                </Card>
               </div>
             )}
           </div>

@@ -16,7 +16,7 @@ from data_engine.storage.models import PendingOrder, ManualTrade, StockInfo
 from portfolio.closed_trade_service import ClosedTradeService
 from trading_engine.config import RISK_CONFIG
 from trading_engine.risk.manager import RiskManager
-from trading_engine.risk.adapter import build_broker_info, get_total_capital
+from trading_engine.risk.adapter import build_broker_info, get_total_capital, get_effective_risk_config
 from trading_engine.brokers.paper_broker import PaperBroker
 from trading_engine.brokers.base import OrderStatus
 
@@ -36,8 +36,11 @@ def get_paper_broker() -> PaperBroker:
 class PendingOrderManager:
     """待确认订单管理器"""
 
-    def __init__(self):
-        self.risk_manager = RiskManager(RISK_CONFIG)
+    # 注意：不在 __init__ 里构造 risk_manager。
+    # 一是该实例是 import 期创建的进程单例（automation.py / scheduler.py），
+    #   在 __init__ 里查 UserSettings 会在建表前触发查询；
+    # 二是把配置抓死会让 UI 改集中度后自动单/定时单不生效。
+    # 故风控配置在每次下单校验时实时读取（与 portfolio.py / automation.py 手动单一致）。
 
     def create_from_signal(
         self,
@@ -131,7 +134,9 @@ class PendingOrderManager:
             else:
                 broker_info = build_broker_info(total_capital)
 
-            risk_passed, risk_results = self.risk_manager.check_order(
+            # 实时读取风控配置（UI 改集中度后即时生效）
+            risk_manager = RiskManager(get_effective_risk_config())
+            risk_passed, risk_results = risk_manager.check_order(
                 symbol=symbol,
                 action=signal_type,
                 quantity=suggested_qty,
@@ -255,7 +260,9 @@ class PendingOrderManager:
                 total_capital = get_total_capital()
                 broker_info = build_broker_info(total_capital)
 
-            risk_passed, risk_results = self.risk_manager.check_order(
+            # 实时读取风控配置（UI 改集中度后即时生效）
+            risk_manager = RiskManager(get_effective_risk_config())
+            risk_passed, risk_results = risk_manager.check_order(
                 symbol=pending.symbol,
                 action=pending.signal_type,
                 quantity=exec_qty,

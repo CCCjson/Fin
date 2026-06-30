@@ -1,4 +1,5 @@
 import React from 'react';
+import { Card } from '../common/Card';
 
 interface HistoryItem {
   task_id: string;
@@ -26,7 +27,7 @@ export const CppHistoryList: React.FC<CppHistoryListProps> = ({
   items, selectedId, checkedIds, onSelect, onCheck, onDelete, onRefresh,
 }) => {
   return (
-    <div className="bg-gradient-card border border-border shadow-card p-3 md:p-4 rounded-xl">
+    <Card className="p-3 md:p-4">
       <div className="flex justify-between items-center mb-3">
         <h2 className="text-base md:text-lg font-semibold text-white">回测记录</h2>
         <button onClick={onRefresh}
@@ -94,6 +95,6 @@ export const CppHistoryList: React.FC<CppHistoryListProps> = ({
           ))
         )}
       </div>
-    </div>
+    </Card>
   );
 };

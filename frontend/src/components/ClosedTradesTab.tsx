@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { portfolioService } from '../services/portfolioService';
+import { toast } from './common/Toast';
 import type {
   ClosedTrade,
   ClosedTradeSummary,
@@ -36,7 +37,7 @@ const ENV_LABELS: Record<string, { text: string; color: string }> = {
 const REASON_LABELS: Record<string, { text: string; color: string }> = {
   take_profit: { text: '止盈', color: 'bg-red-500/20 text-red-400' },
   stop_loss: { text: '止损', color: 'bg-green-500/20 text-green-400' },
-  manual_close: { text: '主动平仓', color: 'bg-blue-500/20 text-blue-400' },
+  manual_close: { text: '主动平仓', color: 'bg-primary/20 text-primary-light' },
 };
 
 // ==================== 组件 ====================
@@ -98,11 +99,11 @@ export const ClosedTradesTab: React.FC = () => {
     setRebuilding(true);
     try {
       const result = await portfolioService.rebuildClosedTrades();
-      alert(result.message);
+      toast.success(result.message);
       loadData(1);
     } catch (e) {
       console.error('Rebuild failed:', e);
-      alert('重建失败，请查看后端日志');
+      toast.error('重建失败，请查看后端日志');
     } finally {
       setRebuilding(false);
     }
@@ -200,7 +201,7 @@ export const ClosedTradesTab: React.FC = () => {
           </div>
           <button
             onClick={handleSearch}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded text-sm font-medium"
+            className="bg-primary hover:bg-primary-light text-dark px-4 py-1.5 rounded text-sm font-medium"
           >
             查询
           </button>

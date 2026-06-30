@@ -84,7 +84,7 @@ export const FineTune: React.FC = () => {
   // --- 评估结果 ---
   const [evalReport, setEvalReport] = useState<Record<string, any> | null>(null);
   const [evalItems, setEvalItems] = useState<EvalItem[]>([]);
-  const [evalTotal, setEvalTotal] = useState(0);
+  const [, setEvalTotal] = useState(0);
   const [showEvalDetails, setShowEvalDetails] = useState(false);
 
   // --- 日志 ---

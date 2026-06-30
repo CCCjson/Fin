@@ -12,7 +12,7 @@ interface Props {
 }
 
 export const BatchProgressBar: React.FC<Props> = ({
-  batchId, total, current, completed, failed, logs, onCancel,
+  total, current, completed, failed, logs, onCancel,
 }) => {
   const pct = total > 0 ? Math.round((current / total) * 100) : 0;
   const listRef = useRef<HTMLDivElement>(null);

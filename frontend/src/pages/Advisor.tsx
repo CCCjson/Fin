@@ -112,7 +112,7 @@ export const Advisor: React.FC = () => {
   // 输入
   const [symbol, setSymbol] = useState('');
   const [stockName, setStockName] = useState('');
-  const [model, setModel] = useState('gpt-4.1');
+  const [model, setModel] = useState('gpt-5.5');
   const [enableWebSearch, setEnableWebSearch] = useState(false);
   const [followUpInput, setFollowUpInput] = useState('');
 
@@ -147,11 +147,6 @@ export const Advisor: React.FC = () => {
   // 更新当前标签的 messages
   const updateActiveMessages = useCallback((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
     setTabs(prev => prev.map((t, i) => i === activeTabIdx ? { ...t, messages: updater(t.messages) } : t));
-  }, [activeTabIdx]);
-
-  // 更新当前标签的字段
-  const updateActiveTab = useCallback((patch: Partial<SessionTab>) => {
-    setTabs(prev => prev.map((t, i) => i === activeTabIdx ? { ...t, ...patch } : t));
   }, [activeTabIdx]);
 
   // ---------- 开始分析（新股票或重新分析） ----------
@@ -422,11 +417,9 @@ export const Advisor: React.FC = () => {
                   focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none transition-all text-xs md:text-sm
                   disabled:opacity-50"
               >
-                <option value="gpt-4.1">GPT-4.1</option>
-                <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
-                <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
-                <option value="gpt-4o">GPT-4o</option>
-                <option value="gpt-4o-mini">GPT-4o Mini</option>
+                <option value="gpt-5.5">GPT-5.5（最强 · 投资建议）</option>
+                <option value="gpt-5.4">GPT-5.4</option>
+                <option value="gpt-5.4-mini">GPT-5.4 Mini（省钱）</option>
               </select>
 
               <button
@@ -528,7 +521,7 @@ export const Advisor: React.FC = () => {
             >
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs shrink-0 mt-0.5 ${
                 msg.role === 'user'
-                  ? 'bg-blue-500/20 text-blue-300'
+                  ? 'bg-primary/20 text-primary-light'
                   : 'bg-violet-500/20 text-violet-300'
               }`}>
                 {msg.role === 'user' ? 'Me' : 'AI'}
@@ -536,7 +529,7 @@ export const Advisor: React.FC = () => {
 
               <div className={`max-w-[88%] md:max-w-[85%] ${
                 msg.role === 'user'
-                  ? 'bg-blue-500/10 border border-blue-500/20 rounded-2xl rounded-tr-sm px-5 py-3'
+                  ? 'bg-primary/10 border border-primary/40 rounded-2xl rounded-tr-sm px-5 py-3'
                   : 'bg-gradient-card border border-border rounded-2xl rounded-tl-sm px-6 py-5'
               }`}>
                 {msg.role === 'user' ? (

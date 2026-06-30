@@ -12,8 +12,10 @@ from data_engine.storage import (
     StockInfo,
     DailyQuote,
     DataUpdateLog,
+    FinancialData,
     StockRepository,
     QuoteRepository,
+    FinancialRepository,
     LogRepository
 )
 from data_engine.processors import DataNormalizer, DataValidator, DataCleaner
@@ -29,6 +31,7 @@ class DataEngine:
         # 初始化仓库
         self.stock_repo = StockRepository(self.session)
         self.quote_repo = QuoteRepository(self.session)
+        self.financial_repo = FinancialRepository(self.session)
         self.log_repo = LogRepository(self.session)
 
     def get_daily_data(
@@ -295,6 +298,63 @@ class DataEngine:
     def get_latest_date(self, symbol: str) -> Optional[datetime]:
         """获取最新数据日期"""
         return self.quote_repo.get_latest_date(symbol)
+
+    def get_financial_data(
+        self,
+        symbol: str,
+        start_year: str = "2015",
+        force_update: bool = False,
+        db_only: bool = False,
+    ) -> pd.DataFrame:
+        """
+        获取财务基本面数据（优先从数据库，不存在则从 akshare 拉取）
+
+        Args:
+            symbol: 股票代码 (600519.SH)
+            start_year: 起始年份
+            force_update: 是否强制联网更新
+            db_only: 仅查库不联网
+
+        Returns:
+            DataFrame: 财务数据，含 report_date, eps, roe, gross_margin 等
+        """
+        logger.info(f"获取 {symbol} 财务基本面数据 (start_year={start_year})")
+
+        if db_only:
+            df = self.financial_repo.get_financial_df(symbol)
+            logger.info(f"[db_only] {symbol} 返回 {len(df)} 条财务数据")
+            return df
+
+        # 先查库
+        if not force_update:
+            df = self.financial_repo.get_financial_df(symbol)
+            if not df.empty:
+                latest = self.financial_repo.get_latest_report_date(symbol)
+                # 如果最新数据距今不超过 120 天，认为足够新
+                if latest and (datetime.now().date() - latest).days <= 120:
+                    logger.info(f"{symbol} 财务数据足够新（最新报告期 {latest}），使用缓存")
+                    return df
+
+        # 联网拉取
+        try:
+            from data_engine.fetchers.financial import FinancialFetcher
+            fetcher = FinancialFetcher()
+            fresh_df = fetcher.fetch_financial_data(symbol, start_year=start_year)
+            if fresh_df.empty:
+                # 联网失败，返回库存数据
+                return self.financial_repo.get_financial_df(symbol)
+
+            # 保存到数据库
+            saved = self.financial_repo.save_financial_data(symbol, fresh_df)
+            logger.info(f"{symbol} 保存了 {saved} 条新财务数据")
+
+            # 返回完整数据
+            return self.financial_repo.get_financial_df(symbol)
+
+        except Exception as e:
+            logger.error(f"获取 {symbol} 财务数据失败: {e}")
+            # 回退到库存
+            return self.financial_repo.get_financial_df(symbol)
 
     def close(self):
         """关闭数据库连接"""

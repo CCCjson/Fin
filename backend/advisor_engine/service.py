@@ -16,6 +16,7 @@ from httpx import Timeout as HttpxTimeout
 
 from advisor_engine.context_collector import AdvisorContextCollector
 from advisor_engine.prompt_builder import AdvisorPromptBuilder
+from llm_config import get_best_model, normalize_chat_params
 
 load_dotenv(override=True)
 
@@ -58,7 +59,7 @@ class AdvisorService:
         session_id: str,
         user_message: Optional[str],
         enable_web_search: bool = False,
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
     ) -> Generator[str, None, None]:
         """
         流式对话。
@@ -68,6 +69,7 @@ class AdvisorService:
 
         Yields NDJSON 行。
         """
+        model = model or get_best_model()
         with self._lock:
             session = self._sessions.get(session_id)
         if not session:
@@ -119,19 +121,22 @@ class AdvisorService:
             return
 
         try:
+            from net_proxy import make_httpx_client
+            _to = HttpxTimeout(connect=15.0, read=300.0, write=30.0, pool=30.0)
             client = OpenAI(
                 api_key=api_key,
                 base_url=base_url,
-                timeout=HttpxTimeout(connect=15.0, read=300.0, write=30.0, pool=30.0),
+                timeout=_to,
                 max_retries=2,
+                http_client=make_httpx_client(timeout=_to),
             )
 
-            stream_kwargs: Dict = dict(
+            stream_kwargs: Dict = normalize_chat_params(dict(
                 model=model,
                 messages=session.get_messages(),
                 temperature=0.5,
                 stream=True,
-            )
+            ))
             try:
                 stream = client.chat.completions.create(
                     **stream_kwargs,

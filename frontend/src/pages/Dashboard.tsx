@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { AccountInfo } from '../components/trading/AccountInfo';
 import { tradingService } from '../services/tradingService';
+import { SkeletonMetricGrid, SkeletonCard } from '../components/common/Skeleton';
+import { Card } from '../components/common/Card';
 import type { Account } from '../types';
 
 export const Dashboard: React.FC = () => {
@@ -38,8 +40,11 @@ export const Dashboard: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-white text-xl">加载中...</div>
+      <div className="min-h-screen bg-gradient-dark p-6">
+        <div className="max-w-7xl mx-auto space-y-6">
+          <SkeletonMetricGrid count={4} />
+          <SkeletonCard />
+        </div>
       </div>
     );
   }
@@ -53,7 +58,7 @@ export const Dashboard: React.FC = () => {
         </div>
         <button
           onClick={initializeAccount}
-          className="px-8 py-4 bg-primary text-white rounded-xl hover:bg-primary-dark transition-all duration-200 shadow-glow-blue hover:shadow-glow-blue font-semibold text-lg"
+          className="px-8 py-4 bg-primary text-dark rounded-xl hover:bg-primary-dark transition-all duration-200 shadow-glow-blue hover:shadow-glow-blue font-semibold text-lg"
         >
           初始化账户（初始资金：100万）
         </button>
@@ -77,20 +82,20 @@ export const Dashboard: React.FC = () => {
         <AccountInfo account={account} />
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-green transition-all duration-300">
+          <Card className="p-6 hover:shadow-glow-green transition-all duration-300">
             <div className="text-gray-400 text-sm mb-2">本日盈亏</div>
             <div className="text-3xl font-bold text-bull">+¥0.00</div>
-          </div>
-          <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all duration-300">
+          </Card>
+          <Card glow className="p-6 transition-all duration-300">
             <div className="text-gray-400 text-sm mb-2">持仓数量</div>
             <div className="text-3xl font-bold text-white">
               {account?.positions?.length || 0}
             </div>
-          </div>
-          <div className="bg-gradient-card p-6 rounded-xl border border-border shadow-card hover:shadow-glow-blue transition-all duration-300">
+          </Card>
+          <Card glow className="p-6 transition-all duration-300">
             <div className="text-gray-400 text-sm mb-2">总收益率</div>
             <div className="text-3xl font-bold text-primary-light">0.00%</div>
-          </div>
+          </Card>
         </div>
       </div>
     </div>

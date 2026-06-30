@@ -160,6 +160,24 @@ class MetricsCalculator:
         return (wins / len(sell_trades)) * 100
 
     @staticmethod
+    def win_loss_counts(trades: List[dict]) -> Dict[str, int]:
+        """
+        胜负场数（与 win_rate 同款的买卖配对，单一数据源）
+
+        winning: 卖出价 > 对应买入价 的笔数
+        losing:  卖出笔数 - winning（持平与无配对卖出归为 losing，与原口径一致）
+        """
+        buy_trades = [t for t in trades if t["action"] == "BUY"]
+        sell_trades = [t for t in trades if t["action"] == "SELL"]
+
+        winning = 0
+        for i, sell in enumerate(sell_trades):
+            if i < len(buy_trades) and sell["price"] > buy_trades[i]["price"]:
+                winning += 1
+
+        return {"winning_trades": winning, "losing_trades": len(sell_trades) - winning}
+
+    @staticmethod
     def profit_factor(trades: List[dict]) -> float:
         """
         盈亏比 = 总盈利 / 总亏损
@@ -222,6 +240,7 @@ class MetricsCalculator:
             "win_rate": MetricsCalculator.win_rate(trades),
             "profit_factor": MetricsCalculator.profit_factor(trades),
             "num_trades": len(trades),
+            **MetricsCalculator.win_loss_counts(trades),
 
             # 组合指标
             "initial_capital": portfolio.initial_capital,

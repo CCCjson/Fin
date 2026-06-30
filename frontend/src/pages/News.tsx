@@ -102,7 +102,7 @@ export const News: React.FC = () => {
   // 输入状态
   const [market, setMarket] = useState<'a_share' | 'general'>('a_share');
   const [symbol, setSymbol] = useState('');
-  const [model, setModel] = useState('gpt-4o');
+  const [model, setModel] = useState('gpt-5.4-mini');
 
   // 数据
   const [articles, setArticles] = useState<NewsArticle[]>([]);
@@ -505,10 +505,10 @@ export const News: React.FC = () => {
               focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all text-xs md:text-sm
               disabled:opacity-50"
           >
-            <option value="gpt-4o">GPT-4o</option>
-            <option value="gpt-4o-mini">GPT-4o Mini</option>
-            <option value="gpt-4.1">GPT-4.1</option>
-            <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+            <option value="gpt-5.4-mini">GPT-5.4 Mini（省钱）</option>
+            <option value="gpt-5.4-nano">GPT-5.4 Nano（最省）</option>
+            <option value="gpt-5.4">GPT-5.4</option>
+            <option value="gpt-5.5">GPT-5.5（最强）</option>
           </select>
 
           {/* 获取新闻按钮 */}

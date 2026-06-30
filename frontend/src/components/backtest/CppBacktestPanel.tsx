@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { backtestService } from '../../services/backtestService';
+import { toast } from '../common/Toast';
+import { Card } from '../common/Card';
 import { CppBacktestForm } from './CppBacktestForm';
 import type { CppFormState } from './CppBacktestForm';
 import { CppBacktestResult } from './CppBacktestResult';
@@ -214,7 +216,7 @@ export const CppBacktestPanel: React.FC = () => {
       setCheckedIds(next);
       loadHistory();
     } catch (e: any) {
-      alert('删除失败: ' + (e.response?.data?.detail || e.message));
+      toast.error('删除失败: ' + (e.response?.data?.detail || e.message));
     }
   };
 
@@ -297,7 +299,7 @@ export const CppBacktestPanel: React.FC = () => {
           onClick={() => { setViewMode('single'); setDetailResult(null); }}
           className={`px-5 py-2 text-sm rounded-xl font-medium transition-all ${
             viewMode === 'single'
-              ? 'bg-primary text-white shadow-lg shadow-primary/20'
+              ? 'bg-primary text-dark shadow-lg shadow-primary/20'
               : 'bg-dark-light text-gray-400 hover:bg-dark-lighter'
           }`}
         >
@@ -332,7 +334,7 @@ export const CppBacktestPanel: React.FC = () => {
           <div className="lg:col-span-1 space-y-3">
             <button
               onClick={() => { setShowForm(true); setResult(null); setSelectedId(null); }}
-              className="w-full py-2.5 bg-primary hover:bg-primary/80 text-white rounded-xl font-semibold transition-all text-sm"
+              className="w-full py-2.5 bg-primary hover:bg-primary/80 text-dark rounded-xl font-semibold transition-all text-sm"
             >
               + 新建回测
             </button>
@@ -372,12 +374,12 @@ export const CppBacktestPanel: React.FC = () => {
             {result && <CppBacktestResult result={result} />}
 
             {!showForm && !result && (
-              <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl flex items-center justify-center h-64">
+              <Card className="p-6 flex items-center justify-center h-64">
                 <div className="text-center text-gray-500">
                   <div className="text-4xl mb-4 opacity-30">&#x1F4CA;</div>
                   <div>选择历史记录查看结果，或新建回测</div>
                 </div>
-              </div>
+              </Card>
             )}
           </div>
 

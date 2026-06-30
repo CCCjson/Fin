@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Card } from '../common/Card';
 import type { BatchRankingItem } from '../../types';
 
 type SortKey = 'sharpe_ratio' | 'total_return_pct' | 'annual_return' | 'max_drawdown_pct' | 'win_rate' | 'profit_factor';
@@ -34,14 +35,14 @@ export const BatchRanking: React.FC<Props> = ({ ranking, onSelectTask }) => {
 
   if (!ranking.length) {
     return (
-      <div className="bg-gradient-card border border-border shadow-card p-6 rounded-xl text-center text-gray-500 text-sm">
+      <Card className="p-6 text-center text-gray-500 text-sm">
         暂无排行数据
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className="bg-gradient-card border border-border shadow-card rounded-xl overflow-hidden">
+    <Card className="overflow-hidden">
       <div className="px-4 py-3 border-b border-border">
         <h3 className="text-sm font-semibold text-white">排行榜</h3>
         <p className="text-xs text-gray-500 mt-0.5">点击行查看详细结果 | 点击表头排序</p>
@@ -127,6 +128,6 @@ export const BatchRanking: React.FC<Props> = ({ ranking, onSelectTask }) => {
           </tbody>
         </table>
       </div>
-    </div>
+    </Card>
   );
 };

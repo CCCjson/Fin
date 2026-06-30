@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { Card } from '../common/Card';
 import { StockSymbolInput } from '../common/StockSymbolInput';
 import { backtestService } from '../../services/backtestService';
 import type { BatchBacktestConfig, BatchMode } from '../../types';
@@ -270,7 +271,7 @@ export const BatchBacktestForm: React.FC<Props> = ({ onSubmit, loading, error })
   };
 
   return (
-    <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+    <Card className="p-3 md:p-6">
       <h2 className="text-base md:text-lg font-semibold text-white mb-1">批量回测</h2>
       <p className="text-gray-500 text-xs mb-4">
         多股票扫描 | 多策略对比 | 参数优化（网格搜索）
@@ -288,7 +289,7 @@ export const BatchBacktestForm: React.FC<Props> = ({ onSubmit, loading, error })
             onClick={() => setMode(m.value)}
             className={`px-4 py-1.5 text-sm rounded-lg transition-all ${
               mode === m.value
-                ? 'bg-primary text-white'
+                ? 'bg-primary text-dark'
                 : 'bg-dark-light text-gray-400 hover:bg-dark-lighter'
             }`}
           >
@@ -538,6 +539,6 @@ export const BatchBacktestForm: React.FC<Props> = ({ onSubmit, loading, error })
       </button>
 
       {error && <p className="text-red-400 text-sm mt-2 bg-red-400/10 px-3 py-2 rounded">{error}</p>}
-    </div>
+    </Card>
   );
 };

@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { Card } from '../components/common/Card';
 
 const API = '/api';
 
@@ -50,6 +51,17 @@ interface MatchResult {
   fills: Fill[];
 }
 
+interface MMStatus {
+  running: boolean;
+  net_position: number;
+  active_bid_orders: number;
+  active_ask_orders: number;
+  total_trades: number;
+  uptime_seconds: number;
+  target_mid: number;
+  pnl: number;
+}
+
 // ══════════════════════════════════════════════════════════════
 // 多市场预设
 // ══════════════════════════════════════════════════════════════
@@ -62,17 +74,17 @@ interface MarketPreset {
   defaultMidPrice: number;
   tickSize: number;
   spreadTicks: number;
-  lotSize: number;          // 最小交易单位（A/港: 100, 美: 1）
+  lotSize: number;
   hasLotRestriction: boolean;
   hasPriceLimit: boolean;
-  priceLimitPct: number;    // 涨跌停幅度
+  priceLimitPct: number;
   currency: string;
   currencySymbol: string;
   color: string;
   gradient: string;
   description: string;
   tradingHours: string;
-  quickLots: number[];      // 快捷手数/股数按钮
+  quickLots: number[];
 }
 
 const MARKET_PRESETS: MarketPreset[] = [
@@ -110,6 +122,81 @@ const MARKET_PRESETS: MarketPreset[] = [
     quickLots: [10, 50, 100, 500, 1000],
   },
 ];
+
+// ══════════════════════════════════════════════════════════════
+// WebSocket Hook
+// ══════════════════════════════════════════════════════════════
+
+function useOrderBookWS(
+  sessionId: string,
+  onUpdate: (data: { depth?: DepthSnapshot; fills?: Fill[]; stats?: BookStats }) => void,
+) {
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const reconnectDelay = useRef(500);
+  const onUpdateRef = useRef(onUpdate);
+  onUpdateRef.current = onUpdate;
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const connect = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      const url = `${protocol}//${host}/api/orderbook/sessions/${sessionId}/ws`;
+
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        reconnectDelay.current = 500;
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'orderbook_update' && msg.data) {
+            onUpdateRef.current(msg.data);
+          }
+        } catch {
+          // ignore
+        }
+      };
+
+      ws.onclose = () => {
+        wsRef.current = null;
+        // 自动重连（指数退避，最大5秒）
+        reconnectRef.current = setTimeout(() => {
+          reconnectDelay.current = Math.min(reconnectDelay.current * 1.5, 5000);
+          connect();
+        }, reconnectDelay.current);
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+    };
+
+    connect();
+
+    // 心跳
+    const pingInterval = setInterval(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send('ping');
+      }
+    }, 30000);
+
+    return () => {
+      clearInterval(pingInterval);
+      if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      if (wsRef.current) {
+        wsRef.current.onclose = null;  // 防止触发重连
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [sessionId]);
+}
 
 // ══════════════════════════════════════════════════════════════
 // Toast 通知
@@ -188,7 +275,14 @@ export const OrderBook: React.FC = () => {
   const [seedCount, setSeedCount] = useState('200');
   const [inputPrevClose, setInputPrevClose] = useState('');
 
-  const intervalRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  // ── 做市商状态 ──
+  const [mmStatus, setMmStatus] = useState<MMStatus | null>(null);
+  const [mmLoading, setMmLoading] = useState(false);
+  const [mmVolatility, setMmVolatility] = useState('0.0005');
+  const [mmDrift, setMmDrift] = useState('0');
+  const [mmSpreadTicks, setMmSpreadTicks] = useState('2');
+  const [mmBaseQty, setMmBaseQty] = useState('500');
+
   const toastIdRef = useRef(0);
 
   const market = useMemo(
@@ -245,7 +339,21 @@ export const OrderBook: React.FC = () => {
     }
   }, [sessionId, marketId, sessionSymbol, prevClose]);
 
-  // ── 自动刷新 ──
+  // ── WebSocket 实时推送 ──
+  const handleWSUpdate = useCallback((data: { depth?: DepthSnapshot; fills?: Fill[]; stats?: BookStats }) => {
+    if (data.depth) setDepth(data.depth);
+    if (data.stats) setStats(data.stats);
+    if (data.fills && data.fills.length > 0) {
+      setFills(prev => {
+        const merged = [...prev, ...data.fills!];
+        return merged.slice(-50);  // 保留最近50条
+      });
+    }
+  }, []);
+
+  useOrderBookWS(sessionId, handleWSUpdate);
+
+  // ── 回退轮询（WS 未连接时） ──
   const refreshData = useCallback(async () => {
     if (!sessionId) return;
     try {
@@ -262,16 +370,13 @@ export const OrderBook: React.FC = () => {
       if (sRes.ok) setStats(await sRes.json());
       setError('');
     } catch {
-      // 如果会话不可达（C++ 服务未启动或会话过期），清掉
+      // 会话不可达
     }
   }, [sessionId]);
 
+  // 初始加载一次 HTTP 数据（WS 可能还没连上）
   useEffect(() => {
-    if (sessionId) {
-      refreshData();
-      intervalRef.current = setInterval(refreshData, 1500);
-    }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    if (sessionId) refreshData();
   }, [sessionId, refreshData]);
 
   // ── 检测恢复的会话是否还有效 ──
@@ -282,6 +387,20 @@ export const OrderBook: React.FC = () => {
       .catch(() => resetSession());
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── 做市商状态轮询 ──
+  useEffect(() => {
+    if (!sessionId) return;
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API}/orderbook/sessions/${sessionId}/market-maker/status`);
+        if (res.ok) setMmStatus(await res.json());
+      } catch {}
+    };
+    poll();
+    const iv = setInterval(poll, 2000);
+    return () => clearInterval(iv);
+  }, [sessionId]);
 
   // ── 创建会话 ──
   const createSession = async () => {
@@ -327,6 +446,7 @@ export const OrderBook: React.FC = () => {
     setFills([]);
     setStats(null);
     setLastResult(null);
+    setMmStatus(null);
   };
 
   // ── 验证数量 ──
@@ -372,7 +492,7 @@ export const OrderBook: React.FC = () => {
       if (!res.ok) throw new Error(data.detail || data.error || 'Failed');
 
       setLastResult(data);
-      refreshData();
+      // 不再需要手动 refreshData，WS 会推送
 
       // Toast 通知
       if (data.is_rejected) {
@@ -392,6 +512,38 @@ export const OrderBook: React.FC = () => {
       }
     } catch (e: any) {
       addToast('error', '下单失败', e.message);
+    }
+  };
+
+  // ── 做市商控制 ──
+  const toggleMarketMaker = async () => {
+    if (!sessionId) return;
+    setMmLoading(true);
+    try {
+      if (mmStatus?.running) {
+        await fetch(`${API}/orderbook/sessions/${sessionId}/market-maker/stop`, { method: 'POST' });
+        addToast('success', '做市商已停止', '所有挂单已撤销');
+      } else {
+        await fetch(`${API}/orderbook/sessions/${sessionId}/market-maker/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tick_size: market.tickSize,
+            spread_ticks: parseInt(mmSpreadTicks) || 2,
+            base_quantity: parseInt(mmBaseQty) || 500,
+            volatility: parseFloat(mmVolatility) || 0.0005,
+            price_drift: parseFloat(mmDrift) || 0,
+          }),
+        });
+        addToast('success', '做市商已启动', '开始自动提供流动性');
+      }
+      // 刷新状态
+      const res = await fetch(`${API}/orderbook/sessions/${sessionId}/market-maker/status`);
+      if (res.ok) setMmStatus(await res.json());
+    } catch (e: any) {
+      addToast('error', '操作失败', e.message);
+    } finally {
+      setMmLoading(false);
     }
   };
 
@@ -558,7 +710,7 @@ export const OrderBook: React.FC = () => {
   return (
     <div className="p-2 md:p-3 h-full flex flex-col gap-2 md:gap-3 overflow-auto pb-20 md:pb-3">
       {/* ── 顶栏 ── */}
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between bg-dark-card rounded-xl border border-border px-4 py-3">
+      <Card variant="flat" className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between px-4 py-3">
         <div className="flex items-center gap-3">
           <span className="text-xl">{market.flag}</span>
           <div>
@@ -568,6 +720,11 @@ export const OrderBook: React.FC = () => {
                 style={{ backgroundColor: `${market.color}20`, color: market.color }}>
                 {market.name}
               </span>
+              {mmStatus?.running && (
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-500/20 text-amber-400 animate-pulse">
+                  MM
+                </span>
+              )}
             </div>
             <span className="text-xs text-gray-500 font-mono">session: {sessionId.slice(0, 12)}</span>
           </div>
@@ -591,7 +748,7 @@ export const OrderBook: React.FC = () => {
           className="text-xs text-gray-500 hover:text-white px-3 py-1.5 border border-border rounded-lg transition-colors whitespace-nowrap">
           新建会话
         </button>
-      </div>
+      </Card>
 
       {error && <p className="text-red-400 text-sm bg-red-400/10 px-3 py-2 rounded-lg">{error}</p>}
 
@@ -599,7 +756,7 @@ export const OrderBook: React.FC = () => {
       <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-3 min-h-0">
 
         {/* ═══ 左列：盘口深度 ═══ */}
-        <div className="md:col-span-5 bg-dark-card rounded-xl border border-border overflow-auto">
+        <Card variant="flat" className="md:col-span-5 overflow-auto">
           {/* 表头 */}
           <div className="sticky top-0 bg-dark-card/95 backdrop-blur-sm px-4 py-2.5 border-b border-border/50 flex items-center gap-2 text-xs text-gray-500">
             <span className="w-20 text-right">价格</span>
@@ -649,7 +806,7 @@ export const OrderBook: React.FC = () => {
               ))}
             </div>
           </div>
-        </div>
+        </Card>
 
         {/* ═══ 中列：成交流水 + 深度图 ═══ */}
         <div className="md:col-span-3 flex flex-col gap-2 md:gap-3">
@@ -660,7 +817,7 @@ export const OrderBook: React.FC = () => {
           </div>
 
           {/* 成交流水 */}
-          <div className="bg-dark-card rounded-xl border border-border p-3 flex-1 overflow-auto">
+          <Card variant="flat" className="p-3 flex-1 overflow-auto">
             <h2 className="text-xs font-medium text-gray-500 mb-2">成交流水</h2>
             <div className="space-y-px text-xs font-mono">
               <div className="flex gap-2 text-gray-600 pb-1 border-b border-border/30">
@@ -679,13 +836,13 @@ export const OrderBook: React.FC = () => {
               ))}
               {fills.length === 0 && <p className="text-gray-600 text-center py-6">暂无成交</p>}
             </div>
-          </div>
+          </Card>
         </div>
 
-        {/* ═══ 右列：下单面板 ═══ */}
+        {/* ═══ 右列：下单面板 + 做市商 ═══ */}
         <div className="md:col-span-4 flex flex-col gap-2 md:gap-3">
           {/* 下单表单 */}
-          <div className="bg-dark-card rounded-xl border border-border p-4">
+          <Card variant="flat" className="p-4">
             {/* 买卖切换 */}
             <div className="grid grid-cols-2 gap-1.5 p-1 bg-dark rounded-lg mb-4">
               <button onClick={() => setSide('BUY')}
@@ -823,11 +980,11 @@ export const OrderBook: React.FC = () => {
                   : 'bg-bear hover:bg-bear-dark shadow-glow-green'}`}>
               {side === 'BUY' ? '买入' : '卖出'} {quantity} 股
             </button>
-          </div>
+          </Card>
 
           {/* 撮合结果 */}
           {lastResult && (
-            <div className="bg-dark-card rounded-xl border border-border p-3 text-xs">
+            <Card variant="flat" className="p-3 text-xs">
               <h2 className="text-xs font-medium text-gray-500 mb-2">上笔撮合</h2>
               <div className="space-y-1 text-gray-400">
                 <div className="flex justify-between">
@@ -849,19 +1006,102 @@ export const OrderBook: React.FC = () => {
                   </div>
                 )}
               </div>
-            </div>
+            </Card>
           )}
+
+          {/* ═══ 做市商控制面板 ═══ */}
+          <Card variant="flat" className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xs font-medium text-gray-400 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: mmStatus?.running ? '#F59E0B' : '#6B7280' }} />
+                做市商 Bot
+              </h2>
+              <button
+                onClick={toggleMarketMaker}
+                disabled={mmLoading}
+                className={`px-3 py-1 rounded-lg text-xs font-medium transition-all disabled:opacity-50
+                  ${mmStatus?.running
+                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30'
+                    : 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border border-amber-500/30'
+                  }`}
+              >
+                {mmLoading ? '...' : mmStatus?.running ? '停止' : '启动'}
+              </button>
+            </div>
+
+            {/* 参数配置（未运行时可调） */}
+            {!mmStatus?.running && (
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <div>
+                  <label className="text-[10px] text-gray-600 block">波动率</label>
+                  <input value={mmVolatility} onChange={e => setMmVolatility(e.target.value)}
+                    className="form-input text-xs font-mono py-1" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-600 block">价格漂移</label>
+                  <input value={mmDrift} onChange={e => setMmDrift(e.target.value)}
+                    className="form-input text-xs font-mono py-1" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-600 block">半价差(ticks)</label>
+                  <input value={mmSpreadTicks} onChange={e => setMmSpreadTicks(e.target.value)}
+                    className="form-input text-xs font-mono py-1" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-600 block">首档数量</label>
+                  <input value={mmBaseQty} onChange={e => setMmBaseQty(e.target.value)}
+                    className="form-input text-xs font-mono py-1" />
+                </div>
+              </div>
+            )}
+
+            {/* 运行状态 */}
+            {mmStatus?.running && (
+              <div className="space-y-1.5 text-xs">
+                <div className="flex justify-between text-gray-500">
+                  <span>净持仓</span>
+                  <span className={`font-mono font-medium ${mmStatus.net_position > 0 ? 'text-bull' : mmStatus.net_position < 0 ? 'text-bear' : 'text-white'}`}>
+                    {mmStatus.net_position > 0 ? '+' : ''}{mmStatus.net_position}
+                  </span>
+                </div>
+                <div className="flex justify-between text-gray-500">
+                  <span>挂单</span>
+                  <span className="font-mono text-gray-300">
+                    {mmStatus.active_bid_orders}B / {mmStatus.active_ask_orders}A
+                  </span>
+                </div>
+                <div className="flex justify-between text-gray-500">
+                  <span>成交笔数</span>
+                  <span className="font-mono text-gray-300">{mmStatus.total_trades}</span>
+                </div>
+                <div className="flex justify-between text-gray-500">
+                  <span>估算 PnL</span>
+                  <span className={`font-mono font-medium ${mmStatus.pnl >= 0 ? 'text-bull' : 'text-bear'}`}>
+                    {mmStatus.pnl >= 0 ? '+' : ''}{mmStatus.pnl.toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-gray-500">
+                  <span>目标中间价</span>
+                  <span className="font-mono text-gray-300">{mmStatus.target_mid.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-gray-500">
+                  <span>运行时长</span>
+                  <span className="font-mono text-gray-300">{formatUptime(mmStatus.uptime_seconds)}</span>
+                </div>
+              </div>
+            )}
+          </Card>
         </div>
       </div>
 
       {/* ── 底部统计 ── */}
       {stats && (
-        <div className="bg-dark-card rounded-xl border border-border px-4 py-2.5 flex flex-wrap items-center gap-4 md:gap-6 text-xs">
+        <Card variant="flat" className="px-4 py-2.5 flex flex-wrap items-center gap-4 md:gap-6 text-xs">
           <StatChip label="买盘深度" value={stats.bid_depth.toLocaleString()} icon="\u25B2" iconColor="text-bull" />
           <StatChip label="卖盘深度" value={stats.ask_depth.toLocaleString()} icon="\u25BC" iconColor="text-bear" />
           <StatChip label="总成交量" value={stats.total_volume.toLocaleString()} />
           <StatChip label="成交笔数" value={stats.total_fills.toString()} />
-        </div>
+        </Card>
       )}
 
       {/* ── Toast 通知 ── */}
@@ -873,6 +1113,16 @@ export const OrderBook: React.FC = () => {
     </div>
   );
 };
+
+// ══════════════════════════════════════════════════════════════
+// 工具函数
+// ══════════════════════════════════════════════════════════════
+
+function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
 
 // ══════════════════════════════════════════════════════════════
 // 子组件

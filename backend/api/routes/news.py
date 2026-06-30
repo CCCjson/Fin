@@ -5,7 +5,7 @@ import asyncio
 import json
 import queue
 import threading
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -17,6 +17,7 @@ from data_engine.storage.models import NewsArticle, NewsSentiment
 from news_engine.fetcher import NewsFetcher
 from news_engine.sentiment import SentimentAnalyzer
 from news_engine.analyzer import NewsAnalyzer
+from llm_config import get_cheap_model
 
 router = APIRouter(prefix="/news", tags=["新闻分析"])
 
@@ -33,13 +34,13 @@ class FetchRequest(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     article_id: str = Field(..., description="文章 ID")
-    model: str = Field("gpt-4o", description="模型: gpt-4o / gpt-4o-mini 等")
+    model: str = Field(default_factory=get_cheap_model, description="模型，默认便宜档")
 
 
 class ReportRequest(BaseModel):
     symbol: Optional[str] = Field(None, description="股票代码")
     market: str = Field("a_share", description="a_share / general")
-    model: str = Field("gpt-4o", description="模型")
+    model: str = Field(default_factory=get_cheap_model, description="模型，默认便宜档")
 
 
 # ==================== 辅助函数 ====================
@@ -272,6 +273,68 @@ async def analyze_article(request: AnalyzeRequest):
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class MorningBriefingRequest(BaseModel):
+    """盘前预览请求"""
+    limit_per_source: int = Field(15, description="每个新闻源最多返回条数")
+    enable_web: bool = Field(False, description="是否额外用真·联网搜索补充全球头条")
+    queries: Optional[List[str]] = Field(None, description="联网搜索词，不填用默认")
+
+
+@router.post("/morning-briefing", summary="盘前新闻聚合（隔夜事件）")
+async def morning_briefing(request: MorningBriefingRequest):
+    """
+    聚合隔夜国内外新闻（东财国内/全球/国际 + Finnhub），
+    供盘前预览的交叉分析使用。
+
+    返回:
+    - domestic: 国内财经新闻
+    - global: 全球/国际新闻
+    - finnhub: 英文金融新闻
+    - total: 总条数
+    """
+    from report_engine.web_searcher import MarketWebSearcher
+
+    loop = asyncio.get_event_loop()
+
+    try:
+        searcher = MarketWebSearcher(random_ip=False)
+        all_news = await loop.run_in_executor(
+            None, searcher._collect_all_news, None
+        )
+    except Exception as e:
+        logger.error(f"盘前新闻聚合失败: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+    # 按 category 分组
+    domestic = [n for n in all_news if n.get("category") == "domestic"]
+    global_news = [n for n in all_news if n.get("category") == "global"]
+    finnhub = [n for n in all_news if n.get("category") == "finnhub"]
+
+    # 可选：真·联网搜索补充全球头条（独立 try，失败不拖垮上面三组）
+    web: list = []
+    if request.enable_web:
+        try:
+            queries = request.queries or ["global financial markets today", "A股 市场 隔夜 外盘"]
+            web = await loop.run_in_executor(
+                None, lambda: MarketWebSearcher(random_ip=False).search_global_headlines(queries)
+            )
+        except Exception as e:
+            logger.warning(f"联网头条补充失败，跳过: {e}")
+            web = []
+
+    # 限制条数
+    lim = request.limit_per_source
+    resp = {
+        "domestic": domestic[:lim],
+        "global": global_news[:lim],
+        "finnhub": finnhub[:lim],
+        "total": len(all_news),
+    }
+    if request.enable_web:
+        resp["web"] = web[:lim]
+    return resp
 
 
 @router.post("/report", summary="OpenAI 综合新闻报告（流式）")

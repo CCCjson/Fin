@@ -68,7 +68,7 @@ export const NotificationBanner: React.FC = () => {
     buy: 'border-red-500/50 bg-red-500/10',
     sell: 'border-green-500/50 bg-green-500/10',
     alert: 'border-yellow-500/50 bg-yellow-500/10',
-    info: 'border-blue-500/50 bg-blue-500/10',
+    info: 'border-accent-cyan/50 bg-accent-cyan/10',
   };
 
   return (

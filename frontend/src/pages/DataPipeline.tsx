@@ -42,7 +42,7 @@ export const DataPipeline: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const intervalRef = useRef<ReturnType<typeof setInterval>>();
+  const intervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   const pollProgress = useCallback(async (tid: string) => {
     try {
@@ -190,7 +190,7 @@ export const DataPipeline: React.FC = () => {
           {/* 按钮区 */}
           <div className="mt-4 flex gap-2">
             <button onClick={handleSubmit} disabled={loading || isRunning}
-              className="flex-1 py-2.5 bg-primary hover:bg-primary/80 text-white rounded-lg font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              className="flex-1 py-2.5 bg-primary hover:bg-primary/80 text-dark rounded-lg font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
               {loading ? '提交中...' : isRunning ? '运行中...' : '开始抓取'}
             </button>
             {isRunning && (
@@ -240,7 +240,7 @@ export const DataPipeline: React.FC = () => {
                         progress.state === 'COMPLETED' ? 'bg-green-500' :
                         progress.state === 'FAILED' ? 'bg-red-500' :
                         progress.state === 'STOPPED' ? 'bg-yellow-500' :
-                        'bg-gradient-to-r from-primary to-blue-400'
+                        'bg-gradient-to-r from-primary to-accent-cyan'
                       }`}
                       style={{ width: `${progressPct}%` }}
                     />
@@ -271,7 +271,7 @@ export const DataPipeline: React.FC = () => {
                   <MetricCard
                     label="速度" icon="~"
                     value={`${progress.speed.toFixed(1)}/s`}
-                    valueColor="text-blue-400"
+                    valueColor="text-primary-light"
                   />
                   <MetricCard
                     label="耗时" icon="T"
@@ -299,7 +299,7 @@ export const DataPipeline: React.FC = () => {
           {/* 底部统计条 */}
           {globalStats && (
             <div className="bg-dark-card rounded-xl border border-border px-3 md:px-5 py-3 flex flex-wrap items-center gap-3 md:gap-6 text-xs md:text-sm">
-              <Stat label="平均速度" value={`${globalStats.avg_speed.toFixed(2)} 只/秒`} color="text-blue-400" />
+              <Stat label="平均速度" value={`${globalStats.avg_speed.toFixed(2)} 只/秒`} color="text-primary-light" />
               <Stat label="错误率" value={
                 globalStats.total_requests > 0
                   ? `${((globalStats.total_errors / globalStats.total_requests) * 100).toFixed(1)}%`
@@ -329,7 +329,7 @@ const Field: React.FC<{ label: string; hint?: string; children: React.ReactNode 
 
 const StatusBadge: React.FC<{ state: string }> = ({ state }) => {
   const styles: Record<string, string> = {
-    RUNNING:   'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    RUNNING:   'bg-primary/15 text-primary-light border-primary/40',
     COMPLETED: 'bg-green-500/15 text-green-400 border-green-500/30',
     FAILED:    'bg-red-500/15 text-red-400 border-red-500/30',
     STOPPED:   'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
@@ -337,7 +337,7 @@ const StatusBadge: React.FC<{ state: string }> = ({ state }) => {
   };
   return (
     <span className={`px-2.5 py-0.5 rounded-md text-xs font-medium border ${styles[state] || styles.PENDING}`}>
-      {state === 'RUNNING' && <span className="inline-block w-1.5 h-1.5 bg-blue-400 rounded-full mr-1.5 animate-pulse" />}
+      {state === 'RUNNING' && <span className="inline-block w-1.5 h-1.5 bg-primary rounded-full mr-1.5 animate-pulse" />}
       {state}
     </span>
   );

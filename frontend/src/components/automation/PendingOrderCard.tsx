@@ -49,8 +49,8 @@ export const PendingOrderCard: React.FC<Props> = ({ order, onConfirm, onReject, 
     REJECTED: 'text-gray-400 bg-gray-400/10',
     EXPIRED: 'text-gray-500 bg-gray-500/10',
     FAILED: 'text-red-400 bg-red-400/10',
-    EXECUTING: 'text-blue-400 bg-blue-400/10',
-    CONFIRMED: 'text-blue-400 bg-blue-400/10',
+    EXECUTING: 'text-accent-cyan bg-accent-cyan/10',
+    CONFIRMED: 'text-accent-cyan bg-accent-cyan/10',
   };
 
   const statusLabel: Record<string, string> = {

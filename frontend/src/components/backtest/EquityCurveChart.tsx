@@ -147,8 +147,8 @@ export const EquityCurveChart: React.FC<EquityCurveChartProps> = ({ data, compar
             tickFormatter={(v: number) => `${v.toFixed(0)}%`} />
           <Tooltip
             contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #374151', borderRadius: 8 }}
-            formatter={(v: number, name: string) => {
-              if (name === 'drawdown') return [`${v.toFixed(2)}%`, '回撤'];
+            formatter={(v: any, name: any) => {
+              if (name === 'drawdown') return [`${Number(v).toFixed(2)}%`, '回撤'];
               if (name === 'benchmark_value') return [
                 `${v.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`,
                 benchmark?.benchmark_name || '基准',

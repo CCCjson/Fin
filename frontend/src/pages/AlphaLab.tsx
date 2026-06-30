@@ -9,6 +9,7 @@ import {
   type StartParams,
   type SessionSummary,
   type StrategySummary,
+  type ProviderInfo,
 } from '../services/alphaLabService';
 
 // ==================== 类型 ====================
@@ -47,16 +48,20 @@ export const AlphaLab: React.FC = () => {
     runStatusRef.current = s;
     setRunStatus(s);
   }, []);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [, setSessionId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [iterations, setIterations] = useState<IterationRow[]>([]);
-  const [bestIteration, setBestIteration] = useState<number | null>(null);
+  const [, setBestIteration] = useState<number | null>(null);
   const [totalCost, setTotalCost] = useState(0);
   const [currentPhase, setCurrentPhase] = useState('explore');
 
   // --- 历史会话 ---
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedSession, setSelectedSession] = useState<(SessionSummary & { strategies: StrategySummary[] }) | null>(null);
+
+  // --- AI Provider ---
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState<string>('');
 
   // --- 策略代码查看 ---
   const [viewingCode, setViewingCode] = useState<string | null>(null);
@@ -66,8 +71,14 @@ export const AlphaLab: React.FC = () => {
   const logRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // 加载历史会话
+  // 加载 providers 和历史会话
   useEffect(() => {
+    alphaLabService.getProviders().then((res) => {
+      setProviders(res.providers || []);
+      // 默认选第一个可用的
+      const first = (res.providers || []).find((p) => p.available);
+      if (first) setSelectedProvider(first.id);
+    }).catch(() => {});
     alphaLabService.getSessions().then((res) => {
       setSessions(res.sessions || []);
     }).catch(() => {});
@@ -103,6 +114,7 @@ export const AlphaLab: React.FC = () => {
       data_start: dataStart,
       data_end: dataEnd,
       max_iterations: maxIter,
+      provider: selectedProvider || undefined,
     };
 
     try {
@@ -255,7 +267,7 @@ export const AlphaLab: React.FC = () => {
         setStatusMessage(`请求失败: ${err.message}`);
       }
     }
-  }, [symbol, goal, dataStart, dataEnd, maxIter, runStatus]);
+  }, [symbol, goal, dataStart, dataEnd, maxIter, runStatus, selectedProvider]);
 
   // --- 停止 ---
   const handleStop = useCallback(() => {
@@ -355,7 +367,7 @@ export const AlphaLab: React.FC = () => {
           {/* --- 配置面板 --- */}
           <div className="bg-gradient-card border border-border rounded-2xl rounded-tl-sm px-4 md:px-6 py-4 md:py-5">
             <h2 className="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wider">目标设定</h2>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">股票代码</label>
                 <input
@@ -366,6 +378,21 @@ export const AlphaLab: React.FC = () => {
                   className="w-full px-3 py-2 bg-dark border border-border rounded-lg text-white text-sm focus:border-primary focus:outline-none disabled:opacity-50"
                   placeholder="600519.SH"
                 />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">AI 模型</label>
+                <select
+                  value={selectedProvider}
+                  onChange={(e) => setSelectedProvider(e.target.value)}
+                  disabled={runStatus === 'running'}
+                  className="w-full px-3 py-2 bg-dark border border-border rounded-lg text-white text-sm focus:border-primary focus:outline-none disabled:opacity-50"
+                >
+                  {providers.map((p) => (
+                    <option key={p.id} value={p.id} disabled={!p.available}>
+                      {p.label}{!p.available ? ' (未配置)' : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">优化目标</label>
@@ -420,6 +447,11 @@ export const AlphaLab: React.FC = () => {
               </div>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-gray-500">
+              {selectedProvider && providers.find(p => p.id === selectedProvider) && (
+                <span className="text-gray-600" title="探索期 / 精炼期模型">
+                  {(() => { const p = providers.find(p => p.id === selectedProvider)!; return p.explore_model === p.refine_model ? p.explore_model : `${p.explore_model} → ${p.refine_model}`; })()}
+                </span>
+              )}
               <span>迭代轮数: {maxIter}</span>
               <input
                 type="range"
@@ -484,7 +516,7 @@ export const AlphaLab: React.FC = () => {
                         <td className="py-2.5 px-2">
                           <span className={`px-2 py-0.5 rounded-full text-xs ${
                             row.phase === 'explore'
-                              ? 'bg-blue-500/15 text-blue-400'
+                              ? 'bg-primary/15 text-primary-light'
                               : 'bg-purple-500/15 text-purple-400'
                           }`}>
                             {row.phase === 'explore' ? '探索' : '精炼'}
@@ -556,7 +588,7 @@ export const AlphaLab: React.FC = () => {
                     <div className="flex items-center gap-3 min-w-0">
                       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                         s.status === 'completed' ? 'bg-emerald-400' :
-                        s.status === 'running' ? 'bg-blue-400 animate-pulse' :
+                        s.status === 'running' ? 'bg-primary animate-pulse' :
                         'bg-gray-500'
                       }`} />
                       <div className="min-w-0">

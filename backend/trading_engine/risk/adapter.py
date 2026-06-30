@@ -11,21 +11,52 @@ from loguru import logger
 from data_engine.storage.database import get_session
 from data_engine.storage.models import ManualTrade, UserSettings
 from portfolio.calculator import PortfolioCalculator
+from trading_engine.config import RISK_CONFIG
 
 
 def get_total_capital() -> float:
-    """从 UserSettings 表读取总资金，默认 200000"""
+    """从 UserSettings 表读取总资金，默认 5000"""
     session = get_session()
     try:
         row = session.query(UserSettings).filter(UserSettings.key == "total_capital").first()
         if row and row.value:
             return float(row.value)
-        return 200000.0
+        return 5000.0
     except Exception as e:
         logger.warning(f"读取总资金设置失败，使用默认值: {e}")
-        return 200000.0
+        return 5000.0
     finally:
         session.close()
+
+
+def get_max_position_pct() -> float:
+    """从 UserSettings 读取单股最大仓位占比（集中度），默认 0.5。范围夹到 (0, 1]。"""
+    default = 0.5
+    session = get_session()
+    try:
+        row = session.query(UserSettings).filter(UserSettings.key == "max_position_pct").first()
+        if row and row.value:
+            v = float(row.value)
+            if v > 0:
+                return min(v, 1.0)
+        return default
+    except Exception as e:
+        logger.warning(f"读取集中度设置失败，使用默认值: {e}")
+        return default
+    finally:
+        session.close()
+
+
+def get_effective_risk_config() -> Dict[str, Any]:
+    """
+    返回生效的风控配置：在 RISK_CONFIG 基础上用用户设置覆盖单股集中度。
+    单股上限设大时，总仓位上限同步抬到 ≥ 单股上限（避免 all-in 100% 误报）。
+    """
+    cfg = dict(RISK_CONFIG)
+    pct = get_max_position_pct()
+    cfg["max_position_pct"] = pct
+    cfg["max_total_position_pct"] = max(cfg.get("max_total_position_pct", 0.8), pct)
+    return cfg
 
 
 def get_recent_closed_pnls(limit: int = 10) -> tuple[List[float], Optional[str]]:

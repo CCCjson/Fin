@@ -1,5 +1,5 @@
 """
-AI 策略代码生成器 — 支持 OpenAI API 和本地模型 (MLX/Ollama)
+AI 策略代码生成器 — 支持 OpenAI API、Claude API（中转站）和本地模型 (MLX/Ollama)
 """
 import os
 import re
@@ -14,54 +14,88 @@ from httpx import Timeout as HttpxTimeout
 from alpha_lab.prompts.system import SYSTEM_PROMPT
 from alpha_lab.prompts.generate import build_first_generate_prompt
 from alpha_lab.prompts.iterate import build_iteration_prompt
+from llm_config import normalize_chat_params
+from agents.llm_client import build_client
 
 
-def _get_provider_config() -> Dict:
-    """读取 Alpha Lab 模型配置"""
-    provider = os.getenv("ALPHA_LAB_PROVIDER", "openai").lower()
-
-    if provider == "local":
-        return {
+def _get_all_provider_configs() -> Dict[str, Dict]:
+    """读取所有可用的 provider 配置"""
+    return {
+        "local": {
             "provider": "local",
+            "label": "本地模型 (Ollama/MLX)",
             "base_url": os.getenv("ALPHA_LAB_LOCAL_BASE_URL", "http://localhost:11434/v1"),
             "model": os.getenv("ALPHA_LAB_LOCAL_MODEL", "mlx-community/Qwen2.5-Coder-14B-Instruct-4bit"),
-            "api_key": "local",  # 本地模型不需要真实 key
-        }
-    else:
-        return {
+            "api_key": "local",
+            "available": True,
+        },
+        "claude": {
+            "provider": "claude",
+            "label": "Claude (中转站)",
+            "base_url": os.getenv("ANTHROPIC_BASE_URL", "https://code.newcli.com/claude/super/v1"),
+            "explore_model": os.getenv("ALPHA_LAB_CLAUDE_EXPLORE_MODEL", "claude-sonnet-4-6"),
+            "refine_model": os.getenv("ALPHA_LAB_CLAUDE_REFINE_MODEL", "claude-opus-4-20250514"),
+            "api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+            "available": bool(os.getenv("ANTHROPIC_API_KEY")),
+        },
+        "openai": {
             "provider": "openai",
+            "label": "OpenAI",
             "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            "explore_model": os.getenv("ALPHA_LAB_EXPLORE_MODEL", "gpt-4o-mini"),
-            "refine_model": os.getenv("ALPHA_LAB_REFINE_MODEL", "gpt-4o"),
+            "explore_model": os.getenv("ALPHA_LAB_EXPLORE_MODEL", "gpt-5.4-mini"),
+            "refine_model": os.getenv("ALPHA_LAB_REFINE_MODEL", "gpt-5.4-mini"),
             "api_key": os.getenv("OPENAI_API_KEY", ""),
-        }
+            "available": bool(os.getenv("OPENAI_API_KEY")),
+        },
+    }
+
+
+def _get_provider_config(provider_name: Optional[str] = None) -> Dict:
+    """读取指定 provider 配置，默认读 .env 中的 ALPHA_LAB_PROVIDER"""
+    all_configs = _get_all_provider_configs()
+    name = (provider_name or os.getenv("ALPHA_LAB_PROVIDER", "openai")).lower()
+    if name in all_configs:
+        return all_configs[name]
+    return all_configs["openai"]
 
 
 class CodeGenerator:
     """AI 策略代码生成器"""
 
-    def __init__(self):
-        self.config = _get_provider_config()
+    def __init__(self, provider: Optional[str] = None):
+        self.config = _get_provider_config(provider)
         self.client: Optional[OpenAI] = None
         self._init_client()
 
     def _init_client(self):
+        from net_proxy import make_httpx_client
         if self.config["provider"] == "local":
+            _to = HttpxTimeout(connect=15.0, read=300.0, write=30.0, pool=30.0)
             self.client = OpenAI(
                 api_key=self.config["api_key"],
                 base_url=self.config["base_url"],
-                timeout=HttpxTimeout(connect=15.0, read=300.0, write=30.0, pool=30.0),
+                timeout=_to,
                 max_retries=1,
+                http_client=make_httpx_client(force_direct=True, timeout=_to),  # localhost 绝不走代理
             )
             logger.info(f"Alpha Lab 使用本地模型: {self.config['model']} @ {self.config['base_url']}")
+        elif self.config["provider"] == "claude":
+            # Claude 中转站：OpenAI 兼容格式，需去掉 SDK 默认的 x-stainless-* headers 防拦。
+            # 复用统一工厂 build_client（非官方域名自动清 header），避免第三份手抄拷贝。
+            api_key = self.config["api_key"]
+            if api_key:
+                self.client = build_client(base_url=self.config["base_url"], api_key=api_key)
+                logger.info(f"Alpha Lab 使用 Claude API (中转站) @ {self.config['base_url']}")
         else:
             api_key = self.config["api_key"]
             if api_key:
+                _to = HttpxTimeout(connect=15.0, read=120.0, write=30.0, pool=30.0)
                 self.client = OpenAI(
                     api_key=api_key,
                     base_url=self.config["base_url"],
-                    timeout=HttpxTimeout(connect=15.0, read=120.0, write=30.0, pool=30.0),
+                    timeout=_to,
                     max_retries=2,
+                    http_client=make_httpx_client(timeout=_to),
                 )
                 logger.info(f"Alpha Lab 使用 OpenAI API")
 
@@ -69,7 +103,7 @@ class CodeGenerator:
         """根据阶段返回模型名"""
         if self.config["provider"] == "local":
             return self.config["model"]  # 本地模型不分阶段
-        return self.config.get("explore_model", "gpt-4o-mini") if phase == "explore" else self.config.get("refine_model", "gpt-4o")
+        return self.config.get("explore_model", "gpt-5.4-mini") if phase == "explore" else self.config.get("refine_model", "gpt-5.4-mini")
 
     def is_local(self) -> bool:
         return self.config["provider"] == "local"
@@ -77,7 +111,7 @@ class CodeGenerator:
     def generate(
         self,
         messages: List[Dict],
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-5.4-mini",
         temperature: float = 0.7,
     ) -> Tuple[str, str, int]:
         """
@@ -92,10 +126,12 @@ class CodeGenerator:
         logger.info(f"调用 {model} 生成策略代码...")
 
         response = self.client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=4000,
+            **normalize_chat_params(dict(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=4096,
+            ))
         )
 
         content = response.choices[0].message.content or ""
@@ -110,7 +146,7 @@ class CodeGenerator:
     def generate_stream(
         self,
         messages: List[Dict],
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-5.4-mini",
         temperature: float = 0.7,
     ) -> Generator[Dict, None, None]:
         """
@@ -126,13 +162,13 @@ class CodeGenerator:
             return
 
         try:
-            stream_kwargs = dict(
+            stream_kwargs = normalize_chat_params(dict(
                 model=model,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=4000,
+                max_tokens=4096,
                 stream=True,
-            )
+            ))
 
             try:
                 stream = self.client.chat.completions.create(

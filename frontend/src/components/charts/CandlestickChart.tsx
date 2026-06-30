@@ -15,6 +15,7 @@ import type {
   CandlestickData as LWCandlestickData,
   HistogramData,
   LineData,
+  Time,
 } from 'lightweight-charts';
 import type { StockData } from '../../types';
 import type { IndicatorConfig } from '../../types/chart';
@@ -47,7 +48,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     middle?: ISeriesApi<'Line'>;
     lower?: ISeriesApi<'Line'>;
   }>({});
-  const markersPluginRef = useRef<ISeriesMarkersPluginApi<string> | null>(null);
+  const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
   // === MACD 子图 refs ===
   const macdChartContainerRef = useRef<HTMLDivElement>(null);

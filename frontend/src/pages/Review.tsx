@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MarketSelector } from '../components/common/MarketSelector';
+import { toast } from '../components/common/Toast';
+import { Card } from '../components/common/Card';
 import { reviewService } from '../services/reviewService';
 import type {
   ReviewData,
@@ -232,7 +234,7 @@ export const Review: React.FC = () => {
       }
     } catch (e) {
       console.error('AI score failed:', e);
-      alert('AI 评分失败，请确认 OPENAI_API_KEY 已配置');
+      toast.error('AI 评分失败，请确认 OPENAI_API_KEY 已配置');
     } finally {
       setAiScoring(false);
     }
@@ -284,7 +286,7 @@ export const Review: React.FC = () => {
           <div className="flex items-center gap-2 md:gap-4 flex-wrap">
             <h1 className="text-2xl md:text-3xl font-bold text-white">每日复盘</h1>
             <MarketSelector />
-            <div className="flex items-center gap-2 bg-dark-card border border-border rounded-xl px-2 py-1">
+            <Card variant="flat" className="flex items-center gap-2 px-2 py-1">
               <button
                 onClick={() => goDay(-1)}
                 className="px-2 py-1 text-gray-400 hover:text-white transition-colors"
@@ -310,7 +312,7 @@ export const Review: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </button>
-            </div>
+            </Card>
             {hasReview(currentDate) && (
               <span className="w-2.5 h-2.5 rounded-full bg-bull animate-pulse" title="已有复盘记录" />
             )}
@@ -321,7 +323,7 @@ export const Review: React.FC = () => {
             <button
               onClick={handleManualSave}
               disabled={saving}
-              className="px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base bg-primary text-white rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all disabled:opacity-50 flex items-center gap-2"
+              className="px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base bg-primary text-dark rounded-xl hover:bg-primary-dark shadow-glow-blue transition-all disabled:opacity-50 flex items-center gap-2"
             >
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -337,19 +339,19 @@ export const Review: React.FC = () => {
           <>
             {/* Index Cards — 按市场分组，休市的合并显示 */}
             {data.a_share_closed && data.hk_closed && data.us_closed ? (
-              <div className="bg-gradient-card p-3 md:p-5 rounded-xl border border-border shadow-card text-center">
+              <Card className="p-3 md:p-5 text-center">
                 <span className="text-gray-400 text-lg">今日休市</span>
-              </div>
+              </Card>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
                 {/* A股：休市时 3 合 1 */}
                 {data.a_share_closed ? (
-                  <div className="bg-gradient-card p-4 rounded-xl border border-border shadow-card col-span-2 md:col-span-3 flex items-center justify-center">
+                  <Card className="p-4 col-span-2 md:col-span-3 flex items-center justify-center">
                     <span className="text-gray-500">A股休市</span>
-                  </div>
+                  </Card>
                 ) : (
                   data.indices.filter(idx => ['000001', '399001', '399006'].includes(idx.symbol)).map(idx => (
-                    <div key={idx.symbol} className="bg-gradient-card p-3 md:p-4 rounded-xl border border-border shadow-card">
+                    <Card key={idx.symbol} className="p-3 md:p-4">
                       <div className="text-gray-400 text-xs md:text-sm mb-1">{idx.name}</div>
                       <div className="text-lg md:text-xl font-bold text-white">
                         {idx.price !== null ? idx.price.toLocaleString() : '-'}
@@ -359,17 +361,17 @@ export const Review: React.FC = () => {
                           ? `${idx.change_pct >= 0 ? '+' : ''}${idx.change_pct.toFixed(2)}% ${idx.change_pct >= 0 ? '\u25B2' : '\u25BC'}`
                           : '-'}
                       </div>
-                    </div>
+                    </Card>
                   ))
                 )}
                 {/* 港股 */}
                 {data.hk_closed ? (
-                  <div className="bg-gradient-card p-4 rounded-xl border border-border shadow-card flex items-center justify-center">
+                  <Card className="p-4 flex items-center justify-center">
                     <span className="text-gray-500">港股休市</span>
-                  </div>
+                  </Card>
                 ) : (
                   data.indices.filter(idx => idx.symbol === 'HSI').map(idx => (
-                    <div key={idx.symbol} className="bg-gradient-card p-3 md:p-4 rounded-xl border border-border shadow-card">
+                    <Card key={idx.symbol} className="p-3 md:p-4">
                       <div className="text-gray-400 text-xs md:text-sm mb-1">{idx.name}</div>
                       <div className="text-lg md:text-xl font-bold text-white">
                         {idx.price !== null ? idx.price.toLocaleString() : '-'}
@@ -379,17 +381,17 @@ export const Review: React.FC = () => {
                           ? `${idx.change_pct >= 0 ? '+' : ''}${idx.change_pct.toFixed(2)}% ${idx.change_pct >= 0 ? '\u25B2' : '\u25BC'}`
                           : '-'}
                       </div>
-                    </div>
+                    </Card>
                   ))
                 )}
                 {/* 美股 */}
                 {data.us_closed ? (
-                  <div className="bg-gradient-card p-4 rounded-xl border border-border shadow-card flex items-center justify-center">
+                  <Card className="p-4 flex items-center justify-center">
                     <span className="text-gray-500">美股休市</span>
-                  </div>
+                  </Card>
                 ) : (
                   data.indices.filter(idx => idx.symbol === 'SPX').map(idx => (
-                    <div key={idx.symbol} className="bg-gradient-card p-3 md:p-4 rounded-xl border border-border shadow-card">
+                    <Card key={idx.symbol} className="p-3 md:p-4">
                       <div className="text-gray-400 text-xs md:text-sm mb-1">{idx.name}</div>
                       <div className="text-lg md:text-xl font-bold text-white">
                         {idx.price !== null ? idx.price.toLocaleString() : '-'}
@@ -399,7 +401,7 @@ export const Review: React.FC = () => {
                           ? `${idx.change_pct >= 0 ? '+' : ''}${idx.change_pct.toFixed(2)}% ${idx.change_pct >= 0 ? '\u25B2' : '\u25BC'}`
                           : '-'}
                       </div>
-                    </div>
+                    </Card>
                   ))
                 )}
               </div>
@@ -407,7 +409,7 @@ export const Review: React.FC = () => {
 
             {/* Daily Overview Cards (5) */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
-              <div className="bg-gradient-card p-3 md:p-5 rounded-xl border border-border shadow-card">
+              <Card className="p-3 md:p-5">
                 <div className="text-gray-400 text-xs md:text-sm mb-2">当日总盈亏</div>
                 <div className={`text-xl md:text-2xl font-bold ${pnlColor(data.daily_pnl)}`}>
                   {pnlSign(data.daily_pnl)}
@@ -417,12 +419,12 @@ export const Review: React.FC = () => {
                     {pctStr(data.daily_pnl_pct)}
                   </div>
                 )}
-              </div>
-              <div className="bg-gradient-card p-3 md:p-5 rounded-xl border border-border shadow-card">
+              </Card>
+              <Card className="p-3 md:p-5">
                 <div className="text-gray-400 text-xs md:text-sm mb-2">持仓数</div>
                 <div className="text-xl md:text-2xl font-bold text-primary-light">{data.positions_count} 只</div>
-              </div>
-              <div className="bg-gradient-card p-3 md:p-5 rounded-xl border border-border shadow-card">
+              </Card>
+              <Card className="p-3 md:p-5">
                 <div className="text-gray-400 text-xs md:text-sm mb-2">当日交易</div>
                 <div className="text-xl md:text-2xl font-bold text-accent-cyan">{data.trades_count} 笔</div>
                 {data.trades_count > 0 && (
@@ -430,12 +432,12 @@ export const Review: React.FC = () => {
                     {data.trades.filter(t => t.side === 'BUY').length}买 {data.trades.filter(t => t.side === 'SELL').length}卖
                   </div>
                 )}
-              </div>
-              <div className="bg-gradient-card p-3 md:p-5 rounded-xl border border-border shadow-card">
+              </Card>
+              <Card className="p-3 md:p-5">
                 <div className="text-gray-400 text-xs md:text-sm mb-2">当日信号</div>
                 <div className="text-xl md:text-2xl font-bold text-accent-purple">{data.signals_total} 个</div>
-              </div>
-              <div className="bg-gradient-card p-3 md:p-5 rounded-xl border border-border shadow-card">
+              </Card>
+              <Card className="p-3 md:p-5">
                 <div className="text-gray-400 text-xs md:text-sm mb-2">自动化决策</div>
                 <div className="text-xl md:text-2xl font-bold text-amber-400">{data.decisions_count} 个</div>
                 {data.decisions_count > 0 && (
@@ -446,7 +448,7 @@ export const Review: React.FC = () => {
                     {data.decisions_failed > 0 && <span className="text-gray-400">{data.decisions_failed}失败</span>}
                   </div>
                 )}
-              </div>
+              </Card>
             </div>
 
             {/* Two columns: Left (positions + trades + signals), Right (scoring) */}
@@ -454,7 +456,7 @@ export const Review: React.FC = () => {
               {/* Left column (2/3) */}
               <div className="lg:col-span-2 flex flex-col gap-6">
                 {/* Positions daily performance */}
-                <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+                <Card className="p-3 md:p-6">
                   <h2 className="text-lg md:text-xl font-semibold text-white mb-4">持仓当日表现</h2>
                   <div className="overflow-x-auto rounded-lg border border-border">
                     <table className="w-full text-sm">
@@ -496,10 +498,10 @@ export const Review: React.FC = () => {
                       </tbody>
                     </table>
                   </div>
-                </div>
+                </Card>
 
                 {/* Day trades */}
-                <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+                <Card className="p-3 md:p-6">
                   <h2 className="text-lg md:text-xl font-semibold text-white mb-4">当日交易</h2>
                   {data.trades.length === 0 ? (
                     <div className="text-gray-500 text-center py-6">今日无交易</div>
@@ -553,11 +555,11 @@ export const Review: React.FC = () => {
                       </table>
                     </div>
                   )}
-                </div>
+                </Card>
 
                 {/* Decisions Review (自动化决策回顾) */}
                 {data.decisions_count > 0 && (
-                  <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl">
+                  <Card className="p-3 md:p-6">
                     <h2 className="text-lg md:text-xl font-semibold text-white mb-4">当日决策回顾</h2>
                     <div className="overflow-x-auto rounded-lg border border-border">
                       <table className="w-full text-sm">
@@ -633,11 +635,11 @@ export const Review: React.FC = () => {
                         </tbody>
                       </table>
                     </div>
-                  </div>
+                  </Card>
                 )}
 
                 {/* Review Note */}
-                <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl flex-1 flex flex-col">
+                <Card className="p-3 md:p-6 flex-1 flex flex-col">
                   <div className="flex items-center justify-between mb-4">
                     <h2 className="text-lg md:text-xl font-semibold text-white">复盘笔记</h2>
                     <div className="flex items-center gap-3">
@@ -672,13 +674,13 @@ export const Review: React.FC = () => {
                     {saveStatus === '已保存' && <span className="text-xs text-bull">已保存</span>}
                     {saveStatus === '保存失败' && <span className="text-xs text-bear">保存失败</span>}
                   </div>
-                </div>
+                </Card>
               </div>
 
               {/* Right column (1/3) - scoring + signals */}
               <div className="flex flex-col gap-6">
                 {/* Tabbed Score Panel */}
-                <div className="bg-gradient-card border border-border shadow-card rounded-xl overflow-hidden">
+                <Card className="overflow-hidden">
                   {/* Tab bar */}
                   <div className="flex border-b border-border">
                     {([
@@ -948,10 +950,10 @@ export const Review: React.FC = () => {
                       )}
                     </button>
                   </div>
-                </div>
+                </Card>
 
                 {/* Day signals */}
-                <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-xl flex-1 flex flex-col">
+                <Card className="p-3 md:p-6 flex-1 flex flex-col">
                   <div className="flex items-center justify-between mb-4">
                     <h2 className="text-lg md:text-xl font-semibold text-white">当日信号</h2>
                     {signalTotal > 0 && (
@@ -1024,7 +1026,7 @@ export const Review: React.FC = () => {
                       )}
                     </div>
                   )}
-                </div>
+                </Card>
               </div>
             </div>
 

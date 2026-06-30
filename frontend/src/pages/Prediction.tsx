@@ -40,7 +40,7 @@ export const Prediction: React.FC = () => {
             onClick={() => setActiveTab(t.key)}
             className={`px-3 py-1.5 md:px-5 md:py-2 rounded-md text-sm font-medium transition-all ${
               activeTab === t.key
-                ? 'bg-primary text-white shadow-glow-blue'
+                ? 'bg-primary text-dark shadow-glow-blue'
                 : 'text-gray-400 hover:text-white hover:bg-dark-light'
             }`}
           >
@@ -166,7 +166,7 @@ const TrainTab: React.FC = () => {
           <button
             onClick={handleTrain}
             disabled={!symbol || training}
-            className="px-6 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            className="px-6 py-2 bg-primary hover:bg-primary-dark text-dark rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
             {training ? '训练中...' : '开始训练'}
           </button>
@@ -188,7 +188,7 @@ const TrainTab: React.FC = () => {
               return (
                 <div key={s.key} className="flex items-center gap-1">
                   <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                    done ? 'bg-green-500 text-white' : active ? 'bg-primary text-white animate-pulse' : 'bg-dark-light text-gray-500'
+                    done ? 'bg-green-500 text-white' : active ? 'bg-primary text-dark animate-pulse' : 'bg-dark-light text-gray-500'
                   }`}>
                     {done ? '\u2713' : i + 1}
                   </span>
@@ -367,7 +367,7 @@ const PredictTab: React.FC = () => {
           <button
             onClick={handlePredict}
             disabled={!symbol || loading}
-            className="px-6 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            className="px-6 py-2 bg-primary hover:bg-primary-dark text-dark rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
             {loading ? '预测中...' : '预测'}
           </button>

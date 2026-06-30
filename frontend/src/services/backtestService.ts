@@ -1,5 +1,5 @@
 import api from './api';
-import type { BatchBacktestConfig, BatchProgressEvent, BatchBacktestSummary, BatchRankingItem } from '../types';
+import type { BatchBacktestConfig, BatchProgressEvent, BatchBacktestSummary } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
