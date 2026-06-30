@@ -1,24 +1,71 @@
 # Fin — 个人量化交易平台
 
-> 一个面向 A股、港股、美股 的全功能量化交易系统，集数据获取、技术分析、策略回测、AI 策略生成、模拟交易于一体。
+> 一个面向 **A股 / 港股 / 美股** 的全功能量化交易系统，从数据获取、技术分析、策略回测，到 AI 策略生成、多智能体投研助手、模拟交易，一站式打通。
 
-![Version](https://img.shields.io/badge/version-4.0.0-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-5.0.0-brightgreen.svg)
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
 ![React](https://img.shields.io/badge/react-19-blue.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
+---
+
+## 系统架构总览
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          前端 Web (React 19 + Vite 7)                        │
+│  K线图表 · 仪表盘 · 回测报告 · MoneyBill 对话 · 决策驾驶舱 · 选股器 · 23 个页面    │
+└───────────────────────────────┬──────────────────────────────────────────┘
+                  REST API + WebSocket（实时推送 / 流式进度）
+┌───────────────────────────────┴──────────────────────────────────────────┐
+│                       FastAPI 网关 (api/) · 30+ 路由模块                      │
+└───┬────────┬─────────┬─────────┬─────────┬─────────┬──────────┬───────────┘
+    │        │         │         │         │         │          │
+┌───┴───┐┌───┴────┐┌───┴────┐┌───┴────┐┌───┴─────┐┌──┴──────┐┌──┴────────┐
+│ 数据   ││ 分析    ││ 回测    ││ 交易    ││  AI 智能  ││ 决策辅助 ││ 知识/外脑   │
+│ 引擎   ││ 引擎    ││ 引擎    ││ 引擎    ││  体系    ││ 引擎    ││ knowledge  │
+│data_  ││analysis││backtest││trading ││MoneyBill││cockpit  ││_engine     │
+│engine ││_engine ││_engine ││_engine ││alpha_lab││screener ││ RAG 金融   │
+│       ││        ││ +C++   ││ +风控   ││advisor  ││watchlist││ 大脑       │
+└───┬───┘└────────┘└────────┘└────────┘└─────────┘└─────────┘└────────────┘
+    │
+┌───┴──────────────────────────────────────────────────────────────────────┐
+│   存储层：SQLite (market.db 行情/信号/交易)  +  knowledge.db (向量库 sqlite-vec) │
+│   数据源：AkShare · Tushare · YFinance · Finnhub · 快代理            │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**MoneyBill 多智能体编排（V5 核心）**
+
+```
+         用户自然语言提问
+                │
+        ┌───────▼────────┐    function-calling loop
+        │  MoneyBill 主 Agent │  （编排 · 工具调用 · 二次确认）
+        └───────┬────────┘
+     ┌──────────┼──────────────┬──────────────┐
+ ┌───▼───┐  ┌───▼────┐    ┌────▼────┐    ┌────▼─────┐
+ │ 工具集 │  │ 子智能体 │    │ Widget  │    │ 风控守门 │
+ │ 数据/  │  │deep_stock│    │ 卡片渲染 │    │ 下单确认 │
+ │ 分析/  │  │news     │    └─────────┘    └──────────┘
+ │ 组合/  │  │report   │
+ │ 交易   │  │alpha_lab│
+ └────────┘  └─────────┘
+```
 
 ---
 
 ## 功能模块
 
-### 数据引擎
+### 🗄️ 数据引擎 `data_engine`
 - 多市场数据获取：A股（AkShare / Tushare）、港股 & 美股（YFinance）
 - SQLite 本地持久化，支持日线 / 周线 / 月线
-- 两阶段智能加载：本地快速查询（毫秒级）+ 后台网络补齐（3 天新鲜度容忍）
-- 增量更新，自动去重，异常值清洗
-- APScheduler 定时任务，收盘后自动拉取
+- **两阶段智能加载**：本地毫秒级查询 + 后台网络补齐（3 天新鲜度容忍）
+- 增量更新、自动去重、异常值清洗
+- APScheduler 定时任务，收盘后自动拉取；快代理慢路径全市场补齐
 
-### 技术分析引擎
+### 📈 技术分析引擎 `analysis_engine`
 覆盖 4 大类、16+ 技术指标：
 
 | 类别 | 指标 |
@@ -28,62 +75,57 @@
 | 波动 | Bollinger Bands、ATR、Keltner Channel、Donchian Channel |
 | 成交量 | OBV、VWAP、MFI、成交量比率 |
 
-信号检测规则（内置可配置）：
+内置可配置信号检测：均线金叉/死叉、MACD 交叉、RSI 超买超卖、布林带回弹、放量突破、K 线形态（锤子线/吞没/早晨之星）、**多信号共振（≥3 个同时触发才开仓）**。信号支持历史回补与追踪（盈亏跟踪仪表盘）。
 
-| 信号 | 触发条件 |
-|------|---------|
-| 均线金叉 / 死叉 | MA5 与 MA20 上穿 / 下穿 |
-| MACD 交叉 | DIF 上穿 / 下穿 DEA |
-| RSI 超买超卖 | RSI < 30 回升为买，> 70 回落为卖 |
-| 布林带 | 价格触及上下轨回弹 |
-| 放量突破 | 突破阻力位 + 成交量 > 2 倍均量 |
-| K 线形态 | 锤子线、吞没形态、早晨之星等 |
-| 多信号共振 | ≥ 3 个信号同时触发才开仓 |
+### ⚙️ 回测引擎 `backtest_engine` + `backtest_cpp`
+- 初始资金可配置（默认 100 万），手续费 & 滑点真实模拟（A股万2.5 + 千1 印花税）
+- 仓位管理：固定金额 / 固定比例 / Kelly 公式
+- **C++ 高速回测内核**（`backtest_cpp/`，CMake 构建），批量回测 + 排名
+- **Walk-Forward 滚动优化**，对抗过拟合
+- 完整绩效指标：总收益率、年化、夏普、索提诺、最大回撤、胜率、盈亏比、基准对比
+- 结果可视化：资金曲线、回撤曲线、交易记录表
 
-### 回测引擎
-- 初始资金可配置（默认 100 万）
-- 手续费模拟：A股万2.5 佣金 + 千1 印花税（卖出）
-- 滑点模拟：买入加点，卖出减点
-- 仓位管理：固定金额、固定比例、Kelly 公式
-- 完整绩效指标：总收益率、年化收益率、夏普比率、索提诺比率、最大回撤、胜率、盈亏比
-- 结果可视化：资金曲线、回撤曲线、交易记录
+### 💹 交易引擎 `trading_engine`
+- **Paper Trading** 完整模拟，遵守 A 股 T+1，市价/限价单全程跟踪
+- 持仓管理：成本价、浮盈浮亏实时计算，WebSocket 推送
+- 实盘适配器：国金 QMT Bridge、Mac 自动化
+- **风控硬限（硬编码不可绕过）**：单股仓位 ≤20% · 单日亏损 ≤3% 自动停 · 总持仓 ≤80% · 强制止损 -5% · 连亏 3 次停 1 天
 
-### Paper Trading 模拟交易
-- 完整模拟真实交易流程，遵守 A 股 T+1 规则
-- 市价单 / 限价单，订单状态全程跟踪
-- 持仓管理：成本价、浮盈浮亏实时计算
-- WebSocket 实时推送账户与订单更新
+### 🤖 MoneyBill 多智能体投研助手 `agents`
+- LLM function-calling 编排层，主 Agent **MoneyBill** 自主调度工具与子智能体
+- **工具集**：数据查询、技术分析、组合查询、下单（带二次确认守门）
+- **子智能体**：`deep_stock`（个股深研）、`news`（新闻）、`report`（报告）、`alpha_lab`（策略）
+- **Widget 卡片**：结构化结果以可视化卡片渲染回前端
+- 流式输出、用量统计、技能（skills）热加载
 
-### AI 策略生成（Alpha Lab）
-- 描述策略意图，LLM 自动编写 Python 策略代码
-- 沙盒安全执行，自动评分（夏普比率 + 过拟合检测）
-- 两阶段迭代优化：Explore（探索）→ Refine（精炼）
-- 策略版本管理，支持历史对比
+### 🧪 AI 策略生成 Alpha Lab `alpha_lab`
+- 自然语言描述策略意图 → LLM 自动编写 Python 策略代码
+- 沙盒安全执行，自动评分（夏普 + 过拟合检测）
+- 两阶段迭代：Explore（探索）→ Refine（精炼），策略版本管理
+- 支持 OpenAI API 及本地 **MLX 模型**（Apple Silicon GPU 加速）
 
-### AI 财经顾问
-- 聚合财经新闻（Finnhub API）+ 情绪分析
-- 结合持仓状态和市场行情，生成个性化投资建议
-- 支持 OpenAI API 及本地 MLX 模型（Apple Silicon 加速）
+### 🧠 外置金融大脑 `knowledge_engine`（RAG）
+- 标准 RAG：本地 **bge-m3** 向量化 + ChatGPT 当大脑，独立 `knowledge.db`（sqlite-vec）
+- 文档切块（chunker）、嵌入（embedding）、检索（retriever）
+- Web 检索：DuckDuckGo、SEC EDGAR；Alpha 灵感提炼（idea_miner）
+- 暴露 `search_knowledge` 工具，供 MoneyBill / 顾问调用
 
-### 价格预测引擎
+### 🎛️ 决策辅助引擎
+- **决策驾驶舱 `cockpit_engine`**：多维度聚合打分（aggregator + scorer），一屏看清个股决策依据
+- **基本面选股器 `screener`**：多因子批量筛选
+- **自选股 + 常驻预警 `watchlist`**：盯盘清单与触发告警
+
+### 🔮 价格预测引擎 `prediction_engine`
 - 多模型集成：LSTM、XGBoost、Ensemble
-- 特征工程：技术指标 + 历史价格序列
-- 预测结果可视化，置信度展示
+- 特征工程：技术指标 + 历史价格序列，置信度可视化
 
-### 自动化交易控制
-- 自动化任务调度（APScheduler，支持 cron）
-- 待成交订单管理：标记、冻结资金、自动撤销
-- 风控硬限（不可绕过）：
-  - 单股最大仓位 ≤ 20%
-  - 单日最大亏损 ≤ 3%，触发自动停止
-  - 总持仓不超过 80%，保留现金缓冲
-  - 每笔交易必须设置止损（默认 -5%）
-  - 连续亏损 3 次后暂停交易 1 天
+### 📰 AI 财经顾问 `advisor_engine` + 新闻 `news_engine`
+- 聚合财经新闻（Finnhub）+ 情绪分析
+- 结合持仓与行情，生成个性化投资建议（OpenAI / 本地 MLX）
 
-### 模型微调（Fine-tuning）
-- 支持本地和远程 GPU（SSH 隧道）
-- 构建量化交易专属数据集
-- 微调进度实时查看
+### 🎚️ 自动化 & 微调
+- **自动化交易控制 `automation`**：APScheduler cron 调度、待成交订单管理（标记/冻结资金/自动撤销）
+- **模型微调 `finetune`**：本地 & 远程 GPU（SSH 隧道），构建量化专属数据集，进度实时查看
 
 ---
 
@@ -93,10 +135,12 @@
 | 组件 | 技术 |
 |------|------|
 | Web 框架 | FastAPI 0.109 + Uvicorn |
-| 数据库 | SQLite + SQLAlchemy 2.0 ORM |
-| 数据源 | AkShare、Tushare、YFinance |
+| 数据库 | SQLite + SQLAlchemy 2.0 ORM；knowledge.db（sqlite-vec 向量库）|
+| 数据源 | AkShare、Tushare、YFinance、Finnhub |
 | 任务调度 | APScheduler 3.10 |
-| AI | OpenAI API + 本地 MLX（Apple Silicon）|
+| AI / LLM | OpenAI API + 本地 MLX（Apple Silicon）；function-calling 编排 |
+| RAG | bge-m3 嵌入 + sqlite-vec |
+| 高速回测 | C++ 内核（CMake） |
 | 日志 | Loguru |
 | 运行环境 | Python 3.12+ / Conda `quant` |
 
@@ -104,7 +148,7 @@
 | 组件 | 技术 |
 |------|------|
 | 框架 | React 19 + TypeScript |
-| 构建工具 | Vite 7 |
+| 构建 | Vite 7 |
 | K 线图表 | Lightweight Charts 5（TradingView 开源）|
 | 统计图表 | Recharts 3 |
 | 样式 | Tailwind CSS 4 |
@@ -117,59 +161,43 @@
 ## 快速开始
 
 ### 环境要求
-
-- Python 3.12+（推荐通过 Conda 管理）
-- Node.js 18+
-- Conda（必须，所有 Python 命令在 `quant` 环境下运行）
+- Python 3.12+（推荐通过 Conda 管理）· Node.js 18+
+- **Conda（必须，所有 Python 命令在 `quant` 环境下运行）**
 
 ### 一键部署（推荐）
-
 ```bash
 # macOS / Linux
 bash deploy.sh
-
 # Windows
 deploy.bat
 ```
-
-脚本会自动创建 `quant` Conda 环境、安装所有依赖、构建前端。
+脚本会自动创建 `quant` Conda 环境、安装依赖、构建前端。
 
 ### 手动安装
-
 ```bash
 # 1. 创建并激活 Conda 环境
 conda create -n quant python=3.12 -y
 conda activate quant
 
 # 2. 安装后端依赖
-cd backend
-pip install -r requirements.txt
+cd backend && pip install -r requirements.txt
 
 # 3. 安装前端依赖
-cd ../frontend
-npm install
+cd ../frontend && npm install
 ```
 
 ### 配置环境变量
-
-复制并编辑 `.env` 文件：
-
 ```bash
-cd backend
-cp .env.example .env
+cd backend && cp .env.example .env
 ```
-
 关键配置项：
-
 ```env
 # 数据源
 TUSHARE_TOKEN=your_token_here
+FINNHUB_API_KEY=your_key_here
 
 # AI 功能
 OPENAI_API_KEY=your_key_here
-
-# 财经新闻
-FINNHUB_API_KEY=your_key_here
 
 # 本地模型（Apple Silicon 可用）
 ALPHA_LAB_PROVIDER=local
@@ -187,34 +215,25 @@ QMT_ACCOUNT_ID=your_account_id
 ```
 
 ### 启动服务
-
 ```bash
 # macOS / Linux（一键启动前后端）
 bash start.sh
-
 # Windows
 start.bat
 ```
-
 或手动分别启动：
-
 ```bash
-# 后端（在项目根目录）
+# 后端（backend 目录下）
 conda run -n quant python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
-
-# 前端（在 frontend 目录）
+# 前端（frontend 目录下）
 npm run dev
 ```
-
-**Apple Silicon 用户**（使用本地 MLX 模型）：
-
+**Apple Silicon 用户**（本地 MLX 模型）启动前需先开 MLX 服务：
 ```bash
-# 启动前需要先启动 MLX 服务
 bash backend/start_mlx_server.sh
 ```
 
 ### 访问
-
 | 服务 | 地址 |
 |------|------|
 | 前端界面 | http://localhost:5173 |
@@ -229,81 +248,57 @@ bash backend/start_mlx_server.sh
 Fin/
 ├── backend/
 │   ├── api/
-│   │   ├── main.py                 # FastAPI 应用入口
-│   │   └── routes/                 # API 路由（18 个模块）
-│   │       ├── data.py             # 行情数据接口
-│   │       ├── analysis.py         # 技术分析接口
-│   │       ├── backtest.py         # 回测接口
-│   │       ├── trading.py          # 交易接口
-│   │       ├── signal_generation.py
-│   │       ├── alpha_lab.py        # AI 策略生成接口
-│   │       ├── advisor.py          # AI 顾问接口
-│   │       ├── prediction.py       # 价格预测接口
-│   │       ├── news.py             # 新闻接口
-│   │       ├── automation.py       # 自动化控制接口
-│   │       ├── fine_tune.py        # 模型微调接口
-│   │       ├── portfolio.py        # 组合管理接口
-│   │       ├── report.py           # 报告生成接口
-│   │       └── ws.py               # WebSocket
-│   ├── data_engine/                # 数据引擎
-│   │   ├── fetchers/               # 多源数据适配器（AkShare / Tushare / YFinance）
-│   │   ├── storage/                # ORM 模型与数据库管理
-│   │   ├── processors/             # 数据清洗与标准化
-│   │   └── daily_updater.py        # 增量更新任务
-│   ├── analysis_engine/            # 技术分析引擎
-│   │   ├── indicators/             # 指标库（趋势 / 动量 / 波动 / 成交量）
-│   │   ├── signals/                # 信号检测（金叉 / MACD / RSI / 共振）
-│   │   └── patterns/               # K 线形态识别
-│   ├── backtest_engine/            # 回测引擎
-│   │   ├── strategies/             # 内置策略（均线 / MACD / 信号策略）
-│   │   ├── portfolio/              # 仓位管理 & 资金曲线
-│   │   └── metrics/                # 绩效指标计算
-│   ├── trading_engine/             # 交易引擎
-│   │   ├── brokers/                # Paper Trading & QMT 实盘适配器
-│   │   └── risk/                   # 风控模块（硬编码，不可覆盖）
-│   ├── alpha_lab/                  # AI 策略生成
-│   │   ├── engine.py               # 迭代优化引擎
-│   │   ├── code_generator.py       # LLM 代码生成
-│   │   ├── evaluator.py            # 策略评分
-│   │   └── sandbox.py              # 沙盒执行环境
+│   │   ├── main.py                 # FastAPI 应用入口（注册 30+ 路由）
+│   │   └── routes/                 # API 路由模块
+│   │       ├── data.py · analysis.py · backtest.py · backtest_cpp.py
+│   │       ├── trading.py · automation.py · portfolio.py
+│   │       ├── agent.py            # MoneyBill 多智能体接口
+│   │       ├── alpha_lab.py · advisor.py · prediction.py · news.py
+│   │       ├── knowledge.py        # RAG 金融大脑接口
+│   │       ├── cockpit.py · screener.py · watchlist.py · stock_pools.py
+│   │       ├── signal_generation.py · tracking.py · walk_forward.py
+│   │       ├── review.py · report.py · realtime.py · orderbook.py
+│   │       ├── pipeline.py · fine_tune.py · auth.py · ws.py
+│   ├── data_engine/                # 数据引擎：fetchers / storage / processors / 增量更新
+│   ├── analysis_engine/            # 技术分析：indicators / signals / patterns
+│   ├── backtest_engine/            # 回测：strategies / portfolio / metrics
+│   ├── trading_engine/             # 交易：brokers（Paper/QMT）/ risk（硬风控）/ mac_automation
+│   ├── agents/                     # 🤖 MoneyBill 多智能体编排
+│   │   ├── orchestrator.py         #   function-calling 编排循环
+│   │   ├── registry.py · executor.py · context.py · llm_client.py
+│   │   ├── tools/                  #   数据 / 分析 / 组合 / 交易 工具
+│   │   ├── subagents/              #   deep_stock / news / report / alpha_lab
+│   │   ├── skills/ · widgets.py    #   技能热加载 / Widget 卡片
+│   ├── alpha_lab/                  # AI 策略生成：engine / code_generator / evaluator / sandbox
+│   ├── knowledge_engine/           # 🧠 RAG 金融大脑
+│   │   ├── embedding.py · vector_store.py · retriever.py · chunker.py
+│   │   ├── ingest/                 #   internal / web 数据源
+│   │   ├── websearch/              #   ddg / sec_edgar
+│   │   └── idea_miner.py           #   Alpha 灵感提炼
+│   ├── cockpit_engine/             # 🎛️ 决策驾驶舱：aggregator / scorer / prompt_builder
 │   ├── advisor_engine/             # AI 财经顾问
-│   ├── prediction_engine/          # 价格预测（LSTM / XGBoost）
+│   ├── prediction_engine/          # 价格预测（LSTM / XGBoost / Ensemble）
 │   ├── news_engine/                # 新闻聚合 & 情绪分析
-│   ├── automation/                 # 自动化调度 & WebSocket 管理
+│   ├── automation/                 # 自动化调度 & 待成交订单管理
 │   ├── finetune/                   # 模型微调（本地 & 远程 GPU）
-│   ├── scripts/                    # 工具脚本
-│   │   └── fetch_all_a_shares.py  # 一键拉取全量 A 股数据
-│   ├── data/
-│   │   └── market.db              # SQLite 数据库
+│   ├── scripts/                    # 工具脚本（全量拉取 / 数据补齐）
+│   ├── data/market.db              # SQLite 行情数据库
 │   └── requirements.txt
+├── backtest_cpp/                   # ⚡ C++ 高速回测内核（CMake）
 ├── frontend/
 │   └── src/
-│       ├── pages/                  # 19 个功能页面
-│       │   ├── Dashboard.tsx       # 账户总览仪表盘
-│       │   ├── Market.tsx          # K 线图 & 行情分析
-│       │   ├── Trading.tsx         # Paper Trading 交易页
-│       │   ├── Backtest.tsx        # 回测管理
-│       │   ├── Signals.tsx         # 信号历史
-│       │   ├── SignalTracking.tsx  # 信号追踪仪表盘
-│       │   ├── Portfolio.tsx       # 投资组合管理
-│       │   ├── AlphaLab.tsx        # AI 策略生成
-│       │   ├── Advisor.tsx         # AI 投资顾问
-│       │   ├── Prediction.tsx      # 价格预测
-│       │   ├── News.tsx            # 财经新闻聚合
-│       │   ├── Automation.tsx      # 自动化控制
-│       │   ├── FineTune.tsx        # 模型微调
-│       │   ├── Reports.tsx         # 回测报告
-│       │   ├── Realtime.tsx        # 实时行情
-│       │   ├── Review.tsx          # 策略审查
-│       │   ├── OrderBook.tsx       # 订单簿
-│       │   ├── DataPipeline.tsx    # 数据管道监控
-│       │   └── Home.tsx            # 登录入口
-│       ├── components/             # 可复用 UI 组件
-│       ├── services/               # API 调用层（18 个服务）
-│       ├── stores/                 # Zustand 全局状态
-│       └── types/                  # TypeScript 类型定义
-├── deploy.sh / deploy.bat          # 一键部署脚本
-├── start.sh / start.bat            # 一键启动脚本
+│       ├── pages/                  # 23 个功能页面
+│       │   ├── Dashboard · Market · Trading · Backtest · Portfolio
+│       │   ├── MoneyBill           #   多智能体对话
+│       │   ├── Cockpit             #   决策驾驶舱
+│       │   ├── Knowledge           #   金融大脑
+│       │   ├── Screener · Watchlist · AlphaLab · Advisor · Prediction
+│       │   ├── Signals · SignalTracking · News · Automation
+│       │   ├── FineTune · Reports · Realtime · Review · OrderBook · DataPipeline
+│       ├── components/             # UI 组件（moneybill / charts / backtest / trading-center …）
+│       ├── services/ · stores/ · types/
+├── deploy.sh / deploy.bat          # 一键部署
+├── start.sh / start.bat           # 一键启动
 └── CLAUDE.md                       # 开发规范与架构说明
 ```
 
@@ -311,44 +306,31 @@ Fin/
 
 ## API 速览
 
-### 数据接口
 ```
-POST /data/daily          # 获取日线数据（支持本地缓存模式）
-GET  /data/stocks         # 获取股票列表
-POST /data/update         # 手动触发数据更新
-```
+# 数据 / 分析
+POST /data/daily              # 日线数据（支持本地缓存模式）
+POST /analysis/signals        # 生成买卖信号
+POST /analysis/patterns       # 识别 K 线形态
 
-### 技术分析
-```
-POST /analysis/indicators # 计算技术指标
-POST /analysis/signals    # 生成买卖信号
-POST /analysis/patterns   # 识别 K 线形态
-```
+# 回测
+POST /backtest/run            # 运行策略回测
+POST /walk_forward/run        # Walk-Forward 滚动优化
 
-### 回测
-```
-POST /backtest/run        # 运行策略回测
-GET  /backtest/strategies # 查看支持的策略列表
-```
+# 模拟交易
+POST /trading/order           # 提交订单
+GET  /trading/positions       # 查看持仓
 
-### 模拟交易
-```
-POST /trading/order       # 提交订单
-GET  /trading/account     # 查看账户信息
-GET  /trading/positions   # 查看持仓
-GET  /trading/orders      # 查看订单历史
-```
+# AI 智能体
+POST /agent/chat              # MoneyBill 多智能体对话（流式）
+POST /alpha_lab/start         # 启动 AI 策略生成
+POST /advisor/suggest         # AI 投资建议
+POST /knowledge/search        # RAG 金融大脑检索
 
-### AI 功能
+# 决策辅助
+GET  /cockpit/{symbol}        # 决策驾驶舱评分
+POST /screener/run            # 基本面选股
+GET  /watchlist               # 自选股 & 预警
 ```
-POST /alpha_lab/start     # 启动 AI 策略生成
-GET  /alpha_lab/progress  # 查看迭代进度（流式）
-GET  /alpha_lab/strategies# 查看已生成的策略库
-POST /advisor/suggest     # 获取 AI 投资建议
-POST /prediction/predict  # 价格预测
-GET  /news/latest         # 最新财经新闻
-```
-
 完整 API 文档：http://localhost:8000/docs
 
 ---
@@ -360,66 +342,9 @@ GET  /news/latest         # 最新财经新闻
 | `daily_quotes` | 日线行情数据（OHLCV）|
 | `stock_info` | 股票基本信息 |
 | `signals` | 交易信号记录 |
-| `backtest_tasks` | 回测任务 |
-| `backtest_results` | 回测结果详情 |
-| `orders` | 订单记录 |
-| `trades` | 成交记录 |
-
----
-
-## 使用示例
-
-### 拉取全量 A 股数据
-
-```bash
-conda run -n quant python backend/scripts/fetch_all_a_shares.py
-```
-
-### 运行策略回测
-
-通过前端界面：
-1. 进入"回测"页面
-2. 选择股票代码（如 `000001.SZ`）
-3. 设置日期范围和初始资金
-4. 选择策略（MA Cross、MACD、RSI 等）
-5. 点击"开始回测"查看绩效报告
-
-或通过 API：
-
-```bash
-curl -X POST http://localhost:8000/backtest/run \
-  -H "Content-Type: application/json" \
-  -d '{
-    "symbol": "000001.SZ",
-    "start_date": "2023-01-01",
-    "end_date": "2024-01-01",
-    "initial_capital": 1000000,
-    "strategy": "ma_cross",
-    "strategy_params": {"fast_period": 5, "slow_period": 20}
-  }'
-```
-
-### AI 策略生成（Alpha Lab）
-
-1. 进入"Alpha Lab"页面
-2. 用自然语言描述策略思路，如：
-   > "在 RSI 低于 30 的超卖区间，结合 MACD 金叉信号，分批建仓"
-3. 点击"生成策略"，等待 LLM 编写并自动回测
-4. 查看迭代优化过程和最终 Sharpe 评分
-
----
-
-## 绩效指标说明
-
-| 指标 | 计算方式 |
-|------|---------|
-| 总收益率 | (期末资产 - 期初资产) / 期初资产 |
-| 年化收益率 | ((1 + 总收益率) ^ (252 / 交易日数)) - 1 |
-| 夏普比率 | (年化收益 - 无风险利率) / 年化波动率 |
-| 索提诺比率 | (年化收益 - 无风险利率) / 下行波动率 |
-| 最大回撤 | 从峰值到谷底的最大跌幅 |
-| 胜率 | 盈利交易次数 / 总交易次数 |
-| 盈亏比 | 平均盈利 / 平均亏损 |
+| `backtest_tasks` / `backtest_results` | 回测任务与结果 |
+| `orders` / `trades` | 订单与成交记录 |
+| `knowledge.db`（独立）| RAG 文档块 + bge-m3 向量（sqlite-vec）|
 
 ---
 
@@ -435,40 +360,36 @@ curl -X POST http://localhost:8000/backtest/run \
 
 ---
 
+## 版本历史
+
+| 版本 | 主要功能 |
+|------|---------|
+| **V5.0.0** | **MoneyBill 多智能体投研助手、RAG 金融大脑（knowledge_engine）、决策驾驶舱、基本面选股器、自选股预警** |
+| V4.x | Alpha Lab AI 策略生成、模型微调、数据管道可视化、本地 MLX 支持、C++ 高速回测 |
+| V3.0.0 | AI 财经顾问、实时行情 WebSocket、自动化交易调度 |
+| V2.x | 界面深度优化、多设备同局域网访问 |
+| V1.x | 数据/分析/回测/交易核心链路、报告生成 |
+
+---
+
 ## 常见问题
 
 **Q: 数据获取失败，提示网络错误？**
-A: 检查代理配置（`HTTP_PROXY` / `HTTPS_PROXY` 环境变量），或先使用本地缓存数据（`db_only=true`）。
+A: 检查代理配置（`HTTP_PROXY` / `HTTPS_PROXY`），或先用本地缓存（`db_only=true`）。
 
-**Q: Alpha Lab 报错找不到模型？**
-A: 本地模式需要先启动 MLX 服务（`bash backend/start_mlx_server.sh`）；或切换为 OpenAI 模式（设置 `ALPHA_LAB_PROVIDER=openai`）。
-
-**Q: Paper Trading 下单失败？**
-A: 确认账户已初始化（`POST /trading/init`），并通过 `POST /trading/price/update` 更新当前市价。
+**Q: Alpha Lab / MoneyBill 报错找不到模型？**
+A: 本地模式需先启动 MLX 服务（`bash backend/start_mlx_server.sh`）；或切 OpenAI 模式（`ALPHA_LAB_PROVIDER=openai`）。
 
 **Q: 回测资产曲线是平线？**
 A: 检查所选日期范围内是否有行情数据，以及策略参数是否产生了交易信号。
 
 ---
 
-## 版本历史
-
-| 版本 | 主要功能 |
-|------|---------|
-| V4.0.0 | Alpha Lab AI 策略生成、模型微调、数据管道可视化、本地 MLX 支持 |
-| V3.0.0 | AI 财经顾问、实时行情 WebSocket、自动化交易调度、C++ 高速回测 |
-| V2.1.0 | 界面深度优化、交互体验提升 |
-| V2.0.0 | 多设备同局域网访问、Bug 修复 |
-| V1.4.1 | 报告生成 Bug 修复 |
-
----
-
 ## 开发规范
 
-- 所有函数必须有 **类型注解**（type hints）
-- 文档字符串遵循 **Google style docstring**
-- 错误处理：禁止裸 `except`，必须捕获具体异常类型
-- 日志：使用 **Loguru**，关键操作必须记录
+- 所有函数必须有**类型注解**；文档字符串遵循 **Google style docstring**
+- 禁止裸 `except`，必须捕获具体异常类型
+- 日志使用 **Loguru**，关键操作必须记录
 - 敏感信息（API Key 等）只存 `.env`，不得硬编码
 
 ---
@@ -481,4 +402,4 @@ A: 检查所选日期范围内是否有行情数据，以及策略参数是否�
 
 ## 作者
 
-Built with by cccjson (Jason)
+Built with ❤️ by cccjson (Jason)
