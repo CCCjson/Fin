@@ -1,3 +1,12 @@
+# ==================== 外置金融大脑 敏感物 / 数据 ====================
+# 逆向 API 站点配置含会话 cookie（登录态 token），绝不提交
+backend/configs/scrapers/
+# Playwright 持久化浏览器会话（cookie/登录态）
+backend/data/browser_profile/
+# 知识库数据（向量/全文，本地数据不入库）
+backend/data/knowledge.db
+backend/data/knowledge.db-*
+
 # ==================== Python ====================
 __pycache__/
 *.py[cod]
@@ -49,7 +58,10 @@ backend/md_flow/
 backend/td_flow/
 
 # ==================== 测试文件 ====================
-backend/tests/
+# 旧版一次性脚本式测试（依赖真实网络/数据库，不追踪）继续忽略；
+# tests/agents/ 是正规 pytest 安全网（harness 回归测试），需要进版本控制。
+backend/tests/*
+!backend/tests/agents/
 
 # ==================== 环境变量 & 密钥 ====================
 .env
@@ -63,6 +75,8 @@ restart.sh
 
 # ==================== 日志 ====================
 logs/
+# backend/logs 已挪到 T9 外置盘、现在是软链接，trailing-slash 规则不匹配软链接，故单独列出
+backend/logs
 *.log
 *.log.*
 nohup.out
