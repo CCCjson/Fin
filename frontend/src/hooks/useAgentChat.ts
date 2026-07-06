@@ -60,6 +60,12 @@ export function useAgentChat({ storeApi, getPageContext, model, onNavigate }: Us
   const makeOnEvent = useCallback((id: string) => (ev: AgentStreamEvent) => {
     const s = storeApi.getState();
     switch (ev.event) {
+      case 'start':
+        // turn 开始的信号（run_stream / resume_with_confirmation 起手都会发）。
+        // loading/streaming 状态已经在 runStream() 调用前同步置位，这里无需
+        // 额外动作；显式列出这个 case 只是为了和"真正未知的事件类型"区分开，
+        // 别让协议里声明过的事件悄悄落进 default 分支变得像是没处理。
+        break;
       case 'session_created':
         if (ev.session_id) s.setServerSessionId(id, ev.session_id);
         break;
@@ -118,6 +124,10 @@ export function useAgentChat({ storeApi, getPageContext, model, onNavigate }: Us
         // 只会让确认永远匹配失败得莫名其妙——宁可留个告警把问题暴露出来。
         if (!ev.id) console.warn('confirm_required 缺少 tool_call_id，后端可能异常，确认将无法匹配');
         setPendingConfirm({ id: ev.id ?? '', name: ev.name || '', preview: ev.preview });
+        break;
+      case 'await_confirm':
+        // 确认弹窗已经由上面的 confirm_required 驱动出来了；这个事件只是后端
+        // 状态机里"轮到用户决策"的标记，前端没有额外要做的，显式列出同上。
         break;
       case 'error':
         flushBuffer(id);
