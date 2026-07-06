@@ -54,10 +54,14 @@ def test_every_tool_has_a_group(td):
 
 @pytest.mark.parametrize("td", _all_tools(), ids=_id)
 def test_domain_tools_have_args_model_unless_known_legacy(td):
-    """普通领域工具（非 subagent、非元工具）应该用 args_model 声明参数——
-    单一数据源同时承担运行时校验与 schema 生成。已知例外见 _LEGACY_NO_ARGS_MODEL。"""
-    if td.is_subagent or td.name == META_TOOL:
-        pytest.skip("subagent/元工具的参数校验路径不同，见专门的 subagent 契约测试")
+    """普通领域工具应该用 args_model 声明参数——单一数据源同时承担运行时校验与
+    schema 生成。已知例外见 _LEGACY_NO_ARGS_MODEL。
+
+    Phase 2 后 subagent 也已迁移到 args_model（tool_dispatch.dispatch 校验），
+    与域工具走同一条断言；只有元工具 load_toolgroup（enum 需动态注入组名，
+    手写 parameters 有正当理由）继续例外。"""
+    if td.name == META_TOOL:
+        pytest.skip("元工具的 enum 需动态注入组名，手写 parameters 有正当理由")
     if td.name in _LEGACY_NO_ARGS_MODEL:
         assert td.args_model is None, (
             f"{td.name} 已经有 args_model 了，请把它从 _LEGACY_NO_ARGS_MODEL 里移除")

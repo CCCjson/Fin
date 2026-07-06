@@ -30,12 +30,18 @@ class EV:
     # 结构化结果卡片/图表
     WIDGET = "widget"
 
+    # agent 驱动前端导航（打开某功能页并预填）
+    NAVIGATE = "navigate"
+
     # 交易二次确认
     CONFIRM_REQUIRED = "confirm_required"
     AWAIT_CONFIRM = "await_confirm"
 
     # token 用量 & 成本
     USAGE = "usage"
+
+    # 工具调用流程监控（kind=intervention 干预 / kind=turn_summary 回合汇总）
+    MONITOR = "monitor"
 
 
 def emit(event: str, **fields: Any) -> str:

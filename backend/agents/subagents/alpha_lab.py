@@ -6,7 +6,8 @@ from typing import Generator
 from loguru import logger
 
 from agents.events import EV, emit
-from agents.subagents.base import SubagentRunner
+from agents.subagents.base import SubagentRunner, emit_subagent_done
+from agents.tool_envelope import ErrorCode, ToolEnvelope
 from agents.widgets import metric_cards_widget
 
 
@@ -18,13 +19,22 @@ class AlphaLabSubagent(SubagentRunner):
         if isinstance(symbols, str):
             symbols = [symbols]
         if not symbols:
-            yield emit("subagent_done", result={"summary": "缺少 symbols，无法研发策略", "widgets": []})
+            yield emit_subagent_done(ToolEnvelope(
+                ok=False, error_code=ErrorCode.VALIDATION_ERROR,
+                message="缺少 symbols，无法研发策略"))
             return
         goal = args.get("goal") or args.get("optimization_goal") or "sharpe"
         end = datetime.now()
         data_end = args.get("data_end") or end.strftime("%Y-%m-%d")
         data_start = args.get("data_start") or (end - timedelta(days=3 * 365)).strftime("%Y-%m-%d")
-        max_iter = int(args.get("max_iterations", 8))
+        # 钳到 [1,20]：max_iterations 来自模型可控的 tool args，无上限的话
+        # 模型传个大数会让引擎连转几十轮（每轮 LLM 生成 + 最长 90s 沙箱回测），
+        # 长时间烧钱。20 轮足够覆盖 explore(5)+refine，超出无实际收益。
+        try:
+            max_iter = int(args.get("max_iterations", 8))
+        except (TypeError, ValueError):
+            max_iter = 8
+        max_iter = max(1, min(max_iter, 20))
 
         from alpha_lab.engine import AlphaLabEngine
 
@@ -61,7 +71,10 @@ class AlphaLabSubagent(SubagentRunner):
                                message=f"⚠️ {ev.get('error') or ev.get('message')}")
         except Exception as e:  # noqa: BLE001
             logger.error(f"alpha_lab subagent 失败: {e}")
-            yield emit("subagent_done", result={"summary": f"策略研发失败：{e}", "widgets": []})
+            yield emit_subagent_done(ToolEnvelope(
+                ok=False, error_code=ErrorCode.INTERNAL_ERROR,
+                error_detail={"exception_type": type(e).__name__, "message": str(e)},
+                message=f"策略研发失败：{e}"))
             return
 
         # alpha_lab 自带美元成本，直接计入用量监视器
@@ -74,19 +87,24 @@ class AlphaLabSubagent(SubagentRunner):
             pass
 
         if complete is None:
-            yield emit("subagent_done", result={"summary": "策略研发未正常完成（可能数据或模型未就绪）", "widgets": []})
+            # 引擎循环结束但没能走到 session_complete——过程本身出了岔子（数据/模型未就绪
+            # 一类），不是"研发完成但没找到好策略"这种诚实业务结论，归类为内部错误更准确。
+            yield emit_subagent_done(ToolEnvelope(
+                ok=False, error_code=ErrorCode.INTERNAL_ERROR,
+                error_detail={"message": "session_complete 事件缺失"},
+                message="策略研发未正常完成（可能数据或模型未就绪）"))
             return
 
-        widgets = []
+        widget = None
         if best:
-            widgets.append(metric_cards_widget([
+            widget = metric_cards_widget([
                 {"label": "训练 Sharpe", "value": str(best.get("train_sharpe")), "type": "quality"},
                 {"label": "验证 Sharpe", "value": str(best.get("val_sharpe")), "type": "quality"},
                 {"label": "综合评分", "value": str(best.get("composite_score")), "type": "quality"},
                 {"label": "过拟合分", "value": str(best.get("overfit_score")), "type": "risk"},
-            ], title=f"最佳策略（第 {complete.get('best_iteration')} 轮）"))
+            ], title=f"最佳策略（第 {complete.get('best_iteration')} 轮）")
 
         summary = (f"策略研发完成：最佳第 {complete.get('best_iteration')} 轮，"
                    f"验证 Sharpe {complete.get('best_sharpe')}，共 {complete.get('total_iterations')} 轮，"
                    f"花费 ${complete.get('total_cost_usd')}。session_id={complete.get('session_id')}")
-        yield emit("subagent_done", result={"summary": summary, "widgets": widgets})
+        yield emit_subagent_done(ToolEnvelope(message=summary, widget=widget))

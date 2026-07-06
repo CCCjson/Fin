@@ -16,6 +16,6 @@ def test_search_stocks_returns_top_10_not_5():
     with patch("agents.tools.data_tools._get_engine") as mock_engine:
         mock_engine.return_value.search_stocks.return_value = fake_results
         r = search_stocks(keyword="股票", market="a_share")
-    assert r["summary"]["count"] == 12
-    assert len(r["summary"]["matches"]) == 10
-    assert r["summary"]["matches"] == fake_results[:10]
+    assert r.data["count"] == 12
+    assert len(r.data["matches"]) == 10
+    assert r.data["matches"] == fake_results[:10]

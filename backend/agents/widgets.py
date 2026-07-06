@@ -101,9 +101,10 @@ def sparkline_widget(symbol: str, series: list[dict], summary: dict) -> dict:
     """日线走势 → price_sparkline widget（迷你折线 + 区间涨跌幅）。
     series: [{date, close}, ...]（近 30~60 根）
     """
+    display_name = summary.get("name") or symbol
     return {
         "type": "price_sparkline",
-        "title": f"{symbol} · 近{summary.get('window_days', '')}日走势",
+        "title": f"{display_name} · 近{summary.get('window_days', '')}日走势",
         "data": {
             "symbol": symbol,
             "series": series,
@@ -111,6 +112,63 @@ def sparkline_widget(symbol: str, series: list[dict], summary: dict) -> dict:
             "change_pct": summary.get("change_pct"),
             "high": summary.get("high"),
             "low": summary.get("low"),
+        },
+    }
+
+
+def recommendation_board_widget(summary: dict) -> dict:
+    """选股推荐 → recommendation_board widget（分区：新买入 / 持仓处置 / 观望态 / 买不起）。
+
+    直接映射 recommend_stocks 的 summary。前端未注册时会 fallback 成 JSON details。
+    """
+    return {
+        "type": "recommendation_board",
+        "title": "选股推荐",
+        "data": {
+            "session_phase": summary.get("session_phase"),
+            "market_state": summary.get("market_state"),
+            "provisional": summary.get("provisional"),
+            "total_capital": summary.get("total_capital"),
+            "available_cash": summary.get("available_cash"),
+            "max_single_amount": summary.get("max_single_amount"),
+            "signal_date": summary.get("signal_date"),
+            "signal_count_today": summary.get("signal_count_today"),
+            "buys": summary.get("buys", []),
+            "holdings_advice": summary.get("holdings_advice", []),
+            "skipped_unaffordable": summary.get("skipped_unaffordable", []),
+            "note": summary.get("note"),
+        },
+    }
+
+
+def limit_up_pool_widget(overview: dict) -> dict:
+    """涨停池复盘 → limit_up_pool widget（家数/连板梯队/炸板率/赚钱效应/连板榜）。"""
+    return {
+        "type": "limit_up_pool",
+        "title": "涨停池全览",
+        "data": {
+            "trade_date": overview.get("trade_date"),
+            "limit_up_count": overview.get("limit_up_count"),
+            "break_count": overview.get("break_count"),
+            "break_rate": overview.get("break_rate"),
+            "ladder_distribution": overview.get("ladder_distribution", {}),
+            "profit_effect": overview.get("profit_effect", {}),
+            "top_boards": overview.get("top_boards", []),
+            "top_zhaban": overview.get("top_zhaban", []),
+        },
+    }
+
+
+def limit_up_candidates_widget(result: dict) -> dict:
+    """次日涨停候选池 → limit_up_candidates widget（打分排名 + 归因 + 免责声明）。"""
+    return {
+        "type": "limit_up_candidates",
+        "title": "次日涨停候选池",
+        "data": {
+            "predict_date": result.get("predict_date"),
+            "target_date": result.get("target_date"),
+            "candidates": result.get("candidates", []),
+            "disclaimer": "预测基于历史规律统计，非100%准确，仅供参考，不构成投资建议",
         },
     }
 
