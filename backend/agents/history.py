@@ -96,7 +96,7 @@ def _render_for_summary(blocks: list[list[dict]]) -> str:
 
 
 def _llm_summarize(text: str, model: str) -> Optional[str]:
-    from agents.llm_client import stream_chat
+    from llm_client import stream_chat
     from agents.usage import USAGE
     out: list[str] = []
     try:

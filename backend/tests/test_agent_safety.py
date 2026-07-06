@@ -64,7 +64,7 @@ def _script_stream_chat(script: list):
 
 
 def _run(monkeypatch, session, script, message="测试"):
-    import agents.llm_client as lc
+    import llm_client as lc
     monkeypatch.setattr(lc, "stream_chat", _script_stream_chat(script))
     orch = MonitorOrchestrator()
     return [json.loads(line) for line in
@@ -127,7 +127,7 @@ def test_confirm_correct_id_executes(monkeypatch):
     ])
     pending_id = session.pending_tool_call.id
 
-    import agents.llm_client as lc
+    import llm_client as lc
     import decision_log
     monkeypatch.setattr(lc, "stream_chat", _script_stream_chat([None]))  # 收尾纯文本
     monkeypatch.setattr(decision_log, "record_decision", lambda **kw: None)
@@ -151,7 +151,7 @@ def test_cancel_event_stops_loop(monkeypatch):
         raise AssertionError("断开后不应再调 LLM")
         yield  # pragma: no cover
 
-    import agents.llm_client as lc
+    import llm_client as lc
     monkeypatch.setattr(lc, "stream_chat", boom)
     orch = MonitorOrchestrator()
     lines = [json.loads(x) for x in orch.run_stream(session, "hi", model="fake-model")]

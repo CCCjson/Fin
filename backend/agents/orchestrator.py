@@ -149,7 +149,7 @@ class MonitorOrchestrator:
             assistant_msg = None
             tool_calls: list[dict] = []
             try:
-                from agents.llm_client import stream_chat
+                from llm_client import stream_chat
                 for ev in stream_chat(session.messages, model=model, tools=tools):
                     if ev["type"] == "text":
                         if ev["content"]:
@@ -274,7 +274,7 @@ class MonitorOrchestrator:
         max_rounds 保险丝与 token 硬预算熔断共用；异常向上抛，由调用方兜底。
         """
         from agents.usage import USAGE
-        from agents.llm_client import stream_chat
+        from llm_client import stream_chat
         session.messages.append({"role": "system", "content": notice})
         assistant_msg = None
         p = c = 0

@@ -33,9 +33,10 @@ def _id(td):
     return td.name
 
 
-# 已知历史债务：knowledge_engine/tools.py 注册的工具还没迁到 args_model
-# （Phase 4 只挪注册位置，不在本次范围内迁移 schema）。这是一份收缩型白名单——
-# 只能变短不能变长：新工具落地时若也漏了 args_model，这里的断言会红。
+# 已知历史债务：agents/tools/knowledge_tools.py（原 knowledge_engine/tools.py，
+# Phase 4 只挪了注册位置到工具层，不在本次范围内迁移 schema）注册的工具还没迁到
+# args_model。这是一份收缩型白名单——只能变短不能变长：新工具落地时若也漏了
+# args_model，这里的断言会红。
 _LEGACY_NO_ARGS_MODEL = {
     "search_knowledge", "web_search", "sec_search",
     "read_url", "login_site", "scrape", "list_alpha_ideas",

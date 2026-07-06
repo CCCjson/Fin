@@ -66,29 +66,19 @@ BEGINNER_TEMPLATE = """## 今日复盘
 
 
 def _get_proxy_manager():
-    """延迟导入并创建 ProxyManager"""
-    try:
-        import sys
-        scripts_dir = str(Path(__file__).resolve().parent.parent / "scripts")
-        if scripts_dir not in sys.path:
-            sys.path.insert(0, scripts_dir)
-        from proxy_manager import ProxyManager
-        return ProxyManager()
-    except Exception as e:
-        logger.debug(f"无法创建 ProxyManager: {e}")
-        return None
+    """延迟创建 ProxyManager（统一走 net 层）"""
+    from net import get_proxy_manager
+    return get_proxy_manager()
 
 
 def _make_session(proxies=None):
-    """创建 requests.Session，绕过系统代理，只用显式传入的快代理"""
-    s = requests.Session()
-    s.trust_env = False  # 绕过 Clash 等系统代理
+    """创建绕过系统代理的 Session（复用 net.make_domestic_session + 东财 headers）"""
+    from net import make_domestic_session
+    s = make_domestic_session(proxies)
     s.headers.update({
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
         "Referer": "https://finance.eastmoney.com/",
     })
-    if proxies:
-        s.proxies.update(proxies)
     return s
 
 
@@ -271,8 +261,6 @@ class ReviewService:
         """
         请求 AI 评分（非流式，直接返回结果）
         """
-        from openai import OpenAI
-
         session = get_session()
         try:
             # 收集当日数据
@@ -302,8 +290,8 @@ class ReviewService:
             if not api_key:
                 raise ValueError("OPENAI_API_KEY 未配置")
 
-            from net_proxy import make_httpx_client
-            client = OpenAI(api_key=api_key, base_url=base_url, http_client=make_httpx_client())
+            from llm_client import build_client
+            client = build_client(base_url=base_url, api_key=api_key)
             logger.info(f"AI评分请求 | date={review_date}")
 
             response = client.chat.completions.create(

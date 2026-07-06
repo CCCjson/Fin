@@ -15,7 +15,7 @@ from alpha_lab.prompts.system import SYSTEM_PROMPT
 from alpha_lab.prompts.generate import build_first_generate_prompt
 from alpha_lab.prompts.iterate import build_iteration_prompt
 from llm_config import normalize_chat_params
-from agents.llm_client import build_client
+from llm_client import build_client
 
 
 def _get_all_provider_configs() -> Dict[str, Dict]:
@@ -89,14 +89,7 @@ class CodeGenerator:
         else:
             api_key = self.config["api_key"]
             if api_key:
-                _to = HttpxTimeout(connect=15.0, read=120.0, write=30.0, pool=30.0)
-                self.client = OpenAI(
-                    api_key=api_key,
-                    base_url=self.config["base_url"],
-                    timeout=_to,
-                    max_retries=2,
-                    http_client=make_httpx_client(timeout=_to),
-                )
+                self.client = build_client(base_url=self.config["base_url"], api_key=api_key)
                 logger.info(f"Alpha Lab 使用 OpenAI API")
 
     def get_model_for_phase(self, phase: str) -> str:

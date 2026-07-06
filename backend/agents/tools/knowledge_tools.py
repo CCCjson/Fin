@@ -1,12 +1,19 @@
 """
 knowledge_engine 工具 — 注册进 agents.REGISTRY，供 MoneyBill 调用。
 
+从 knowledge_engine/tools.py 搬来（Phase 4 分层治理）：注册本该在工具层，
+不该让引擎层反向 import agents.registry。这里全是薄适配器，真正的业务逻辑
+（尤其 scrape 的侦查/取数/cookie 自愈编排）在 knowledge_engine.reverse_api。
+
 P0：search_knowledge（检索本地已沉淀知识库，带引用）。
 P1：web_search / sec_search / read_url（系统的真·联网层，移植自 Scrapper）。
-
-注册靠 @tool 装饰器副作用，需被 import 触发（见 agents/tools/__init__.py 的接线）。
 """
+from typing import Optional
+
+from loguru import logger
+
 from agents.registry import tool
+from knowledge_engine.reverse_api import scrape as _scrape
 
 
 @tool(
@@ -30,6 +37,7 @@ from agents.registry import tool
         "required": ["query"],
     },
     category="knowledge",
+    group="knowledge_web",
 )
 def search_knowledge(query: str, top_k: int = 5, source_type: str = "all") -> dict:
     from knowledge_engine.retriever import Retriever
@@ -60,6 +68,7 @@ def search_knowledge(query: str, top_k: int = 5, source_type: str = "all") -> di
         "required": ["query"],
     },
     category="websearch",
+    group="knowledge_web",
 )
 def web_search(query: str, max_results: int = 8, site: str = None) -> dict:
     from knowledge_engine.websearch import web_search as _ws
@@ -85,6 +94,7 @@ def web_search(query: str, max_results: int = 8, site: str = None) -> dict:
         "required": ["query"],
     },
     category="websearch",
+    group="knowledge_web",
 )
 def sec_search(query: str, max_results: int = 10, forms: str = None) -> dict:
     from knowledge_engine.websearch import sec_search as _ss
@@ -108,14 +118,88 @@ def sec_search(query: str, max_results: int = 10, forms: str = None) -> dict:
         "required": ["url"],
     },
     category="websearch",
+    group="knowledge_web",
 )
 def read_url(url: str, max_chars: int = 8000) -> dict:
     from knowledge_engine.websearch import read_url as _ru
     doc = _ru(url, max_chars=max_chars)
     if not doc["text"]:
-        return {"summary": f"无法读取该 URL 正文（可能反爬/无内容）：{url}"}
+        from knowledge_engine.browser.diagnose import diagnose
+        d = diagnose(url=url)  # 空正文 → 盾页/需cookie/非目标内容
+        return {"summary": {"message": "无法读取该 URL 正文", "url": url,
+                            "why": d["reason"], "how": d["suggestion"]}}
     return {"summary": {"title": doc["title"], "url": url,
                         "chars": len(doc["text"]), "text": doc["text"]}}
+
+
+@tool(
+    name="login_site",
+    description=(
+        "【人工登录】打开有头浏览器 + 目标站，让 Jason 手动登录一次，登录后自动抓取 cookie "
+        "存进站点配置，然后关闭浏览器。用于：某站需要登录、或登录态彻底过期导致 fetch_api "
+        "刷不出有效 cookie 时。登录需 Jason 在电脑前——调用前先告诉他要登哪个站。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "要登录的站点 URL（登录页或首页均可）"},
+            "timeout_s": {"type": "integer", "description": "最长等待登录秒数，默认 300"},
+        },
+        "required": ["url"],
+    },
+    category="websearch",
+    group="knowledge_web",
+)
+def login_site(url: str, timeout_s: int = 300) -> dict:
+    from knowledge_engine.config import get_playwright_enabled
+    if not get_playwright_enabled():
+        return {"summary": {"saved": False,
+                            "message": "浏览器爬虫未启用：请在 .env 设 KNOWLEDGE_PLAYWRIGHT_ENABLED=true"}}
+    from knowledge_engine.browser.launch import run_off_loop
+    from knowledge_engine.browser.manual_login import manual_login
+    try:
+        r = run_off_loop(manual_login, url, timeout_s)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"login_site 失败：{e}")
+        return {"summary": {"saved": False, "message": f"打开浏览器登录失败：{str(e)[:120]}"}}
+    if not r.get("saved"):
+        return {"summary": {"saved": False, "domain": r.get("domain"),
+                            "message": "没抓到登录 cookie（可能没登录就关了窗口）"}}
+    return {"summary": {"saved": True, "domain": r["domain"],
+                        "cookie_count": r["cookie_count"],
+                        "message": f"已抓取 {r['domain']} 登录 cookie（{r['cookie_count']} 个）并存配置，"
+                                   f"现在可以对该站 scrape 取数了。"}}
+
+
+@tool(
+    name="scrape",
+    description=(
+        "【一句话拿网站数据·逆向爬取唯一入口】给一个网页 URL（或网站名）+ 想要什么数据，自动用浏览器"
+        "侦查该站背后的真实数据接口并返回结构化数据。内部已把「侦查+取数+cookie 自愈」串成一步——"
+        "**无需分步**。首次抓某站稍慢（开浏览器过盾+嗅探），之后同站秒回（读缓存配置直接 curl，不再开浏览器）。"
+        "用户说「帮我从 X 网站拿 Y 数据」「爬一下这个页面的数据」时首选本工具。三种用法："
+        "① 只给 url[+want]：自动侦查并按 want 猜最相关接口，附完整数据；"
+        "② 同站换条件：把 params 传进来（如 {\"symbol\":\"SH600519\"}）精确复用，秒回不重侦查；"
+        "③ 指定 endpoint（侦查返回里的接口名）取特定接口。需登录的站先用 login_site 人工登一次再 scrape。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "目标网页完整 URL（首选，最可靠），或网站域名/名称"},
+            "want": {"type": "string", "description": "想要什么数据的自然语言描述，如「实时行情」「财务数据」「资金流」；给 endpoint 时可省"},
+            "endpoint": {"type": "string", "description": "可选，精确指定接口名（侦查返回的 name）；省略则按 want 智能猜"},
+            "params": {"type": "object", "description": "可选，查询参数覆盖（如 {\"symbol\":\"SH600519\"}）精确复用同站接口；省略用侦查时默认参数"},
+        },
+        "required": ["url"],
+    },
+    category="websearch",
+    group="knowledge_web",
+)
+def scrape(url: str, want: str = None, endpoint: str = None, params: dict = None,
+           session_id: Optional[str] = None,
+           on_progress=None) -> dict:
+    return _scrape(url, want=want, endpoint=endpoint, params=params,
+                    session_id=session_id, on_progress=on_progress)
 
 
 @tool(
@@ -134,6 +218,7 @@ def read_url(url: str, max_chars: int = 8000) -> dict:
         },
     },
     category="knowledge",
+    group="knowledge_web",
 )
 def list_alpha_ideas(status: str = "all", limit: int = 10) -> dict:
     from knowledge_engine.store import KnowledgeStore

@@ -61,7 +61,7 @@ class IdeaMiner:
 
     # ---------- 1. 提炼 alpha ----------
     def _extract_alpha(self, doc_text: str) -> Optional[dict]:
-        from agents.llm_client import build_client
+        from llm_client import build_client
         client = build_client()
         messages = [
             {"role": "system", "content": _EXTRACT_SYSTEM},

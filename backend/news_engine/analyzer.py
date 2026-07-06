@@ -15,7 +15,7 @@ from data_engine.storage.database import get_session
 from data_engine.storage.models import NewsAnalysis, NewsArticle, NewsSentiment
 from news_engine.prompts import build_single_analysis_prompt, build_report_prompt
 from llm_config import get_cheap_model, normalize_chat_params
-from agents.llm_client import build_client
+from llm_client import build_client
 
 load_dotenv(override=True)
 
@@ -164,6 +164,36 @@ class NewsAnalyzer:
             model=model,
         )
 
+    def report_stream_from_articles(
+        self,
+        articles: List[Dict],
+        symbol: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> Generator[str, None, None]:
+        """基于内存中的新闻列表生成综合报告（无状态，不查库也不写库）。
+
+        articles: [{title, content, source, published_at, sentiment?, confidence?}, ...]
+        Events: start → chunk → done | error
+        """
+        model = model or get_cheap_model()
+        if not articles:
+            yield _ndjson({"event": "error", "message": "没有可分析的新闻"})
+            return
+
+        user_prompt = build_report_prompt(articles, symbol)
+        analysis_id = f"nr_{uuid.uuid4().hex[:12]}"
+        yield _ndjson({"event": "start", "analysis_id": analysis_id})
+
+        yield from self._stream_openai(
+            analysis_id=analysis_id,
+            analysis_type="report",
+            article_id=None,
+            symbol=symbol,
+            user_prompt=user_prompt,
+            model=model,
+            persist=False,
+        )
+
     def _stream_openai(
         self,
         analysis_id: str,
@@ -172,8 +202,9 @@ class NewsAnalyzer:
         symbol: Optional[str],
         user_prompt: str,
         model: str,
+        persist: bool = True,
     ) -> Generator[str, None, None]:
-        """OpenAI 流式调用公共方法"""
+        """OpenAI 流式调用公共方法。persist=False 时不写 NewsAnalysis 表（无状态路径）。"""
         start_time = time.time()
 
         try:
@@ -214,26 +245,27 @@ class NewsAnalyzer:
 
             elapsed = round(time.time() - start_time, 2)
 
-            # 保存分析结果到数据库
-            session = get_session()
-            try:
-                record = NewsAnalysis(
-                    analysis_id=analysis_id,
-                    analysis_type=analysis_type,
-                    article_id=article_id,
-                    symbol=symbol,
-                    content=full_content,
-                    model_used=model,
-                    token_count=token_count,
-                    status="completed",
-                )
-                session.add(record)
-                session.commit()
-            except Exception as e:
-                session.rollback()
-                logger.error(f"保存分析结果失败: {e}")
-            finally:
-                session.close()
+            # 保存分析结果到数据库（无状态路径 persist=False 时跳过）
+            if persist:
+                session = get_session()
+                try:
+                    record = NewsAnalysis(
+                        analysis_id=analysis_id,
+                        analysis_type=analysis_type,
+                        article_id=article_id,
+                        symbol=symbol,
+                        content=full_content,
+                        model_used=model,
+                        token_count=token_count,
+                        status="completed",
+                    )
+                    session.add(record)
+                    session.commit()
+                except Exception as e:
+                    session.rollback()
+                    logger.error(f"保存分析结果失败: {e}")
+                finally:
+                    session.close()
 
             yield _ndjson({
                 "event": "done",

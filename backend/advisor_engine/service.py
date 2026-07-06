@@ -11,8 +11,6 @@ from typing import Dict, Generator, List, Optional
 
 from dotenv import load_dotenv
 from loguru import logger
-from openai import OpenAI
-from httpx import Timeout as HttpxTimeout
 
 from advisor_engine.context_collector import AdvisorContextCollector
 from advisor_engine.prompt_builder import AdvisorPromptBuilder
@@ -121,21 +119,16 @@ class AdvisorService:
             return
 
         try:
-            from net_proxy import make_httpx_client
-            _to = HttpxTimeout(connect=15.0, read=300.0, write=30.0, pool=30.0)
-            client = OpenAI(
-                api_key=api_key,
-                base_url=base_url,
-                timeout=_to,
-                max_retries=2,
-                http_client=make_httpx_client(timeout=_to),
-            )
+            from llm_client import build_client
+            client = build_client(base_url=base_url, api_key=api_key)
 
             stream_kwargs: Dict = normalize_chat_params(dict(
                 model=model,
                 messages=session.get_messages(),
                 temperature=0.5,
                 stream=True,
+                # 硬上限兜底（prompt 已约束 ≤1200 字），防止无节制长报告压垮前端渲染
+                max_tokens=2500,
             ))
             try:
                 stream = client.chat.completions.create(
@@ -161,6 +154,22 @@ class AdvisorService:
 
             # 保存 assistant 回复
             session.messages.append({"role": "assistant", "content": full_content})
+
+            # 决策留痕（provenance）：记录模型/输入快照/token，供事后复现与归因
+            try:
+                from decision_log import record_decision
+                record_decision(
+                    source="advisor",
+                    symbol=getattr(session, "symbol", None),
+                    model_id=model,
+                    output_text=full_content,
+                    total_tokens=token_count,
+                    input_snapshot=getattr(session, "context_data", None),
+                    session_id=session_id,
+                    latency_ms=int((time.time() - start_time) * 1000),
+                )
+            except Exception:  # noqa: BLE001 — 留痕不可影响流式响应
+                pass
 
             elapsed = round(time.time() - start_time, 2)
             yield _ndjson({

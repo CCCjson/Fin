@@ -5,7 +5,8 @@ get_system_pulse：一次性给出数据新鲜度、信号覆盖、追踪胜率�
 回答「系统还好吗 / 数据更新了吗 / 最近发生了啥」。event_limit 可调事件条数
 （原 get_recent_events 已并入此工具，避免重复入口）。
 
-复用 api/routes/data_monitor.py 的同步 helper（get_overview 本身是 async，但内部块都是同步）。
+复用 data_engine.health 的覆盖率/新鲜度 helper（与 api/routes/data_monitor.py 同源，
+不再反向依赖路由层）。
 """
 from pydantic import BaseModel, Field
 
@@ -59,13 +60,13 @@ class GetSystemPulseArgs(BaseModel):
     group="system",
 )
 def get_system_pulse(event_limit: int = 5) -> ToolEnvelope:
+    from data_engine.health import get_coverage, get_freshness
     from data_engine.storage.database import get_session
-    from api.routes.data_monitor import _coverage, _freshness
 
     session = get_session()
     try:
-        coverage = _coverage(session)
-        freshness = _freshness(session)
+        coverage = get_coverage()
+        freshness = get_freshness(session)
         signal_count = _signals_today_count(session)
     finally:
         session.close()
