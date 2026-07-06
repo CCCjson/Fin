@@ -83,32 +83,6 @@ def _breadth_stats() -> Optional[Dict[str, Any]]:
     return _compute_statistics(rows)
 
 
-def _mood_readout(stats: Optional[Dict], indices: List[Dict]) -> str:
-    """一句话情绪判读：普涨/普跌/分化 + 涨停家数梯度。"""
-    if not stats:
-        return "全市场统计暂不可用"
-    up, down = stats.get("up", 0), stats.get("down", 0)
-    lu, ld = stats.get("limit_up", 0), stats.get("limit_down", 0)
-    if up > down * 2:
-        tone = "普涨"
-    elif down > up * 2:
-        tone = "普跌"
-    else:
-        tone = "涨跌分化"
-    if ld > lu:
-        heat = "跌停多于涨停，情绪冰点，建议谨慎"
-    elif lu >= 80:
-        heat = f"涨停 {lu} 家，赚钱效应强"
-    elif lu >= 30:
-        heat = f"涨停 {lu} 家，情绪一般"
-    else:
-        heat = f"涨停仅 {lu} 家，情绪偏弱"
-    sh = next((i for i in indices if "上证" in (i.get("name") or "")), None)
-    idx_part = (f"上证 {sh['change_pct']:+.2f}%，" if sh and
-                isinstance(sh.get("change_pct"), (int, float)) else "")
-    return f"{idx_part}{tone}（涨{up}/跌{down}），{heat}"
-
-
 class GetMarketPulseArgs(BaseModel):
     pass
 
@@ -169,7 +143,8 @@ def get_market_pulse() -> ToolEnvelope:
     if not indices and not stats:
         return ToolEnvelope(business_result="negative", message="盘面数据暂时全部获取失败，请稍后再试。")
 
-    summary["mood"] = _mood_readout(stats, indices)
+    from analysis_engine.market_mood import mood_readout
+    summary["mood"] = mood_readout(stats, indices)
 
     cards = []
     for i in indices[:3]:

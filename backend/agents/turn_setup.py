@@ -77,11 +77,17 @@ def prepare_turn(
         session.messages.append(
             {"role": "system", "content": load_monitor_system_prompt()})
 
-    # 工具分组：核心常驻 + 按页面预载；已加载的组 session 内粘滞
+    # 工具分组：核心常驻 + 按页面预载 + skill 声明的组；已加载的组 session 内粘滞
     from agents import tool_groups
     if tool_groups.grouping_enabled():
         page_path = (page_context or {}).get("path")
         base = tool_groups.initial_allowed(page_path)
+        # 第三来源：monitor.md frontmatter 里 enabled_tools 声明的工具组
+        # （无 frontmatter 时返回空，行为与之前完全一致）。未知/已含的组由 expand 自行忽略。
+        from agents.skills_loader import parse_skill_frontmatter
+        skill_groups = parse_skill_frontmatter("monitor.md").get("enabled_tools") or []
+        if skill_groups:
+            base, _added, _unknown = tool_groups.expand(base, skill_groups)
         session.allowed_tools = (
             base if session.allowed_tools is None
             else session.allowed_tools | base)

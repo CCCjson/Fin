@@ -5,7 +5,7 @@
 时点判读，不下买卖结论（该不该买归 recommend_stocks / get_cockpit_score）。
 原料：pytdx 1 分钟线（现算）+ 东财定向快照（换手/振幅/昨收）。盘中专用。
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -14,50 +14,13 @@ from agents.registry import tool
 from agents.tool_envelope import ToolEnvelope
 
 
-def _elapsed_trading_minutes(now) -> int:
-    """今日已走过的交易分钟数（9:30-11:30 + 13:00-15:00，全天 240）。"""
-    minutes = now.hour * 60 + now.minute
-    morning = max(0, min(minutes - (9 * 60 + 30), 120))
-    afternoon = max(0, min(minutes - 13 * 60, 120))
-    return morning + afternoon
-
-
-def _avg5_volume(symbol: str, today) -> Optional[float]:
-    """近 5 个交易日的日均成交量（手，东财日线口径）。"""
-    from data_engine.storage.database import get_session
-    from data_engine.storage.models import DailyQuote
-    session = get_session()
-    try:
-        rows = (session.query(DailyQuote.volume)
-                .filter(DailyQuote.symbol == symbol, DailyQuote.date < today)
-                .order_by(DailyQuote.date.desc())
-                .limit(5).all())
-        vols = [float(r[0]) for r in rows if r[0]]
-        return sum(vols) / len(vols) if vols else None
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"读取 {symbol} 近5日均量失败: {e}")
-        return None
-    finally:
-        session.close()
-
-
-def _intraday_vwap(df, current_price: float) -> Optional[float]:
-    """分时均价 = 累计成交额 / 累计成交股数。
-
-    pytdx 分钟线 vol 的单位（股/手）在不同市场历史上有出入，用现价做量级
-    校验自适应：原始结果偏离现价 100 倍量级时按「手→股」修正。
-    """
-    if df.empty or "amount" not in df.columns or not current_price:
-        return None
-    vol_sum = float(df["volume"].sum())
-    amt_sum = float(df["amount"].sum())
-    if vol_sum <= 0 or amt_sum <= 0:
-        return None
-    raw = amt_sum / vol_sum
-    for candidate in (raw, raw / 100.0):
-        if 0.5 * current_price <= candidate <= 2.0 * current_price:
-            return round(candidate, 3)
-    return None
+# 盘中量能/VWAP/交易时段计算已下沉到 analysis_engine.indicators.intraday，
+# 工具层保留同名别名，@tool 函数体照旧调用（薄适配）。
+from analysis_engine.indicators.intraday import (  # noqa: E402
+    avg5_volume as _avg5_volume,
+    elapsed_trading_minutes as _elapsed_trading_minutes,
+    intraday_vwap as _intraday_vwap,
+)
 
 
 class GetIntradayCheckArgs(BaseModel):
