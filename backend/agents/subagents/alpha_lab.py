@@ -14,7 +14,7 @@ from agents.widgets import metric_cards_widget
 class AlphaLabSubagent(SubagentRunner):
     name = "run_alpha_lab"
 
-    def run(self, args: dict) -> Generator[str, None, None]:
+    def run(self, args: dict, cancel_event=None) -> Generator[str, None, None]:
         symbols = args.get("symbols") or args.get("target_symbols")
         if isinstance(symbols, str):
             symbols = [symbols]
@@ -40,6 +40,7 @@ class AlphaLabSubagent(SubagentRunner):
 
         best = None
         complete = None
+        cancelled = False
         try:
             gen = AlphaLabEngine().start_session(
                 target_symbols=symbols, optimization_goal=goal,
@@ -69,6 +70,13 @@ class AlphaLabSubagent(SubagentRunner):
                 elif et in ("error", "iteration_error", "backtest_failed", "code_error"):
                     yield emit(EV.AGENT_PROGRESS, agent=self.name,
                                message=f"⚠️ {ev.get('error') or ev.get('message')}")
+                # 客户端断连（父 session 置位 cancel_event）：不再空等剩余迭代
+                # （每轮 LLM 生成 + 最长 90s 沙箱回测），提前跳出，下面走 done 收尾。
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled = True
+                    yield emit(EV.AGENT_PROGRESS, agent=self.name,
+                               message="客户端已断开，提前终止策略研发…")
+                    break
         except Exception as e:  # noqa: BLE001
             logger.error(f"alpha_lab subagent 失败: {e}")
             yield emit_subagent_done(ToolEnvelope(
@@ -85,6 +93,27 @@ class AlphaLabSubagent(SubagentRunner):
                 USAGE.record_cost("alpha_lab", tc)
         except (TypeError, ValueError):
             pass
+
+        # 因客户端断开提前终止：这不是失败，是提前结束——优先把已完成轮次里的
+        # 最佳结果带出去；一个 best 都没有才走 negative。都要走 done 收尾（不能静默退出）。
+        if cancelled:
+            if best:
+                widget = metric_cards_widget([
+                    {"label": "训练 Sharpe", "value": str(best.get("train_sharpe")), "type": "quality"},
+                    {"label": "验证 Sharpe", "value": str(best.get("val_sharpe")), "type": "quality"},
+                    {"label": "综合评分", "value": str(best.get("composite_score")), "type": "quality"},
+                    {"label": "过拟合分", "value": str(best.get("overfit_score")), "type": "risk"},
+                ], title=f"已完成轮次最佳策略（第 {best.get('iteration')} 轮）")
+                yield emit_subagent_done(ToolEnvelope(
+                    message=(f"因客户端断开提前终止，以下是已完成轮次里的最佳结果："
+                             f"第 {best.get('iteration')} 轮，验证 Sharpe {best.get('val_sharpe')}，"
+                             f"综合分 {best.get('composite_score')}。"),
+                    widget=widget))
+            else:
+                yield emit_subagent_done(ToolEnvelope(
+                    business_result="negative",
+                    message="策略研发因客户端断开提前终止，尚未产生可用结果。"))
+            return
 
         if complete is None:
             # 引擎循环结束但没能走到 session_complete——过程本身出了岔子（数据/模型未就绪

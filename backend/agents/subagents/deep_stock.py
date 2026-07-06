@@ -41,7 +41,7 @@ def _deep_stock_v2_enabled() -> bool:
 class DeepStockSubagent(SubagentRunner):
     name = "run_deep_stock"
 
-    def run(self, args: dict) -> Generator[str, None, None]:
+    def run(self, args: dict, cancel_event=None) -> Generator[str, None, None]:
         symbol = (args.get("symbol") or "").strip()
         if not symbol:
             yield emit_subagent_done(ToolEnvelope(
@@ -49,13 +49,14 @@ class DeepStockSubagent(SubagentRunner):
                 message="缺少 symbol，无法深度研判"))
             return
         if _deep_stock_v2_enabled():
-            yield from self._run_v2(symbol)
+            yield from self._run_v2(symbol, cancel_event=cancel_event)
         else:
             yield from self._run_v1(symbol, args)
 
-    def _run_v2(self, symbol: str) -> Generator[str, None, None]:
+    def _run_v2(self, symbol: str, *, cancel_event=None) -> Generator[str, None, None]:
         from agents.orchestrator import MonitorOrchestrator
         from agents.skills_loader import load_subagent_prompt
+        from agents import turn_monitor
         from llm_config import get_best_model
 
         model = get_best_model()
@@ -66,6 +67,15 @@ class DeepStockSubagent(SubagentRunner):
         ]
         mini.allowed_tools = set(_DEEP_STOCK_TOOLS)
         mini.turn_start_idx = 0
+        # 父 session 断连时置位的 cancel_event 传给内层：_loop 轮首会检查它，
+        # 用户走了内层 mini-ReAct 循环也随之停，不白烧 token。
+        if cancel_event is not None:
+            mini.cancel_event = cancel_event
+        # 内层也挂上 TurnMonitor（重复调用拦截/token 熔断），否则只靠外层
+        # MAX_ROUNDS=100 兜底，熔断前能烧不少 token。与全局 AGENT_TURN_MONITOR
+        # 开关保持一致（关闭时同外层为 None）。
+        if turn_monitor.monitor_enabled():
+            mini.turn_monitor = turn_monitor.TurnMonitor(turn_start_idx=0)
         # 不走 run_stream（会经 prepare_turn 把 tool_groups 的 CORE_TOOLS 并进
         # allowed_tools，冲掉窄工具集），直接跑 _loop 本体。
         orch = MonitorOrchestrator()
@@ -74,7 +84,7 @@ class DeepStockSubagent(SubagentRunner):
         widget = None
         err_msg = None
         tokens = 0
-        for line in orch._loop(mini, model):
+        for line in orch.run_isolated(mini, model):
             ev = json.loads(line)
             et = ev.get("event")
             if et == EV.CHUNK:

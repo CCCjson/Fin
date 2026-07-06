@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Card } from '../components/common/Card';
+import { authFetch, getAuthToken } from '../utils/authFetch';
 
 const API = '/api';
 
@@ -143,7 +144,9 @@ function useOrderBookWS(
     const connect = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
-      const url = `${protocol}//${host}/api/orderbook/sessions/${sessionId}/ws`;
+      const token = getAuthToken();
+      const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+      const url = `${protocol}//${host}/api/orderbook/sessions/${sessionId}/ws${qs}`;
 
       const ws = new WebSocket(url);
       wsRef.current = ws;
@@ -358,9 +361,9 @@ export const OrderBook: React.FC = () => {
     if (!sessionId) return;
     try {
       const [dRes, fRes, sRes] = await Promise.all([
-        fetch(`${API}/orderbook/sessions/${sessionId}/depth?levels=15`),
-        fetch(`${API}/orderbook/sessions/${sessionId}/fills?limit=30`),
-        fetch(`${API}/orderbook/sessions/${sessionId}/stats`),
+        authFetch(`${API}/orderbook/sessions/${sessionId}/depth?levels=15`),
+        authFetch(`${API}/orderbook/sessions/${sessionId}/fills?limit=30`),
+        authFetch(`${API}/orderbook/sessions/${sessionId}/stats`),
       ]);
       if (dRes.ok) setDepth(await dRes.json());
       if (fRes.ok) {
@@ -382,7 +385,7 @@ export const OrderBook: React.FC = () => {
   // ── 检测恢复的会话是否还有效 ──
   useEffect(() => {
     if (!sessionId) return;
-    fetch(`${API}/orderbook/sessions/${sessionId}/stats`)
+    authFetch(`${API}/orderbook/sessions/${sessionId}/stats`)
       .then(res => { if (!res.ok) resetSession(); })
       .catch(() => resetSession());
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -393,7 +396,7 @@ export const OrderBook: React.FC = () => {
     if (!sessionId) return;
     const poll = async () => {
       try {
-        const res = await fetch(`${API}/orderbook/sessions/${sessionId}/market-maker/status`);
+        const res = await authFetch(`${API}/orderbook/sessions/${sessionId}/market-maker/status`);
         if (res.ok) setMmStatus(await res.json());
       } catch {}
     };
@@ -407,7 +410,7 @@ export const OrderBook: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API}/orderbook/sessions`, {
+      const res = await authFetch(`${API}/orderbook/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -483,7 +486,7 @@ export const OrderBook: React.FC = () => {
     }
 
     try {
-      const res = await fetch(`${API}/orderbook/sessions/${sessionId}/orders`, {
+      const res = await authFetch(`${API}/orderbook/sessions/${sessionId}/orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ side, order_type: orderType, price: p, quantity: qty }),
@@ -521,10 +524,10 @@ export const OrderBook: React.FC = () => {
     setMmLoading(true);
     try {
       if (mmStatus?.running) {
-        await fetch(`${API}/orderbook/sessions/${sessionId}/market-maker/stop`, { method: 'POST' });
+        await authFetch(`${API}/orderbook/sessions/${sessionId}/market-maker/stop`, { method: 'POST' });
         addToast('success', '做市商已停止', '所有挂单已撤销');
       } else {
-        await fetch(`${API}/orderbook/sessions/${sessionId}/market-maker/start`, {
+        await authFetch(`${API}/orderbook/sessions/${sessionId}/market-maker/start`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -538,7 +541,7 @@ export const OrderBook: React.FC = () => {
         addToast('success', '做市商已启动', '开始自动提供流动性');
       }
       // 刷新状态
-      const res = await fetch(`${API}/orderbook/sessions/${sessionId}/market-maker/status`);
+      const res = await authFetch(`${API}/orderbook/sessions/${sessionId}/market-maker/status`);
       if (res.ok) setMmStatus(await res.json());
     } catch (e: any) {
       addToast('error', '操作失败', e.message);

@@ -2,6 +2,7 @@
  * Fine-Tune API 服务（NDJSON 流式）
  */
 import api from './api';
+import { authFetch } from '../utils/authFetch';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -90,7 +91,7 @@ export const fineTuneService = {
     onEvent: (event: FineTuneStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
-    const response = await fetch(`${API_BASE}/fine-tune/start`, {
+    const response = await authFetch(`${API_BASE}/fine-tune/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
@@ -157,7 +158,7 @@ export const fineTuneService = {
   reconnect: async (
     onEvent: (event: FineTuneStreamEvent) => void,
   ): Promise<void> => {
-    const response = await fetch(`${API_BASE}/fine-tune/reconnect`);
+    const response = await authFetch(`${API_BASE}/fine-tune/reconnect`);
     if (!response.ok) return; // 404 = 没有训练记录，忽略
 
     const reader = response.body?.getReader();

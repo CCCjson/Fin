@@ -8,6 +8,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from loguru import logger
 
 from automation.websocket_manager import ws_manager
+from api.deps import verify_ws_token
 
 router = APIRouter(tags=["WebSocket"])
 
@@ -24,7 +25,13 @@ async def automation_websocket(websocket: WebSocket):
     - scan_started/completed: 扫描状态
     - scheduler_status: 调度器状态
     - pong: 心跳响应
+
+    鉴权：浏览器原生 WebSocket 无法带 header，token 走查询参数 `?token=<jwt>`；
+    accept 之前校验，失败以 1008（policy violation）关闭。
     """
+    if not await verify_ws_token(websocket):
+        await websocket.close(code=1008)
+        return
     await ws_manager.connect(websocket)
     try:
         while True:

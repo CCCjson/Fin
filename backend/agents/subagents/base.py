@@ -20,7 +20,9 @@ class SubagentRunner(ABC):
     name: str
 
     @abstractmethod
-    def run(self, args: dict) -> Generator[str, None, None]:
+    def run(self, args: dict, cancel_event=None) -> Generator[str, None, None]:
+        """cancel_event 默认 None（向后兼容直调）：父 session 断连时被置位，
+        耗时子任务据此提前收尾，不再白跑到底。"""
         ...
 
 

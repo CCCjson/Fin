@@ -3,6 +3,7 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 pydantic==2.5.3
 pydantic-settings==2.1.0
+python-jose[cryptography]==3.5.0
 
 # Database
 sqlalchemy==2.0.25
@@ -47,6 +48,7 @@ trafilatura>=2.1.0          # 网页正文去噪提取（read_url HTML 路径）
 PyMuPDF>=1.27.2             # PDF 正文抽取（read_url PDF 路径，import 名 fitz）
 curl_cffi>=0.13.0          # DDG 搜索的 TLS 指纹伪装
 beautifulsoup4>=4.12.0      # HTML 解析（DDG 结果 + read_url 回退）
+playwright>=1.40           # 逆向 API 爬虫：无头浏览器过盾 + 嗅探 gate 头（装后需 playwright install）
 lxml>=5.0.0                 # bs4 解析器后端
 
 # Testing

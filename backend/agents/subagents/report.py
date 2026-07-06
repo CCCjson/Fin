@@ -11,7 +11,7 @@ from agents.tool_envelope import ErrorCode, ToolEnvelope
 class ReportSubagent(SubagentRunner):
     name = "run_research_report"
 
-    def run(self, args: dict) -> Generator[str, None, None]:
+    def run(self, args: dict, cancel_event=None) -> Generator[str, None, None]:
         report_type = args.get("report_type") or "weekly"
         if report_type not in ("daily", "weekly", "monthly"):
             report_type = "weekly"

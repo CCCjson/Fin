@@ -30,7 +30,7 @@ def test_missing_symbol_is_validation_error():
 def test_v2_is_default_and_dispatches_to_run_v2(monkeypatch):
     called = {}
 
-    def fake_v2(self, symbol):
+    def fake_v2(self, symbol, cancel_event=None):  # run 现在会带 cancel_event 关键字传入
         called["symbol"] = symbol
         yield from iter(())
 

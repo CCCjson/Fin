@@ -1,4 +1,5 @@
 import api from './api';
+import { authFetch } from '../utils/authFetch';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -59,7 +60,7 @@ export const screenerService = {
     onEvent: (ev: { event: string; message?: string; result?: any }) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
-    const response = await fetch(`${API_BASE}/screener/refresh-valuation`, {
+    const response = await authFetch(`${API_BASE}/screener/refresh-valuation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal,

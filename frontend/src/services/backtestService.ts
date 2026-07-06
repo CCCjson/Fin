@@ -1,4 +1,5 @@
 import api from './api';
+import { authFetch } from '../utils/authFetch';
 import type { BatchBacktestConfig, BatchProgressEvent, BatchBacktestSummary } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
@@ -80,7 +81,7 @@ export const backtestService = {
     onEvent: (event: BatchProgressEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
-    const response = await fetch(`${API_BASE}/backtest_cpp/batch`, {
+    const response = await authFetch(`${API_BASE}/backtest_cpp/batch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
@@ -144,7 +145,7 @@ export const backtestService = {
     onEvent: (event: any) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
-    const response = await fetch(`${API_BASE}/walk_forward/run`, {
+    const response = await authFetch(`${API_BASE}/walk_forward/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),

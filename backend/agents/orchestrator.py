@@ -70,6 +70,13 @@ class MonitorOrchestrator:
         if should_continue:
             yield from self._loop(session, model)
 
+    def run_isolated(
+        self, session: AgentSession, model: str,
+    ) -> Generator[str, None, None]:
+        """跑一个隔离 mini-session 的 ReAct 循环（供 subagent 复用 _loop 骨架用）。
+        纯语义化包装，行为与直接跑 _loop 完全一致——只是不从外部访问私有方法。"""
+        yield from self._loop(session, model)
+
     # ──────────────────── 内部 ────────────────────
 
     def _loop(self, session: AgentSession, model: str) -> Generator[str, None, None]:
@@ -319,7 +326,9 @@ class MonitorOrchestrator:
             message=f"子任务 {tc['name']} 执行失败，未产生输出")
         try:
             runner = get_runner(tc["name"])
-            for line in runner.run(tc["args"]):
+            # 把父 session 的协作取消位传进子任务：客户端断连时耗时子任务据此
+            # 提前收尾，不再傻跑到底（deep_stock/alpha_lab 尤其耗时）。
+            for line in runner.run(tc["args"], cancel_event=session.cancel_event):
                 ev = json.loads(line)
                 if ev.get("event") == "subagent_done":
                     envelope = self._envelope_from_subagent_result(ev.get("result", {}))

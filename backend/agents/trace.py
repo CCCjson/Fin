@@ -25,9 +25,46 @@ from loguru import logger
 _TRACE_DIR = Path(__file__).parent.parent / "data" / "agent_traces"
 _RAW_TRACE_DIR = Path(__file__).parent.parent / "data" / "agent_traces_raw"
 
+# 磁盘 GC —— trace 是 append-only 无轮转，不清会无限涨（raw 存完整原文更占）。
+# 照搬 context.py::SessionStore 的既有惯用法：保留天数常量 + 节流间隔 + glob+mtime+unlink。
+_TRACE_MAX_AGE_DAYS_DEFAULT = 14  # 与 context.py 的 _PERSIST_MAX_AGE_DAYS 默认值一致但独立开关
+_TRACE_CLEANUP_INTERVAL_S = 600   # 节流：不需要每个 turn 都扫一遍两个目录
+_last_trace_cleanup_at = 0.0      # 节流游标（模块级，见 _cleanup_traces）
+
 
 def trace_enabled() -> bool:
     return os.getenv("AGENT_TRACE", "on").lower() not in ("off", "0", "false")
+
+
+def _trace_max_age_days() -> int:
+    try:
+        return int(os.getenv("AGENT_TRACE_MAX_AGE_DAYS", _TRACE_MAX_AGE_DAYS_DEFAULT))
+    except (TypeError, ValueError):
+        return _TRACE_MAX_AGE_DAYS_DEFAULT
+
+
+def _cleanup_traces() -> None:
+    """过期 trace 文件 GC——覆盖 _TRACE_DIR 与 _RAW_TRACE_DIR 两个目录（各 glob
+    *.jsonl，按 st_mtime 超过保留期就 unlink）。节流到最多每 _TRACE_CLEANUP_INTERVAL_S
+    跑一次。失败只记 log.warning，绝不影响主对话流程（同本模块既有文档化原则）。"""
+    global _last_trace_cleanup_at
+    now = time.time()
+    if now - _last_trace_cleanup_at < _TRACE_CLEANUP_INTERVAL_S:
+        return
+    _last_trace_cleanup_at = now
+    try:
+        cutoff = now - _trace_max_age_days() * 86400
+        for d in (_TRACE_DIR, _RAW_TRACE_DIR):
+            if not d.exists():
+                continue
+            for f in d.glob("*.jsonl"):
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        f.unlink(missing_ok=True)
+                except OSError:
+                    continue
+    except Exception as e:  # noqa: BLE001 — GC 失败不可影响对话主流程
+        logger.warning(f"trace 磁盘 GC 失败: {e}")
 
 
 def raw_trace_enabled() -> bool:
@@ -47,6 +84,8 @@ def write_turn_trace(
     """
     if not trace_enabled():
         return
+    # 每个 turn 结束都会调一次，天然的节流触发点（GC 内部自带节流+吞异常）。
+    _cleanup_traces()
     try:
         start = max(0, int(getattr(session, "turn_start_idx", 0) or 0))
         mon = getattr(session, "turn_monitor", None)

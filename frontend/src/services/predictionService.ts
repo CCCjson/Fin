@@ -1,4 +1,5 @@
 import api from './api';
+import { authFetch } from '../utils/authFetch';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -99,7 +100,7 @@ export const predictionService = {
     onProgress: (event: TrainProgressEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
-    const response = await fetch(`${API_BASE}/prediction/train`, {
+    const response = await authFetch(`${API_BASE}/prediction/train`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),

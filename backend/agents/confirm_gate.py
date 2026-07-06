@@ -57,7 +57,8 @@ class ConfirmationGate:
             return False
         # 确认必须点名它批的是哪个调用：双开窗口/迟到重放的 confirm 不能
         # 误批「当前恰好挂着的那个」操作。不匹配则拒绝并保留 pending。
-        if tool_call_id and tool_call_id != pending.id:
+        # 空串/None 也算不匹配——契约上确认必须显式点名，缺省不放行（防绕过）。
+        if tool_call_id != pending.id:
             yield emit(EV.ERROR,
                        message="该确认对应的操作已不存在（可能来自旧窗口），未执行任何操作")
             return False

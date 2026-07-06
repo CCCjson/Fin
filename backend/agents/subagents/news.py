@@ -8,7 +8,7 @@ from agents.tool_envelope import ToolEnvelope
 class NewsSubagent(SubagentRunner):
     name = "run_news_analysis"
 
-    def run(self, args: dict) -> Generator[str, None, None]:
+    def run(self, args: dict, cancel_event=None) -> Generator[str, None, None]:
         symbol = args.get("symbol") or None
         market = args.get("market") or "a_share"
 

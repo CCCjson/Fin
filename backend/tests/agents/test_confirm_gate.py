@@ -130,6 +130,21 @@ def test_resume_wrong_tool_call_id_rejected_and_pending_preserved():
     assert session.pending_tool_call.id == "real_id"
 
 
+def test_resume_empty_or_none_tool_call_id_rejected():
+    """H3 补洞：空串/None 的 tool_call_id 也必须被拒（不能靠短路当成"不点名也放行"），
+    pending 保留。此前 `if tool_call_id and ...` 会跳过校验，等于确认门被绕过。"""
+    for bad_id in ("", None):
+        session = AgentSession(session_id=f"t_gate_empty_id_{bad_id!r}")
+        session.pending_tool_call = PendingToolCall("real_id", "t_gate_confirm", {})
+        gate = ConfirmationGate()
+        lines, should_continue = _drain(
+            gate.resume(session, True, tool_call_id=bad_id, model="fake-model"))
+        assert should_continue is False
+        assert _events(lines) == ["error"]
+        assert session.pending_tool_call is not None
+        assert session.pending_tool_call.id == "real_id"
+
+
 # ──────────────────── resume：批准 → 执行 + _confirmed 注入 ────────────────────
 
 def test_resume_approved_executes_with_confirmed_flag_injected(monkeypatch):

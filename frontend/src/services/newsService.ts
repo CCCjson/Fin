@@ -1,3 +1,4 @@
+import { authFetch } from '../utils/authFetch';
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 // ==================== 类型定义 ====================
@@ -34,6 +35,9 @@ export interface NewsArticle {
     prob_neutral: number;
     model_used: string;
   } | null;
+  // 仅 sort=importance 时后端才会算这两个字段（api/routes/news.py::get_articles）
+  category?: string | null;
+  score?: number;
 }
 
 export interface FetchNewsParams {
@@ -47,6 +51,7 @@ export interface GetArticlesParams {
   sentiment?: string;
   limit?: number;
   offset?: number;
+  sort?: 'recent' | 'importance';
 }
 
 export interface AnalyzeParams {
@@ -58,6 +63,31 @@ export interface ReportParams {
   symbol?: string;
   market?: string;
   model?: string;
+}
+
+export interface NewsJobStatus {
+  running: boolean;
+  enabled: boolean;
+  is_updating: boolean;
+  interval_minutes: number;
+  cache_clear_cron: string;
+  next_run: string | null;
+  jobs: { id: string; name: string; next_run: string | null }[];
+  last_run: {
+    ok?: boolean;
+    started_at?: string;
+    completed_at?: string;
+    new_general?: number;
+    new_symbol?: Record<string, number>;
+    high_impact?: {
+      symbol: string | null;
+      category?: string | null;
+      reason: string;
+      title: string;
+      url?: string;
+    }[];
+  } | null;
+  cache_size: number;
 }
 
 // ==================== 流式 NDJSON 解析 ====================
@@ -114,7 +144,7 @@ export const newsService = {
     onEvent: (event: NewsStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
-    const response = await fetch(`${API_BASE}/news/fetch`, {
+    const response = await authFetch(`${API_BASE}/news/fetch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
@@ -134,8 +164,9 @@ export const newsService = {
     if (params.sentiment) query.set('sentiment', params.sentiment);
     if (params.limit) query.set('limit', String(params.limit));
     if (params.offset) query.set('offset', String(params.offset));
+    if (params.sort) query.set('sort', params.sort);
 
-    const response = await fetch(`${API_BASE}/news/articles?${query.toString()}`);
+    const response = await authFetch(`${API_BASE}/news/articles?${query.toString()}`);
     if (!response.ok) throw new Error(`请求失败: ${response.status}`);
     return response.json();
   },
@@ -148,7 +179,7 @@ export const newsService = {
     onEvent: (event: NewsStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
-    const response = await fetch(`${API_BASE}/news/analyze`, {
+    const response = await authFetch(`${API_BASE}/news/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ article_id: params.article_id, model: params.model || 'gpt-5.4-mini' }),
@@ -166,7 +197,7 @@ export const newsService = {
     onEvent: (event: NewsStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
-    const response = await fetch(`${API_BASE}/news/report`, {
+    const response = await authFetch(`${API_BASE}/news/report`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -178,5 +209,36 @@ export const newsService = {
     });
     if (!response.ok) throw new Error(`请求失败: ${response.status}`);
     await consumeNDJSON(response, onEvent, signal);
+  },
+
+  /**
+   * Newnew 定时新闻任务状态
+   */
+  getJobStatus: async (): Promise<NewsJobStatus> => {
+    const response = await authFetch(`${API_BASE}/news/job/status`);
+    if (!response.ok) throw new Error(`请求失败: ${response.status}`);
+    return response.json();
+  },
+
+  /**
+   * 开/关 Newnew 定时新闻任务
+   */
+  toggleJob: async (enabled: boolean): Promise<NewsJobStatus> => {
+    const response = await authFetch(`${API_BASE}/news/job/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) throw new Error(`请求失败: ${response.status}`);
+    return response.json();
+  },
+
+  /**
+   * 手动立即跑一轮（debug 用）
+   */
+  runJobOnce: async (): Promise<Record<string, unknown>> => {
+    const response = await authFetch(`${API_BASE}/news/job/run-once`, { method: 'POST' });
+    if (!response.ok) throw new Error(`请求失败: ${response.status}`);
+    return response.json();
   },
 };
