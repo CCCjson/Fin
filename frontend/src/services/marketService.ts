@@ -12,7 +12,7 @@ export const marketService = {
   },
 
   // 获取股票列表
-  getStockList: async (market: string = 'A') => {
+  getStockList: async (market: string = 'a_share') => {
     return api.get('/data/stocks', { params: { market } });
   },
 

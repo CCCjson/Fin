@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
-import { MarketSelector } from '../components/common/MarketSelector';
 import { toast } from '../components/common/Toast';
 import { backtestService } from '../services/backtestService';
 import type { BacktestTask, BacktestResult } from '../types';
@@ -129,7 +128,6 @@ export const Backtest: React.FC = () => {
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
             <h1 className="text-2xl md:text-3xl font-bold text-white">策略回测</h1>
-            <MarketSelector />
             <div className="flex bg-dark-card rounded-lg border border-border p-1">
               <button
                 onClick={() => setTab('python')}

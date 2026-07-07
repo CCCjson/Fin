@@ -5,6 +5,7 @@ import { EmptyState } from '../common/EmptyState';
 interface Trade {
   date: string;
   symbol?: string;
+  name?: string;
   action?: string;
   side?: string;
   quantity: number;
@@ -60,7 +61,7 @@ export const TradeTable: React.FC<TradeTableProps> = ({ trades, maxRows = 50 }) 
                 {displayed.map((t, i) => (
                   <tr key={i} className="border-b border-border hover:bg-dark-light transition-colors">
                     <td className="px-4 py-3">{t.date}</td>
-                    {hasSymbolColumn && <td className="px-4 py-3 font-medium text-white">{t.symbol || '-'}</td>}
+                    {hasSymbolColumn && <td className="px-4 py-3 font-medium text-white">{t.name || t.symbol || '-'}</td>}
                     <td className="px-4 py-3 text-center">
                       <span className={`px-3 py-1 rounded-lg text-xs font-semibold ${
                         isBuy(t)

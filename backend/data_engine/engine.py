@@ -209,11 +209,7 @@ class DataEngine:
             fetcher = FetcherFactory.create(market, self.config)
 
             # 获取股票列表
-            if market == "a_share":
-                stocks = fetcher.get_stock_list()
-            else:
-                logger.warning(f"{market} 暂不支持获取完整股票列表")
-                return 0
+            stocks = fetcher.get_stock_list()
 
             # 保存到数据库
             saved_count = 0

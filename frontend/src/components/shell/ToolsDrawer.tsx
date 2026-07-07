@@ -7,40 +7,26 @@ interface ToolItem {
   icon: string;
 }
 
+/*
+ * 架构收敛后的工作台白名单：只保留重可视化/实时交互页面。
+ * 信号、筛股、自选、复盘、报告、新闻、知识库、设置、交易记录等
+ * 能力已收敛到 MoneyBill 对话——直接在聊天里问即可。
+ */
 const GROUPS: { title: string; items: ToolItem[] }[] = [
   {
-    title: 'A 股',
+    title: '分析工作台',
     items: [
-      { path: '/app/cockpit', label: '决策驾驶舱', icon: '🎛️' },
-      { path: '/app/watchlist', label: '自选股', icon: '⭐' },
-      { path: '/app/screener', label: '选股器', icon: '🔎' },
-      { path: '/app/realtime', label: '实时行情', icon: '⚡' },
       { path: '/app/market', label: 'K线分析', icon: '📈' },
-      { path: '/app/signals', label: '信号分析', icon: '🎯' },
-      { path: '/app/tracking', label: '信号追踪', icon: '📋' },
-      { path: '/app/pipeline', label: '数据管道', icon: '🚀' },
-      { path: '/app/prediction', label: '股价预测', icon: '🔮' },
-    ],
-  },
-  {
-    title: '通用工具',
-    items: [
-      { path: '/app/dashboard', label: '账户概览', icon: '🏠' },
       { path: '/app/backtest', label: '策略回测', icon: '🔬' },
-      { path: '/app/portfolio', label: '交易记录', icon: '📒' },
-      { path: '/app/review', label: '每日复盘', icon: '📝' },
-      { path: '/app/reports', label: 'AI 报告', icon: '🤖' },
-      { path: '/app/advisor', label: 'AI 顾问', icon: '💬' },
-      { path: '/app/news', label: '新闻分析', icon: '📰' },
+      { path: '/app/prediction', label: '股价预测', icon: '🔮' },
       { path: '/app/orderbook', label: '订单簿', icon: '📊' },
-      { path: '/app/knowledge', label: '知识库', icon: '📚' },
     ],
   },
   {
-    title: '高级',
+    title: '运行与高级',
     items: [
+      { path: '/app/data-monitor', label: '数据监控', icon: '🛰️' },
       { path: '/trading', label: '自动化交易', icon: '🚦' },
-      { path: '/alpha-lab', label: 'Alpha Lab', icon: '🧬' },
       { path: '/fine-tune', label: '模型微调', icon: '🧪' },
     ],
   },

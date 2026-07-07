@@ -20,6 +20,11 @@ _PERIOD_TO_CATEGORY = {
     60: 3,  # 60 分钟
 }
 
+# 日线 category
+_DAILY_CATEGORY = 9
+# get_security_bars / get_index_bars 单次最多 800 根
+_MAX_BARS_PER_CALL = 800
+
 # 模块级缓存：最优服务器 IP（避免每次实例化都测速）
 _cached_best_ip: Dict = {}
 _warmup_done: bool = False
@@ -185,8 +190,13 @@ class PytdxFetcher:
         else:
             return (0, code)
 
-    def _raw_to_dataframe(self, raw_data: list) -> pd.DataFrame:
-        """将 pytdx 原始数据转为标准 OHLCV DataFrame"""
+    def _raw_to_dataframe(self, raw_data: list, keep_amount: bool = False) -> pd.DataFrame:
+        """将 pytdx 原始数据转为标准 OHLCV DataFrame
+
+        Args:
+            raw_data: pytdx 原始 bar 列表
+            keep_amount: 是否保留成交额列（日线写库需要）
+        """
         if not raw_data:
             return pd.DataFrame()
 
@@ -201,13 +211,18 @@ class PytdxFetcher:
 
         # 保留标准列
         cols = ["date", "open", "high", "low", "close", "volume"]
+        if keep_amount:
+            cols.append("amount")
         df = df[[c for c in cols if c in df.columns]]
 
         # date 转 datetime
         df["date"] = pd.to_datetime(df["date"])
 
         # 数值列转 float
-        for col in ["open", "high", "low", "close", "volume"]:
+        num_cols = ["open", "high", "low", "close", "volume"]
+        if keep_amount:
+            num_cols.append("amount")
+        for col in num_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -221,6 +236,7 @@ class PytdxFetcher:
         symbol: str,
         period: int = 1,
         count: int = 240,
+        keep_amount: bool = False,
     ) -> pd.DataFrame:
         """
         获取单只股票的分钟 K 线
@@ -229,6 +245,7 @@ class PytdxFetcher:
             symbol: 股票代码，如 "600519.SH"
             period: K 线周期（分钟），支持 1/5/15/30/60
             count: 拉取根数，默认 240（≈ 1 个交易日）
+            keep_amount: 是否保留成交额列（算分时 VWAP 需要）
 
         Returns:
             标准 OHLCV DataFrame
@@ -244,7 +261,7 @@ class PytdxFetcher:
 
         try:
             raw = self._api.get_security_bars(category, market, code, 0, count)
-            df = self._raw_to_dataframe(raw)
+            df = self._raw_to_dataframe(raw, keep_amount=keep_amount)
             if df.empty:
                 logger.warning(f"pytdx 获取 {symbol} {period}分钟线为空")
             else:
@@ -294,6 +311,88 @@ class PytdxFetcher:
                 logger.warning(f"pytdx 获取 {symbol} 分钟线失败: {e}")
 
         logger.info(f"pytdx 批量获取完成: {len(result)}/{len(symbols)} 只成功")
+        return result
+
+    def fetch_daily_bars(
+        self,
+        symbol: str,
+        count: int = 800,
+        is_index: bool = False,
+    ) -> pd.DataFrame:
+        """
+        获取单只标的的日 K 线（原始不复权价）
+
+        注意：pytdx 返回的是不复权价格。全库日线是东财前复权（fqt=1），
+        跨除权日的股票数据不能直接混用；指数无复权问题可放心使用。
+
+        Args:
+            symbol: 代码，如 "000001.SH"
+            count: 拉取根数（最多 800）
+            is_index: 是否指数（指数走 get_index_bars 接口）
+
+        Returns:
+            DataFrame: date/open/high/low/close/volume/amount
+        """
+        if not self._connect():
+            return pd.DataFrame()
+
+        market, code = self._symbol_to_pytdx(symbol)
+        count = min(count, _MAX_BARS_PER_CALL)
+
+        try:
+            if is_index:
+                raw = self._api.get_index_bars(_DAILY_CATEGORY, market, code, 0, count)
+            else:
+                raw = self._api.get_security_bars(_DAILY_CATEGORY, market, code, 0, count)
+            df = self._raw_to_dataframe(raw, keep_amount=True)
+            if df.empty:
+                logger.warning(f"pytdx 获取 {symbol} 日线为空")
+            else:
+                logger.debug(f"pytdx 获取 {symbol} 日线: {len(df)} 根")
+            return df
+        except Exception as e:
+            logger.error(f"pytdx 获取 {symbol} 日线失败: {e}")
+            return pd.DataFrame()
+
+    def fetch_daily_bars_batch(
+        self,
+        symbols: List[str],
+        count: int = 100,
+        is_index: bool = False,
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        批量获取日 K 线（单次连接内循环拉取，TDX socket 快、无限速）
+
+        Args:
+            symbols: 代码列表
+            count: 每只拉取根数（最多 800）
+            is_index: 是否指数列表
+
+        Returns:
+            {symbol: DataFrame} 字典，失败的 symbol 不包含在结果中
+        """
+        if not self._connect():
+            return {}
+
+        count = min(count, _MAX_BARS_PER_CALL)
+        result: Dict[str, pd.DataFrame] = {}
+
+        for symbol in symbols:
+            market, code = self._symbol_to_pytdx(symbol)
+            try:
+                if is_index:
+                    raw = self._api.get_index_bars(_DAILY_CATEGORY, market, code, 0, count)
+                else:
+                    raw = self._api.get_security_bars(_DAILY_CATEGORY, market, code, 0, count)
+                df = self._raw_to_dataframe(raw, keep_amount=True)
+                if not df.empty:
+                    result[symbol] = df
+                else:
+                    logger.warning(f"pytdx {symbol} 日线返回空数据")
+            except Exception as e:
+                logger.warning(f"pytdx 获取 {symbol} 日线失败: {e}")
+
+        logger.info(f"pytdx 批量日线完成: {len(result)}/{len(symbols)} 只成功")
         return result
 
     def close(self):

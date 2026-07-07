@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import api from '../../services/api';
+import { normalizeMarket, MARKET_LABEL } from '../../utils/marketDetect';
 
 interface StockSearchResult {
   symbol: string;
@@ -146,6 +147,9 @@ export const StockSymbolInput: React.FC<StockSymbolInputProps> = ({
               <div className="flex items-center gap-2 min-w-0">
                 <span className="font-mono text-sm text-primary-light">{item.symbol}</span>
                 <span className="text-sm truncate">{item.name}</span>
+                <span className="text-[9px] px-1 py-0.5 rounded bg-dark-light text-gray-400 flex-shrink-0">
+                  {MARKET_LABEL[normalizeMarket(item.market)]}
+                </span>
               </div>
               {item.industry && (
                 <span className="text-xs text-gray-500 ml-2 flex-shrink-0">{item.industry}</span>

@@ -1,17 +1,91 @@
 import React from 'react';
 
 interface Props {
+  /** 触发确认的工具名，如 place_order / add_to_watchlist，决定弹窗样式。*/
+  name?: string;
   preview: any;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-/* 下单二次确认弹窗 —— 展示订单详情 + 风控预检结果 */
-export const ConfirmDialog: React.FC<Props> = ({ preview, onConfirm, onCancel }) => {
+/* 需确认工具的中文标题——未收录的工具兜底显示工具名本身。*/
+const TOOL_LABELS: Record<string, string> = {
+  place_order: '下单确认（模拟盘）',
+  add_to_watchlist: '加入自选股',
+  remove_from_watchlist: '移出自选股',
+  create_price_alert: '创建价格预警',
+  delete_price_alert: '删除价格预警',
+  record_manual_trade: '录入手动交易',
+  update_setting: '修改设置',
+};
+
+/* preview 字段名 → 中文标签，跨工具共享同一份映射。*/
+const FIELD_LABELS: Record<string, string> = {
+  symbol: '股票', name: '名称', group_name: '分组', note: '备注',
+  already_in: '已在自选', alert_type: '预警类型', threshold: '阈值',
+  current_price: '当前价', repeat: '触发方式', desc: '说明',
+  action: '操作', side: '方向', price: '价格', quantity: '数量',
+  est_amount: '预计金额', trade_date: '交易日期', key: '配置项',
+  label: '字段名', new_value: '新值', sensitive: '敏感字段',
+  alert_id: '预警ID', status: '状态', message: '提醒文案',
+  triggered_at: '触发时间', triggered_price: '触发价', items: '详情',
+};
+
+function formatValue(key: string, value: any): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (Array.isArray(value)) {
+    if (key === 'items') {
+      return value.map((it: any) => `${it.name || it.symbol || ''}（${it.group_name || '默认分组'}）`).join('、') || '—';
+    }
+    return value.join('、');
+  }
+  return String(value);
+}
+
+/* 下单二次确认弹窗（place_order 富样式：订单六格 + 风控预检）*/
+const PlaceOrderBody: React.FC<{ p: any }> = ({ p }) => {
+  const sideLabel = p.action === 'BUY' ? '买入' : p.action === 'SELL' ? '卖出' : p.action;
+  const riskPassed = p.risk_passed;
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+        <Cell label="股票" value={p.symbol} />
+        <Cell label="方向" value={sideLabel} valueClass={p.action === 'BUY' ? 'text-bull' : 'text-bear'} />
+        <Cell label="数量" value={`${p.quantity} 股`} />
+        <Cell label="价格" value={`¥${p.price}`} />
+        <Cell label="预计金额" value={`¥${Number(p.est_amount).toLocaleString()}`} />
+        <Cell label="可用现金" value={`¥${Number(p.cash).toLocaleString()}`} />
+      </div>
+
+      <div className={`p-3 rounded-lg text-sm mb-4 border ${riskPassed
+        ? 'bg-green-900/20 border-green-600/30 text-green-200'
+        : 'bg-red-900/30 border-red-600/40 text-red-200'}`}>
+        <div className="font-semibold mb-1">{riskPassed ? '✅ 风控预检通过' : '⛔ 风控未通过（确认后仍会被拦截）'}</div>
+        {Array.isArray(p.risk_failed) && p.risk_failed.length > 0 && (
+          <ul className="list-disc list-inside text-xs space-y-0.5">
+            {p.risk_failed.map((m: string, i: number) => <li key={i}>{m}</li>)}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+};
+
+/* 通用确认卡片——非下单类工具（自选/预警/设置/交易记录）走这里，按 preview 键值对渲染。*/
+const GenericBody: React.FC<{ p: any }> = ({ p }) => (
+  <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+    {Object.entries(p).map(([key, value]) => (
+      <Cell key={key} label={FIELD_LABELS[key] || key} value={formatValue(key, value)} />
+    ))}
+  </div>
+);
+
+export const ConfirmDialog: React.FC<Props> = ({ name, preview, onConfirm, onCancel }) => {
   const p = preview || {};
   const err = p.error;
-  const riskPassed = p.risk_passed;
-  const sideLabel = p.action === 'BUY' ? '买入' : p.action === 'SELL' ? '卖出' : p.action;
+  const isOrder = name === 'place_order';
+  const title = (name && TOOL_LABELS[name]) || name || '操作确认';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onCancel}>
@@ -21,36 +95,18 @@ export const ConfirmDialog: React.FC<Props> = ({ preview, onConfirm, onCancel })
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 mb-4">
-          <span className="text-2xl">⚠️</span>
-          <h2 className="text-lg font-bold text-white">下单确认（模拟盘）</h2>
+          <span className="text-2xl">{isOrder ? '⚠️' : '✅'}</span>
+          <h2 className="text-lg font-bold text-white">{isOrder ? title : `操作确认 · ${title}`}</h2>
         </div>
 
         {err ? (
           <div className="p-3 rounded-lg bg-red-900/40 border border-red-600/40 text-red-200 text-sm mb-4">
-            无法下单：{err}
+            无法执行：{err}
           </div>
+        ) : isOrder ? (
+          <PlaceOrderBody p={p} />
         ) : (
-          <>
-            <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
-              <Cell label="股票" value={p.symbol} />
-              <Cell label="方向" value={sideLabel} valueClass={p.action === 'BUY' ? 'text-bull' : 'text-bear'} />
-              <Cell label="数量" value={`${p.quantity} 股`} />
-              <Cell label="价格" value={`¥${p.price}`} />
-              <Cell label="预计金额" value={`¥${Number(p.est_amount).toLocaleString()}`} />
-              <Cell label="可用现金" value={`¥${Number(p.cash).toLocaleString()}`} />
-            </div>
-
-            <div className={`p-3 rounded-lg text-sm mb-4 border ${riskPassed
-              ? 'bg-green-900/20 border-green-600/30 text-green-200'
-              : 'bg-red-900/30 border-red-600/40 text-red-200'}`}>
-              <div className="font-semibold mb-1">{riskPassed ? '✅ 风控预检通过' : '⛔ 风控未通过（确认后仍会被拦截）'}</div>
-              {Array.isArray(p.risk_failed) && p.risk_failed.length > 0 && (
-                <ul className="list-disc list-inside text-xs space-y-0.5">
-                  {p.risk_failed.map((m: string, i: number) => <li key={i}>{m}</li>)}
-                </ul>
-              )}
-            </div>
-          </>
+          <GenericBody p={p} />
         )}
 
         <div className="flex gap-3 justify-end">
@@ -65,7 +121,7 @@ export const ConfirmDialog: React.FC<Props> = ({ preview, onConfirm, onCancel })
             disabled={!!err}
             className="px-5 py-2 rounded-lg bg-primary hover:bg-primary-light disabled:opacity-40 text-dark text-sm font-medium transition-colors"
           >
-            确认下单
+            {isOrder ? '确认下单' : '确认执行'}
           </button>
         </div>
       </div>

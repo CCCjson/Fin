@@ -211,6 +211,9 @@ static json result_to_json(const BacktestResult& result) {
     }
     j["trades"] = trades;
 
+    // 回测最后一 bar 因无「次日开盘」可成交而被丢弃的挂单数（不静默，供前端/日志核对）
+    j["dropped_last_bar_orders"] = result.dropped_last_bar_orders;
+
     return j;
 }
 

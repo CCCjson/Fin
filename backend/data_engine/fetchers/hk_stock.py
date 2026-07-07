@@ -10,6 +10,18 @@ from loguru import logger
 from data_engine.fetchers.base import BaseFetcher, MarketDataRequest, MarketDataResponse
 
 
+def to_yf_symbol(symbol: str) -> str:
+    """项目里港股代码统一存 5 位数字格式（00700.HK），但 yfinance 只认 4 位（0700.HK）
+    ——5 位格式喂给 yfinance 会返回 "possibly delisted; no price data found"。
+    这里只在实际调 yfinance 前转换，数据库/前端展示不受影响。
+    """
+    if symbol.endswith(".HK"):
+        code = symbol[:-3]
+        if len(code) == 5 and code.isdigit():
+            return f"{code[1:]}.HK"
+    return symbol
+
+
 class HKStockFetcher(BaseFetcher):
     """港股数据获取器"""
 
@@ -24,7 +36,7 @@ class HKStockFetcher(BaseFetcher):
 
             logger.info(f"正在获取 {request.symbol} 的日线数据...")
 
-            ticker = yf.Ticker(request.symbol)
+            ticker = yf.Ticker(to_yf_symbol(request.symbol))
             df = ticker.history(
                 start=request.start_date,
                 end=request.end_date,
@@ -68,31 +80,15 @@ class HKStockFetcher(BaseFetcher):
             raise
 
     def fetch_realtime(self, symbols: List[str]) -> List[Dict]:
-        """获取实时行情"""
+        """获取实时行情（一次批量 download 替代逐只 ticker.info）"""
         try:
-            import yfinance as yf
-
-            result = []
-
-            for symbol in symbols:
-                try:
-                    ticker = yf.Ticker(symbol)
-                    info = ticker.info
-
-                    result.append({
-                        "symbol": symbol,
-                        "price": info.get("currentPrice", 0),
-                        "change": info.get("regularMarketChange", 0),
-                        "change_percent": info.get("regularMarketChangePercent", 0),
-                        "volume": info.get("volume", 0),
-                        "timestamp": datetime.now().isoformat()
-                    })
-                except Exception as e:
-                    logger.warning(f"获取 {symbol} 实时行情失败: {e}")
-
-            logger.info(f"成功获取 {len(result)}/{len(symbols)} 只股票的实时行情")
-            return result
-
+            from data_engine.fetchers.yf_batch import fetch_yf_realtime_batch
+            yf_symbols = [to_yf_symbol(s) for s in symbols]
+            restore = dict(zip(yf_symbols, symbols))
+            results = fetch_yf_realtime_batch(yf_symbols)
+            for r in results:
+                r["symbol"] = restore.get(r["symbol"], r["symbol"])
+            return results
         except Exception as e:
             logger.error(f"获取实时行情失败: {e}")
             raise
@@ -107,3 +103,48 @@ class HKStockFetcher(BaseFetcher):
         """搜索股票（港股搜索功能有限）"""
         logger.warning("港股搜索功能有限，建议使用完整代码")
         return []
+
+    def get_stock_list(self) -> List[Dict]:
+        """获取所有港股列表（代码 + 名称），用于填充 StockInfo 表。
+
+        直接分页调用东财 clist/get 原始接口（f12=代码 f14=名称），不走 akshare
+        的 stock_hk_spot_em——那个接口内部一次性顺序翻 40+ 页，中途代理一断
+        整体就得从第 1 页重来。这里按页调用 domestic_json，每页自带独立的
+        代理轮换重试，某页最终还是失败就停下，返回已经拿到的部分而不是全丢。
+        """
+        from net import domestic_json
+
+        logger.info("获取港股股票列表...")
+        url = "https://72.push2.eastmoney.com/api/qt/clist/get"
+        base_params = {
+            "po": "1", "np": "1",
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": "2", "invt": "2", "fid": "f12",
+            "fs": "m:128 t:3,m:128 t:4,m:128 t:1,m:128 t:2",
+            "fields": "f12,f14",
+        }
+
+        result = []
+        page = 1
+        total = None
+        while total is None or len(result) < total:
+            params = {**base_params, "pn": str(page), "pz": "100"}
+            data = domestic_json(url, params=params, max_rounds=5)
+            rows = ((data or {}).get("data") or {}).get("diff") or []
+            if not rows:
+                logger.warning(f"港股列表第 {page} 页拉取失败，停止（已获取 {len(result)}/{total or '?'} 条）")
+                break
+            if total is None:
+                total = (data.get("data") or {}).get("total", 0)
+            for r in rows:
+                code = str(r.get("f12", "")).strip().zfill(5)
+                name = r.get("f14")
+                if code and name:
+                    result.append({"symbol": f"{code}.HK", "name": name, "market": "hk_stock"})
+            page += 1
+
+        if not result:
+            raise RuntimeError("港股列表一页都没拉到，检查代理/网络")
+
+        logger.info(f"获取到 {len(result)} 只港股")
+        return result

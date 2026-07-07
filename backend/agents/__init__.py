@@ -6,7 +6,7 @@ calling 直接调用 ~40 个工具完成任务；只有 4 个复杂任务下放�
 
 设计要点见 ~/.claude/plans/pure-imagining-quasar.md：
 - 工具 = 瘦适配器包现有同步引擎函数 + run_in_executor，不改引擎
-- 复用现有 NDJSON 流式协议 + thread/queue 桥接（参考 api/routes/advisor.py）
+- 复用现有 NDJSON 流式协议 + thread/queue 桥接（参考 api/routes/agent.py）
 - 分档模型：Monitor 用 best(gpt-5.5)，subagent 用 cheap(gpt-5.4-mini)
 """
 

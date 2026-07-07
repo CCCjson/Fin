@@ -110,6 +110,90 @@ class RealtimeSnapshot(Base):
         return f"<RealtimeSnapshot(symbol={self.symbol}, price={self.price}, change={self.change_pct}%)>"
 
 
+class LimitUpPool(Base):
+    """每日涨停/炸板/跌停板行情快照（一天一次，盘后写入，三池合一用 pool_type 区分）"""
+    __tablename__ = "limit_up_pool"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(Date, nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    name = Column(String(100))
+    pool_type = Column(String(10), nullable=False)  # zt(今日涨停) / zb(炸板) / dt(跌停) / previous(昨日涨停)
+
+    change_pct = Column(Float)          # 涨跌幅 %（previous 池代表"次日表现"）
+    price = Column(Float)               # 最新价
+    limit_price = Column(Float)         # 涨停价/跌停价（zt 池无此字段）
+    amount = Column(Float)              # 成交额
+    turnover = Column(Float)            # 换手率 %
+    amplitude = Column(Float)           # 振幅 %（zb/previous 池有，zt/dt 池无）
+    speed = Column(Float)               # 涨速 %（zb/previous 池有）
+    circulating_mv = Column(Float)      # 流通市值
+    total_mv = Column(Float)            # 总市值
+
+    seal_amount = Column(Float)         # 封板资金（zt/dt 池有）
+    first_seal_time = Column(String(10))   # 首次封板时间 HHMMSS（zt/zb 池），或 previous 池的"昨日封板时间"
+    last_seal_time = Column(String(10))    # 最后封板时间（zt/dt 池）
+    break_count = Column(Integer)       # 炸板次数（zt/zb 池）
+    consecutive_boards = Column(Integer)  # 连板数（zt 池"连板数"/previous 池"昨日连板数"）
+    zt_stat_days = Column(Integer)      # 涨停统计：窗口天数（近 N 个交易日）
+    zt_stat_count = Column(Integer)     # 涨停统计：窗口内涨停次数
+
+    industry = Column(String(50))       # 所属行业（题材热度代理）
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_limitup_date_type', 'trade_date', 'pool_type'),
+        Index('idx_limitup_symbol_date', 'symbol', 'trade_date'),
+    )
+
+    def __repr__(self):
+        return f"<LimitUpPool(symbol={self.symbol}, date={self.trade_date}, type={self.pool_type})>"
+
+
+class LimitUpPrediction(Base):
+    """涨停候选池打分结果（一天一次，盘后跑规则打分模型后写入）。
+
+    候选 universe 只来自"当前未封板、能正常买入"的股票（强势股池/自建准涨停扫描/
+    昨涨停今仍强势），已封板的今日涨停池不进这张表，只作为环境变量输入打分。
+    """
+    __tablename__ = "limit_up_predictions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    predict_date = Column(Date, nullable=False, index=True)   # 预测生成日（今日盘后）
+    target_date = Column(Date, nullable=False, index=True)    # 预测目标日（下一交易日）
+    symbol = Column(String(20), nullable=False, index=True)
+    name = Column(String(100))
+
+    score = Column(Float, nullable=False)   # 综合打分 0-1，对齐 Signal.strength 语义
+    rank = Column(Integer)                  # 当日候选池内排名（按 score 降序）
+    source = Column(String(20))             # 候选来源：strong(强势股池) / quasi(自建准涨停扫描) / continuation(昨涨停今仍强势)
+
+    momentum_score = Column(Float)      # 动能强度分 0-100
+    capital_score = Column(Float)       # 资金强度分 0-100
+    theme_score = Column(Float)         # 题材热度分 0-100
+    sentiment_score = Column(Float)     # 大盘情绪分 0-100（当日全候选股共享）
+    continuation_score = Column(Float)  # 强势延续分 0-100
+
+    reasons = Column(Text)   # JSON: [{"indicator": "...", "detail": "..."}...]，对齐 Signal.reasons 风格
+
+    # 实际结果回填（次日收盘后补，用于后续复盘/权重校准，MVP 阶段不强制要求）
+    actual_result = Column(String(10))   # limit_up / up / flat / down
+    actual_change_pct = Column(Float)
+
+    model_version = Column(String(20), default="rule_v1")  # 预留：未来接 ML 时区分版本
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_ltp_target_date', 'target_date'),
+        Index('idx_ltp_predict_date_symbol', 'predict_date', 'symbol', unique=True),
+        Index('idx_ltp_score', 'score'),
+    )
+
+    def __repr__(self):
+        return f"<LimitUpPrediction(symbol={self.symbol}, target_date={self.target_date}, score={self.score})>"
+
+
 class DataUpdateLog(Base):
     """数据更新日志表"""
     __tablename__ = "data_update_logs"
@@ -135,6 +219,7 @@ class Signal(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     symbol = Column(String(20), nullable=False, index=True)
+    name = Column(String(100))
     date = Column(Date, nullable=False, index=True)
     signal_type = Column(String(10), nullable=False)  # BUY / SELL
     strength = Column(Float, nullable=False)  # 信号强度 (0-1)
@@ -240,6 +325,7 @@ class Order(Base):
     order_id = Column(String(50), primary_key=True)
     account_id = Column(String(50), nullable=False, index=True)
     symbol = Column(String(20), nullable=False, index=True)
+    name = Column(String(100))
     side = Column(String(10), nullable=False)  # BUY / SELL
     order_type = Column(String(20), nullable=False)  # MARKET / LIMIT / STOP
     quantity = Column(Integer, nullable=False)
@@ -281,6 +367,7 @@ class Trade(Base):
     order_id = Column(String(50), ForeignKey("orders.order_id"), nullable=False, index=True)
     account_id = Column(String(50), nullable=False, index=True)
     symbol = Column(String(20), nullable=False, index=True)
+    name = Column(String(100))
     direction = Column(String(10), nullable=False)  # long / short
     quantity = Column(Integer, nullable=False)
     price = Column(Float, nullable=False)
@@ -1011,3 +1098,75 @@ class StockValuation(Base):
 
     def __repr__(self):
         return f"<StockValuation(symbol={self.symbol}, date={self.snapshot_date}, pe={self.pe}, pb={self.pb})>"
+
+
+class PositionReconciliation(Base):
+    """持仓对账记录表 —— 每次"系统持仓 vs 券商真实持仓"对账的快照与处理结果（可审计）"""
+    __tablename__ = "position_reconciliations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    reconcile_date = Column(Date, nullable=False, index=True)  # 对账基准日
+    source = Column(String(20), default="manual")             # manual / csv
+    status = Column(String(20), default="applied")            # applied（已应用纠正）
+
+    # 差异汇总: {"match": n, "qty_mismatch": n, "cost_mismatch": n, "system_only": n, "broker_only": n}
+    summary = Column(Text)
+    # 逐股差异明细快照（JSON: [{symbol, system_qty, actual_qty, system_avg, actual_avg, kind, ...}]）
+    details = Column(Text)
+    # 本次应用的调整交易: JSON [{symbol, side, quantity, price, manual_trade_id}]
+    adjustments = Column(Text)
+    note = Column(Text)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    def __repr__(self):
+        return f"<PositionReconciliation(date={self.reconcile_date}, status={self.status})>"
+
+
+class DecisionLog(Base):
+    """决策留痕表 —— 每条 AI 产生的买卖建议的可复现、可归因记录。
+
+    覆盖 advisor / cockpit / moneybill 三条现在不落库的 AI 路径；规则信号已有 Signal 表故不重复记。
+    """
+    __tablename__ = "decision_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    decision_id = Column(String(40), unique=True, index=True)   # UUID
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+
+    source = Column(String(20), nullable=False, index=True)     # advisor / cockpit / moneybill
+    symbol = Column(String(20), index=True)
+    name = Column(String(100))
+    action = Column(String(12))          # BUY / SELL / HOLD / AGGREGATE
+    recommendation = Column(String(12))  # BUY / HOLD / SELL（驾驶舱评级）
+    confidence = Column(Float)           # 驾驶舱综合分(0-100) 或其它置信度
+
+    # 建议动作细节
+    entry_price = Column(Float)
+    stop_loss = Column(Float)
+    take_profit = Column(Float)
+    position_pct = Column(Float)
+
+    # 溯源
+    model_id = Column(String(50))        # 模型名 或 'rule:cockpit_scorer'
+    prompt_version = Column(String(30))
+    input_snapshot = Column(Text)        # JSON：产生该建议时喂进去的数据
+    reasons = Column(Text)               # JSON / 文本：理由
+    output_text = Column(Text)           # LLM 全文 / 执行摘要
+    output_summary = Column(Text)        # JSON：结构化结果（五维分/执行详情等）
+
+    # 成本
+    prompt_tokens = Column(Integer, default=0)
+    completion_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    cost_usd = Column(Float, default=0.0)
+    latency_ms = Column(Integer)
+
+    # 关联 / 交易执行
+    session_id = Column(String(50), index=True)
+    turn_start_idx = Column(Integer)           # 定位 agent_traces/{session_id}.jsonl 里产生该决策的那个 turn
+    executed = Column(Integer, default=0)      # moneybill 是否真的成交 0/1
+    risk_passed = Column(Integer)              # moneybill 风控是否通过 0/1
+
+    def __repr__(self):
+        return f"<DecisionLog(source={self.source}, symbol={self.symbol}, action={self.action})>"

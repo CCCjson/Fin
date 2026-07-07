@@ -3,10 +3,11 @@
  *
  * 大量流式/裸 fetch 请求绕过了 axios 实例（services/api.ts），因此不带 Authorization。
  * 这个 helper 是 fetch 的 drop-in 替代：只做「注入 Bearer 头 + 401 清 token」这一件事，
- * 逻辑对齐 api.ts 里的 axios 拦截器，url / method / body / signal 等一律原样透传。
+ * TOKEN_KEY 与 401 处理逻辑统一从 utils/authToken.ts 取，与 api.ts 里的 axios 拦截器
+ * 共用同一份，url / method / body / signal 等一律原样透传。
  */
 
-const TOKEN_KEY = 'fin_auth_token';
+import { TOKEN_KEY, handleUnauthorized } from './authToken';
 
 /** 读取当前 token（与 services/api.ts 同一把 localStorage key）。 */
 export function getAuthToken(): string | null {
@@ -32,10 +33,7 @@ export async function authFetch(
   const response = await fetch(input, { ...init, headers });
 
   if (response.status === 401) {
-    localStorage.removeItem(TOKEN_KEY);
-    if (window.location.pathname !== '/') {
-      window.location.href = '/';
-    }
+    handleUnauthorized();
   }
 
   return response;

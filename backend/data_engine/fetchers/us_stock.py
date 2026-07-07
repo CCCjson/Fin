@@ -65,31 +65,10 @@ class USStockFetcher(BaseFetcher):
             raise
 
     def fetch_realtime(self, symbols: List[str]) -> List[Dict]:
-        """获取实时行情"""
+        """获取实时行情（一次批量 download 替代逐只 ticker.info）"""
         try:
-            import yfinance as yf
-
-            result = []
-
-            for symbol in symbols:
-                try:
-                    ticker = yf.Ticker(symbol)
-                    info = ticker.info
-
-                    result.append({
-                        "symbol": symbol,
-                        "price": info.get("currentPrice", 0),
-                        "change": info.get("regularMarketChange", 0),
-                        "change_percent": info.get("regularMarketChangePercent", 0),
-                        "volume": info.get("volume", 0),
-                        "timestamp": datetime.now().isoformat()
-                    })
-                except Exception as e:
-                    logger.warning(f"获取 {symbol} 实时行情失败: {e}")
-
-            logger.info(f"成功获取 {len(result)}/{len(symbols)} 只股票的实时行情")
-            return result
-
+            from data_engine.fetchers.yf_batch import fetch_yf_realtime_batch
+            return fetch_yf_realtime_batch(symbols)
         except Exception as e:
             logger.error(f"获取实时行情失败: {e}")
             raise
@@ -104,3 +83,49 @@ class USStockFetcher(BaseFetcher):
         """搜索股票（美股搜索功能有限）"""
         logger.warning("美股搜索功能有限，建议使用完整代码")
         return []
+
+    def get_stock_list(self) -> List[Dict]:
+        """获取所有美股列表（代码 + 名称），用于填充 StockInfo 表。
+
+        直接分页调用东财 clist/get 原始接口（f12=代码 f14=名称），不走 akshare
+        的 stock_us_spot_em——那个接口内部一次性顺序翻 130+ 页，中途代理一断
+        整体就得从第 1 页重来，而且它的"代码"列还是拼接过的 "编码.简称" 格式。
+        这里直接用 f12（本身就是裸 ticker，如 "AAPL"），按页调用 domestic_json，
+        每页自带独立的代理轮换重试，某页最终还是失败就停下，返回已拿到的部分。
+        """
+        from net import domestic_json
+
+        logger.info("获取美股股票列表...")
+        url = "https://72.push2.eastmoney.com/api/qt/clist/get"
+        base_params = {
+            "po": "1", "np": "1",
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": "2", "invt": "2", "fid": "f12",
+            "fs": "m:105,m:106,m:107",
+            "fields": "f12,f14",
+        }
+
+        result = []
+        page = 1
+        total = None
+        while total is None or len(result) < total:
+            params = {**base_params, "pn": str(page), "pz": "100"}
+            data = domestic_json(url, params=params, max_rounds=5)
+            rows = ((data or {}).get("data") or {}).get("diff") or []
+            if not rows:
+                logger.warning(f"美股列表第 {page} 页拉取失败，停止（已获取 {len(result)}/{total or '?'} 条）")
+                break
+            if total is None:
+                total = (data.get("data") or {}).get("total", 0)
+            for r in rows:
+                ticker = str(r.get("f12", "")).strip()
+                name = r.get("f14")
+                if ticker and name:
+                    result.append({"symbol": ticker, "name": name, "market": "us_stock"})
+            page += 1
+
+        if not result:
+            raise RuntimeError("美股列表一页都没拉到，检查代理/网络")
+
+        logger.info(f"获取到 {len(result)} 只美股")
+        return result

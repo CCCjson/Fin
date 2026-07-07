@@ -123,7 +123,10 @@ export const PositionsTab: React.FC = () => {
                   const pnlColor = pos.unrealized_pnl >= 0 ? 'text-red-400' : 'text-green-400';
                   return (
                     <tr key={`${pos.broker}-${pos.symbol}`} className="border-b border-border/30 hover:bg-dark/30 transition-colors">
-                      <td className="px-4 py-3 text-white font-medium">{pos.symbol}</td>
+                      <td className="px-4 py-3">
+                        <div className="text-white font-medium">{pos.symbol}</div>
+                        <div className="text-gray-500 text-xs">{pos.name}</div>
+                      </td>
                       <td className="px-4 py-3 text-right text-gray-300">{pos.quantity}</td>
                       <td className="px-4 py-3 text-right text-gray-300">{pos.avg_cost.toFixed(2)}</td>
                       <td className="px-4 py-3 text-right text-white">{pos.current_price.toFixed(2)}</td>

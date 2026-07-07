@@ -28,7 +28,7 @@ class RunBacktestArgs(BaseModel):
     start_date: str = Field("", description="开始日期 YYYY-MM-DD，可选")
     end_date: str = Field("", description="结束日期 YYYY-MM-DD，可选")
     initial_capital: float = Field(100000.0, gt=0, description="初始资金，默认 100000")
-    market: str = Field("a_share", description="市场 a_share/us/hk，默认 a_share")
+    market: str = Field("a_share", description="市场 a_share/hk_stock/us_stock，默认 a_share（其余写法会自动归一）")
     params: Optional[dict] = Field(
         None, description="策略参数对象，如 {\"fast_period\":5,\"slow_period\":20}")
 
@@ -48,6 +48,10 @@ def run_backtest(symbol: str, strategy: str = "MA_CROSS", start_date: str = "",
                  end_date: str = "", initial_capital: float = 100000.0,
                  market: str = "a_share", params: dict = None) -> ToolEnvelope:
     from services.backtest_cpp_client import run_single_backtest as _run_single_backtest_sync
+    from common.market import normalize_market
+
+    # LLM/前端可能传 us/hk 等历史写法，归一到 canonical 再进 C++（否则费率静默错算成 A股）
+    market = normalize_market(market)
 
     if not start_date or not end_date:
         d_start, d_end = _default_window()
@@ -61,7 +65,7 @@ def run_backtest(symbol: str, strategy: str = "MA_CROSS", start_date: str = "",
         start_date=start_date,
         end_date=end_date,
         initial_capital=float(initial_capital),
-        market=market or "a_share",
+        market=market,
         batch_id=f"agent_{date.today().isoformat()}",
         task_label="MoneyBill",
     )

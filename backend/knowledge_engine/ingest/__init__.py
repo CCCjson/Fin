@@ -67,6 +67,41 @@ class IngestPipeline:
             self.store.set_document_status(doc_id, "failed")
             return {"doc_id": doc_id, "is_new": True, "chunks": 0, "status": "failed", "error": str(e)}
 
+    def reingest_text(self, *, doc_id: str, text: str,
+                       metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        把已存在文档的正文替换成新文本，重新切片+嵌入（删旧切片+旧向量，写新的）。
+
+        upsert_document 对已存在的 doc_id 直接短路跳过（is_new=False），这是"先摄
+        元数据要点、后想升级全文"场景绕不开的坑——同一批文档 doc_id 已固化，重跑
+        ingest_text 不会更新内容。这条独立路径专门处理"升级已有文档"，不影响
+        正常摄入路径的幂等语义。
+        """
+        old_chunk_ids = self.store.delete_chunks(doc_id)
+        if old_chunk_ids:
+            vector_store.delete(old_chunk_ids)
+        self.store.update_document_content(doc_id, full_text=text, metadata=metadata)
+
+        try:
+            chunks = chunk_text(text)
+            if not chunks:
+                self.store.set_document_status(doc_id, "failed", chunk_count=0)
+                return {"doc_id": doc_id, "chunks": 0, "status": "failed"}
+
+            chunk_ids = self.store.add_chunks(doc_id, chunks)
+            self.store.set_document_status(doc_id, "chunked", chunk_count=len(chunks))
+
+            vectors = Embedder.get_instance().encode_passages([c["text"] for c in chunks])
+            vector_store.upsert(list(zip(chunk_ids, vectors)))
+            self.store.mark_chunks_embedded(chunk_ids)
+            self.store.set_document_status(doc_id, "embedded", chunk_count=len(chunks))
+
+            return {"doc_id": doc_id, "chunks": len(chunks), "status": "embedded"}
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"重摄入失败 doc_id={doc_id}: {e}")
+            self.store.set_document_status(doc_id, "failed")
+            return {"doc_id": doc_id, "chunks": 0, "status": "failed", "error": str(e)}
+
     def reembed_pending(self, limit: int = 256) -> int:
         """补嵌：把 embedded=0 的切片重新写入向量表（断点续传/补漏）。"""
         chunks = self.store.get_unembedded_chunks(limit=limit)

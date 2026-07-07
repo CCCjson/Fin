@@ -62,6 +62,20 @@ class StockRepository:
             )
         ).limit(limit).all()
 
+    def get_names_for_symbols(self, symbols: List[str]) -> Dict[str, str]:
+        """按 symbol 列表批量查名称。查不到的 symbol 不出现在返回结果里，调用方自行 fallback。"""
+        if not symbols:
+            return {}
+        rows = self.session.query(StockInfo.symbol, StockInfo.name).filter(
+            StockInfo.symbol.in_(list(set(symbols)))
+        ).all()
+        return {sym: name for sym, name in rows}
+
+
+def get_stock_names(session: Session, symbols: List[str]) -> Dict[str, str]:
+    """薄封装：不想显式持有 StockRepository 实例时直接调用。"""
+    return StockRepository(session).get_names_for_symbols(symbols)
+
 
 class QuoteRepository:
     """行情数据仓库"""

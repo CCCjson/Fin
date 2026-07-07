@@ -260,8 +260,8 @@ export const CppBacktestForm: React.FC<CppBacktestFormProps> = ({
           <select value={form.market} onChange={e => update('market', e.target.value)}
             className="form-input">
             <option value="a_share">A股</option>
-            <option value="us">美股</option>
-            <option value="hk">港股</option>
+            <option value="us_stock">美股</option>
+            <option value="hk_stock">港股</option>
           </select>
         </FormField>
         <FormField label="初始资金">

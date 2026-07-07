@@ -1,8 +1,8 @@
 """
 MonitorOrchestrator —— MoneyBill 的编排循环（function-calling agent loop）。
 
-同步 Generator，产 NDJSON 行；按 api/routes/advisor.py 的 thread/queue 模式在 worker
-线程里被 drain。无 subagent/widget/确认 时退化为普通对话。
+同步 Generator，产 NDJSON 行；按 api/routes/agent.py 的 thread/queue 模式（_drain/
+_streaming）在 worker 线程里被 drain。无 subagent/widget/确认 时退化为普通对话。
 
 Phase 4 职责拆分：turn 开局副作用（系统提示/tool_groups/page_context/历史压缩/
 TurnMonitor 重建）在 agents/turn_setup.py；确认门（拦截+续跑）在 agents/confirm_gate.py；
@@ -150,7 +150,8 @@ class MonitorOrchestrator:
             tool_calls: list[dict] = []
             try:
                 from llm_client import stream_chat
-                for ev in stream_chat(session.messages, model=model, tools=tools):
+                for ev in stream_chat(session.messages, model=model, tools=tools,
+                                       cancel_event=session.cancel_event):
                     if ev["type"] == "text":
                         if ev["content"]:
                             yield emit(EV.CHUNK, content=ev["content"])
@@ -198,6 +199,13 @@ class MonitorOrchestrator:
                 return
 
             for tc in tool_calls:
+                # 协作取消：轮内多个 tool_call 时，客户端一断开就不再发起还没开始的
+                # 后续调用（已经在跑的单个工具没法从外部中途打断，只能等它返回）。
+                if session.cancel_event.is_set():
+                    logger.info(
+                        f"MoneyBill 客户端断开，跳过剩余 tool_calls session={session.session_id}")
+                    _trace("cancelled")
+                    return
                 td = REGISTRY.get(tc["name"]) if REGISTRY.has(tc["name"]) else None
                 yield emit(EV.TOOL_CALL, id=tc["id"], name=tc["name"], args=tc["args"])
 
@@ -278,7 +286,8 @@ class MonitorOrchestrator:
         session.messages.append({"role": "system", "content": notice})
         assistant_msg = None
         p = c = 0
-        for ev in stream_chat(session.messages, model=model):  # 不传 tools → 只能出文本
+        for ev in stream_chat(session.messages, model=model,
+                               cancel_event=session.cancel_event):  # 不传 tools → 只能出文本
             if ev["type"] == "text":
                 if ev["content"]:
                     yield emit(EV.CHUNK, content=ev["content"])

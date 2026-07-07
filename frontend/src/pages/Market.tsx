@@ -5,9 +5,12 @@ import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { IndicatorPanel } from '../components/charts/IndicatorPanel';
 import { Card } from '../components/common/Card';
 import { marketService } from '../services/marketService';
+import api from '../services/api';
+import { usePageContextStore } from '../store/pageContextStore';
 import type { StockData } from '../types';
 import type { IndicatorConfig } from '../types/chart';
 import { DEFAULT_INDICATOR_CONFIG } from '../types/chart';
+import { detectMarket, currencySymbolFor, formatVolume, MARKET_LABEL } from '../utils/marketDetect';
 
 /**
  * 判断缓存数据是否足够新（3 天内视为新鲜，覆盖周末和短假期）
@@ -23,7 +26,12 @@ function isDataFresh(latestDateStr: string, endDateStr: string): boolean {
 
 export const Market: React.FC = () => {
   const [symbol, setSymbol] = useState('688576.SH');
+  const [stockName, setStockName] = useState('');
   const [data, setData] = useState<StockData[]>([]);
+  // 货币/市场徽章要跟着「当前实际展示的数据」走，而不是输入框里正在打的字——
+  // StockSymbolInput 每敲一个字就 onChange 一次，若直接用 symbol 派生，选中新代码
+  // 到点「查询」重新加载完成之间会有一段「标签已变、数字还是旧的」错位空档。
+  const [loadedSymbol, setLoadedSymbol] = useState('688576.SH');
   const [loading, setLoading] = useState(false);
   const [updating, setUpdating] = useState(false);  // 后台静默刷新中
   const [error, setError] = useState<string | null>(null);
@@ -33,12 +41,26 @@ export const Market: React.FC = () => {
   const hasLoadedRef = useRef(false);
   const location = useLocation();
 
+  // 让 MoneyBill 浮窗知道「当前正在看这只股票」
+  useEffect(() => {
+    if (symbol) usePageContextStore.getState().setEntities({ symbol });
+  }, [symbol]);
+
+  // symbol 变化时补查名称（覆盖初始默认值、以及非 StockSymbolInput 途径的 symbol 变更）
+  useEffect(() => {
+    if (!symbol) return;
+    api.get<Record<string, string>>('/data/stocks/names', { params: { symbols: symbol } })
+      .then(res => setStockName(res?.[symbol] || ''))
+      .catch(() => setStockName(''));
+  }, [symbol]);
+
   /**
    * 两阶段加载：
    *   阶段1: db_only=true，毫秒级返回缓存数据，先渲染图表
    *   阶段2: db_only=false，后台联网补齐最新数据，补完静默刷新
    */
   const loadData = useCallback(async (forceFullLoad = false) => {
+    const requestSymbol = symbol; // 锁定本次请求对应的代码，回来后货币/徽章跟它对齐
     try {
       setError(null);
 
@@ -49,6 +71,7 @@ export const Market: React.FC = () => {
           const cached = await marketService.getDailyData(symbol, startDate, endDate, true);
           if (cached.data && cached.data.length > 0) {
             setData(cached.data);
+            setLoadedSymbol(requestSymbol);
             hasLoadedRef.current = true;
             setLoading(false);
 
@@ -64,6 +87,7 @@ export const Market: React.FC = () => {
               const fresh = await marketService.getDailyData(symbol, startDate, endDate, false);
               if (fresh.data && fresh.data.length > 0) {
                 setData(fresh.data);
+                setLoadedSymbol(requestSymbol);
               }
             } catch {
               // 静默刷新失败不影响已展示的缓存数据
@@ -82,6 +106,7 @@ export const Market: React.FC = () => {
       setLoading(true);
       const response = await marketService.getDailyData(symbol, startDate, endDate, false);
       setData(response.data || []);
+      setLoadedSymbol(requestSymbol);
       hasLoadedRef.current = true;
     } catch (err) {
       console.error('Failed to load data:', err);
@@ -108,6 +133,12 @@ export const Market: React.FC = () => {
   const prevData = data[data.length - 2];
   const priceChange = latestData && prevData ? latestData.close - prevData.close : 0;
   const priceChangePct = prevData ? (priceChange / prevData.close) * 100 : 0;
+  // 货币符号跟着代码后缀走（.SH/.SZ→¥、.HK→HK$、其余→US$），跟后端市场判定口径一致，
+  // 不需要额外接口——喂港美股代码不会再显示成 ¥ 了。派生自 loadedSymbol（当前
+  // 展示的 data 真正对应哪只代码）而非输入框里的 symbol，避免选中新代码后、
+  // 「查询」重新加载完成前，货币标签先变了但数字还是旧的这段错位空档。
+  const market = detectMarket(loadedSymbol);
+  const currency = currencySymbolFor(loadedSymbol);
 
   return (
     <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6">
@@ -123,7 +154,7 @@ export const Market: React.FC = () => {
               </label>
               <StockSymbolInput
                 value={symbol}
-                onChange={(s) => setSymbol(s)}
+                onChange={(s, n) => { setSymbol(s); setStockName(n || ''); }}
                 placeholder="输入代码或名称搜索"
               />
             </div>
@@ -166,7 +197,7 @@ export const Market: React.FC = () => {
           <div className="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-4">
             <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">最新价</div>
-              <div className="text-lg md:text-2xl font-bold text-primary-light">¥{latestData.close.toFixed(2)}</div>
+              <div className="text-lg md:text-2xl font-bold text-primary-light">{currency}{latestData.close.toFixed(2)}</div>
             </Card>
             <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">涨跌幅</div>
@@ -176,19 +207,19 @@ export const Market: React.FC = () => {
             </Card>
             <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">开盘价</div>
-              <div className="text-lg md:text-xl font-semibold text-white">¥{latestData.open.toFixed(2)}</div>
+              <div className="text-lg md:text-xl font-semibold text-white">{currency}{latestData.open.toFixed(2)}</div>
             </Card>
             <Card className="p-3 md:p-4 hover:shadow-glow-green transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">最高价</div>
-              <div className="text-lg md:text-xl font-semibold text-bull">¥{latestData.high.toFixed(2)}</div>
+              <div className="text-lg md:text-xl font-semibold text-bull">{currency}{latestData.high.toFixed(2)}</div>
             </Card>
             <Card className="p-3 md:p-4 hover:shadow-glow-red transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">最低价</div>
-              <div className="text-lg md:text-xl font-semibold text-bear">¥{latestData.low.toFixed(2)}</div>
+              <div className="text-lg md:text-xl font-semibold text-bear">{currency}{latestData.low.toFixed(2)}</div>
             </Card>
             <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">成交量</div>
-              <div className="text-lg md:text-xl font-semibold text-accent-cyan">{(latestData.volume / 10000).toFixed(2)}万</div>
+              <div className="text-lg md:text-xl font-semibold text-accent-cyan">{formatVolume(latestData.volume, symbol)}</div>
             </Card>
           </div>
         )}
@@ -196,7 +227,13 @@ export const Market: React.FC = () => {
         {/* K线图 */}
         <div className="bg-gradient-card border border-border shadow-card p-3 md:p-6 rounded-lg">
           <div className="flex items-center justify-between mb-3 md:mb-4">
-            <h2 className="text-lg md:text-xl font-semibold text-white">K线图</h2>
+            <h2 className="text-lg md:text-xl font-semibold text-white flex items-center gap-2">
+              K线图
+              {stockName && <span className="text-gray-400 font-normal text-sm md:text-base">{stockName} · {symbol}</span>}
+              <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-dark-light text-gray-400 font-normal">
+                {MARKET_LABEL[market]}
+              </span>
+            </h2>
             {updating && (
               <span className="text-xs text-gray-400 animate-pulse">正在同步最新数据...</span>
             )}
@@ -264,14 +301,14 @@ export const Market: React.FC = () => {
                   return (
                     <tr key={idx} className="border-b border-border hover:bg-dark-light transition-colors">
                       <td className="px-4 py-2">{item.date}</td>
-                      <td className="px-4 py-2 text-right">¥{item.open.toFixed(2)}</td>
-                      <td className="px-4 py-2 text-right text-bull font-medium">¥{item.high.toFixed(2)}</td>
-                      <td className="px-4 py-2 text-right text-bear font-medium">¥{item.low.toFixed(2)}</td>
-                      <td className="px-4 py-2 text-right font-semibold text-primary-light">¥{item.close.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right">{currency}{item.open.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right text-bull font-medium">{currency}{item.high.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right text-bear font-medium">{currency}{item.low.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right font-semibold text-primary-light">{currency}{item.close.toFixed(2)}</td>
                       <td className={`px-4 py-2 text-right font-medium ${change >= 0 ? 'text-bull' : 'text-bear'}`}>
                         {change >= 0 ? '+' : ''}{changePct.toFixed(2)}%
                       </td>
-                      <td className="px-4 py-2 text-right text-accent-cyan">{(item.volume / 10000).toFixed(2)}万</td>
+                      <td className="px-4 py-2 text-right text-accent-cyan">{formatVolume(item.volume, symbol)}</td>
                     </tr>
                   );
                 })}
@@ -293,13 +330,13 @@ export const Market: React.FC = () => {
                 <div key={idx} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-dark-light/50">
                   <div>
                     <div className="text-xs text-gray-500">{item.date}</div>
-                    <div className="text-sm font-semibold text-primary-light">¥{item.close.toFixed(2)}</div>
+                    <div className="text-sm font-semibold text-primary-light">{currency}{item.close.toFixed(2)}</div>
                   </div>
                   <div className="text-right">
                     <div className={`text-sm font-medium ${change >= 0 ? 'text-bull' : 'text-bear'}`}>
                       {change >= 0 ? '+' : ''}{changePct.toFixed(2)}%
                     </div>
-                    <div className="text-xs text-gray-500">量 {(item.volume / 10000).toFixed(1)}万</div>
+                    <div className="text-xs text-gray-500">量 {formatVolume(item.volume, symbol)}</div>
                   </div>
                 </div>
               );

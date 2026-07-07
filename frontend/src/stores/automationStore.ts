@@ -80,6 +80,7 @@ export interface BrokerStatusItem {
 
 export interface PositionItem {
   symbol: string;
+  name: string;
   quantity: number;
   avg_cost: number;
   current_price: number;

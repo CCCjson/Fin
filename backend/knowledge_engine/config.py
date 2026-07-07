@@ -78,8 +78,72 @@ def get_edgar_ua() -> str:
 
 def get_scraper_proxy() -> str:
     """可选反爬代理（强反爬源用），形如 http://user:pass@host:port。
-    websearch 整体的 Clash↔直连自适配走全局 net_proxy（env `HTTP_PROXY_MODE`，默认 auto）。"""
+    websearch 整体的自适配走全局 net_proxy（env `HTTP_PROXY_MODE`，默认 auto）。"""
     return os.getenv("KNOWLEDGE_SCRAPER_PROXY", "")
+
+
+def get_overseas_proxy() -> str:
+    """海外出口代理（Shadowrocket，Clash 已弃用）。形如 http://127.0.0.1:1082。
+    空 = 直连。websearch/浏览器爬虫访问海外站点时优先走它，
+    国内站点不受此影响（走快代理池 net/proxy_pool）。"""
+    return os.getenv("KNOWLEDGE_OVERSEAS_PROXY", "")
+
+
+# ---------- 浏览器爬虫（逆向 API：Playwright 无头浏览器） ----------
+
+def get_playwright_enabled() -> bool:
+    """是否启用 Playwright 浏览器爬虫（逆向 API discover/fetch）。默认关，灰度开。"""
+    return os.getenv("KNOWLEDGE_PLAYWRIGHT_ENABLED", "false").lower() in ("1", "true", "yes")
+
+
+def get_playwright_channel() -> str:
+    """浏览器渠道：chrome（系统真实 Chrome，反检测更强）/ chromium（Playwright 内置）。"""
+    return os.getenv("KNOWLEDGE_PLAYWRIGHT_CHANNEL", "chrome")
+
+
+def get_playwright_timeout() -> int:
+    """浏览器操作超时（毫秒）。"""
+    return int(os.getenv("KNOWLEDGE_PLAYWRIGHT_TIMEOUT", "30000"))
+
+
+def get_playwright_user_data_dir() -> str:
+    """持久化浏览器数据目录（cookie/会话落盘，过一次挑战后复用）。"""
+    default = str(_BACKEND_DIR / "data" / "browser_profile")
+    return os.getenv("KNOWLEDGE_PLAYWRIGHT_USER_DATA_DIR", default)
+
+
+def get_playwright_headed_on_challenge() -> bool:
+    """headless 遇挑战时是否升级有头浏览器让人工过一次（本地 Mac 适用）。默认开。"""
+    return os.getenv("KNOWLEDGE_PLAYWRIGHT_HEADED_ON_CHALLENGE", "true").lower() in ("1", "true", "yes")
+
+
+def get_domestic_domains() -> list[str]:
+    """国内域名清单（这些走快代理池 net/proxy_pool，其余走海外出口）。逗号分隔可扩。"""
+    default = (
+        "xueqiu.com,eastmoney.com,10jqka.com.cn,sina.com.cn,sinajs.cn,"
+        "iwencai.com,sse.com.cn,szse.cn,cninfo.com.cn,tushare.pro,"
+        "baidu.com,qq.com,tencent.com,163.com,hexun.com,jrj.com.cn"
+    )
+    raw = os.getenv("KNOWLEDGE_DOMESTIC_DOMAINS", default)
+    return [d.strip().lower() for d in raw.split(",") if d.strip()]
+
+
+def get_scrapers_config_dir() -> str:
+    """逆向 API 侦查产出的站点配置目录（<domain>.json + <domain>.md）。"""
+    default = str(_BACKEND_DIR / "configs" / "scrapers")
+    return os.getenv("KNOWLEDGE_SCRAPERS_CONFIG_DIR", default)
+
+
+def get_scraper_proxy_enabled() -> bool:
+    """国内站爬取是否走快代理池（net/proxy_pool，IP 轮换抗封）。
+    默认关——直连开箱即用、可靠；快代理慢/额度耗尽时不会拖死爬虫。
+    需要抗封量抓时再开（且确保 kuaidaili 健康）。"""
+    return os.getenv("KNOWLEDGE_SCRAPER_PROXY_ENABLED", "false").lower() in ("1", "true", "yes")
+
+
+def get_proxy_fetch_timeout() -> float:
+    """取快代理 IP 的硬超时（秒）。超时即降级直连，绝不无限等。"""
+    return float(os.getenv("KNOWLEDGE_PROXY_FETCH_TIMEOUT", "8"))
 
 
 # ---------- 定时摄入（KnowledgeScheduler，只摄入不回测） ----------

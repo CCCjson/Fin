@@ -3,6 +3,8 @@ import { Sidebar } from './Sidebar';
 import { MainStage } from './MainStage';
 import { ToolsDrawer } from './ToolsDrawer';
 import { TokenMonitor } from './TokenMonitor';
+import { MonitorPanel } from './MonitorPanel';
+import { FloatingChat } from '../moneybill/FloatingChat';
 import { Toaster, toast } from '../common/Toast';
 import { useChatStore } from '../../store/agentChatStore';
 import wsService from '../../services/websocketService';
@@ -39,7 +41,7 @@ export const AppShell: React.FC = () => {
   }, []);
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden bg-dark text-gray-200">
+    <div className="relative flex h-screen w-screen overflow-hidden border-t border-border bg-dark text-gray-200">
       {/* 赛博霓虹网格底纹（纯装饰，不拦截事件） */}
       <div className="cyber-grid pointer-events-none absolute inset-0 z-0" />
       {/* 内容层置于网格之上 */}
@@ -49,6 +51,8 @@ export const AppShell: React.FC = () => {
       </div>
       <ToolsDrawer open={toolsOpen} onClose={() => setToolsOpen(false)} />
       <TokenMonitor />
+      <MonitorPanel />
+      <FloatingChat />
       <Toaster />
     </div>
   );

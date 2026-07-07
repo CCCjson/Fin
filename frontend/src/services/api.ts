@@ -1,7 +1,6 @@
 import axios from 'axios';
 import type { AxiosRequestConfig } from 'axios';
-
-const TOKEN_KEY = 'fin_auth_token';
+import { TOKEN_KEY, handleUnauthorized } from '../utils/authToken';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
@@ -26,10 +25,7 @@ api.interceptors.response.use(
   (error) => {
     // 401 → 清除 token，跳回首页
     if (error?.response?.status === 401) {
-      localStorage.removeItem(TOKEN_KEY);
-      if (window.location.pathname !== '/') {
-        window.location.href = '/';
-      }
+      handleUnauthorized();
     }
     console.error('API Error:', error);
     return Promise.reject(error);

@@ -1,13 +1,17 @@
 """
 安全沙箱 — AST 白名单 + subprocess 隔离执行
+
+AST 白名单检查核心已抽到 common/sandbox_ast.py（供其他沙箱消费者共享），
+这里只保留 alpha_lab 专属的 import 白名单 + subprocess 隔离执行回测的逻辑。
 """
-import ast
 import os
 import json
 import subprocess
 import tempfile
 from typing import List, Dict, Tuple, Optional
 from loguru import logger
+
+from common.sandbox_ast import ast_check as _shared_ast_check
 
 # ==================== AST 白名单配置 ====================
 
@@ -17,56 +21,6 @@ ALLOWED_IMPORTS = {
     # 策略框架（在沙箱 runner 中已注入，允许 AI 代码 import）
     "backtest_engine",
 }
-
-BANNED_NAMES = {
-    "os", "sys", "subprocess", "shutil", "pathlib",
-    "exec", "eval", "compile", "__import__", "open",
-    "globals", "locals", "getattr", "setattr", "delattr",
-    "breakpoint", "exit", "quit", "input",
-}
-
-BANNED_ATTRIBUTES = {
-    "system", "popen", "remove", "rmdir",
-    "unlink", "write", "read", "listdir", "makedirs",
-}
-
-
-class ASTChecker(ast.NodeVisitor):
-    """AST 白名单检查器"""
-
-    def __init__(self):
-        self.violations: List[str] = []
-
-    def visit_Import(self, node: ast.Import):
-        for alias in node.names:
-            module = alias.name.split(".")[0]
-            if module not in ALLOWED_IMPORTS:
-                self.violations.append(f"禁止 import: {alias.name}")
-        self.generic_visit(node)
-
-    def visit_ImportFrom(self, node: ast.ImportFrom):
-        if node.module:
-            module = node.module.split(".")[0]
-            if module not in ALLOWED_IMPORTS:
-                self.violations.append(f"禁止 from {node.module} import")
-        self.generic_visit(node)
-
-    def visit_Call(self, node: ast.Call):
-        if isinstance(node.func, ast.Name):
-            if node.func.id in BANNED_NAMES:
-                self.violations.append(f"禁止调用: {node.func.id}()")
-        elif isinstance(node.func, ast.Attribute):
-            if node.func.attr in BANNED_ATTRIBUTES:
-                self.violations.append(f"禁止调用: .{node.func.attr}()")
-        self.generic_visit(node)
-
-    def visit_Name(self, node: ast.Name):
-        if node.id in BANNED_NAMES:
-            self.violations.append(f"禁止使用: {node.id}")
-        if node.id.startswith("__") and node.id.endswith("__"):
-            if node.id not in ("__init__", "__name__", "__main__", "__class__"):
-                self.violations.append(f"禁止使用 dunder: {node.id}")
-        self.generic_visit(node)
 
 
 class Sandbox:
@@ -81,14 +35,7 @@ class Sandbox:
         Returns:
             (is_safe, violations)
         """
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            return False, [f"语法错误: {e}"]
-
-        checker = ASTChecker()
-        checker.visit(tree)
-        return len(checker.violations) == 0, checker.violations
+        return _shared_ast_check(code, ALLOWED_IMPORTS)
 
     def execute_backtest(
         self,

@@ -49,6 +49,8 @@ struct BacktestResult {
     BacktestMetrics metrics;                        // 绩效指标
     std::vector<EquitySnapshot> equity_curve;       // 资金曲线
     std::vector<Fill> trades;                       // 成交记录
+    int dropped_last_bar_orders = 0;                // 回测区间最后一 bar 因无「次日开盘」
+                                                     // 可成交而被丢弃的挂单数（不计入 trades）
 };
 
 class BacktestEngine {

@@ -11,6 +11,7 @@ class Position:
     """持仓"""
     symbol: str                    # 股票代码
     quantity: int = 0              # 持仓数量
+    available: int = 0             # 可卖数量（A股 T+1：当日买入不可卖，次日 settle_t1() 解冻）
     avg_price: float = 0.0         # 平均成本价
     current_price: float = 0.0     # 当前价格
     open_time: datetime = None     # 开仓时间
@@ -65,6 +66,7 @@ class Position:
             # 更新平均成本价
             total_cost = self.cost_basis + (quantity * price) + commission
             self.quantity += quantity
+            # T+1：当日买入不增加 available（可卖量），需下一交易日 settle_t1() 解冻
             self.avg_price = total_cost / self.quantity if self.quantity > 0 else 0.0
 
             # 首次建仓
@@ -72,11 +74,13 @@ class Position:
                 self.open_time = timestamp
 
         elif quantity < 0:  # 卖出
-            self.quantity += quantity  # quantity是负数，所以用加法
+            self.quantity += quantity   # quantity是负数，所以用加法
+            self.available += quantity  # 可卖量同步减少
 
             # 清仓
             if self.quantity == 0:
                 self.avg_price = 0.0
+                self.available = 0
                 self.open_time = None
 
     def __repr__(self):

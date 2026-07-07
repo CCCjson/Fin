@@ -30,8 +30,12 @@ def get_total_capital() -> float:
 
 
 def get_max_position_pct() -> float:
-    """从 UserSettings 读取单股最大仓位占比（集中度），默认 0.5。范围夹到 (0, 1]。"""
-    default = 0.5
+    """从 UserSettings 读取单股最大仓位占比（集中度）。范围夹到 (0, 1]。
+
+    兜底默认 0.20 对齐风控规格（单股 ≤ 20%）：用户没有显式设置时取最严值；
+    显式设置（含放宽到 0.5/1.0）仍被尊重——那是 Jason 在设置页的主动选择。
+    """
+    default = 0.20
     session = get_session()
     try:
         row = session.query(UserSettings).filter(UserSettings.key == "max_position_pct").first()

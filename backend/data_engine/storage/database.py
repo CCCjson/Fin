@@ -172,6 +172,21 @@ def init_db():
                 "WHERE exchange IS NULL AND (symbol LIKE '4%' OR symbol LIKE '8%')"
             ))
 
+    # 自动迁移：为 orders/trades/signals 表添加 name 列，并从 stock_info 回填历史快照
+    for _tbl in ("orders", "trades", "signals"):
+        if _tbl in insp.get_table_names():
+            _cols = {c["name"] for c in insp.get_columns(_tbl)}
+            if "name" not in _cols:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {_tbl} ADD COLUMN name VARCHAR(100)"))
+                    conn.execute(text(
+                        f"UPDATE {_tbl} SET name = ("
+                        f"SELECT stock_info.name FROM stock_info "
+                        f"WHERE stock_info.symbol = {_tbl}.symbol"
+                        f") WHERE name IS NULL"
+                    ))
+                print(f"✓ {_tbl} 表已添加 name 列并回填历史数据")
+
     # 自动迁移：确保 financial_data 表存在（新增表会由 create_all 自动创建）
 
     print("✓ 数据库初始化完成")

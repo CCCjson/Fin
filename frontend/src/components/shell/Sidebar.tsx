@@ -27,7 +27,7 @@ export const Sidebar: React.FC<{ onOpenTools: () => void }> = ({ onOpenTools }) 
 
   if (collapsed) {
     return (
-      <div className="w-14 shrink-0 bg-dark-lighter border-r border-border flex flex-col items-center py-3 gap-3">
+      <div data-sidebar className="w-14 shrink-0 bg-dark-lighter border-r border-border flex flex-col items-center py-3 gap-3">
         <button onClick={() => setCollapsed(false)} title="展开" className="text-gray-400 hover:text-white text-xl">›</button>
         <button onClick={newChat} title="新对话" className="text-gray-300 hover:text-white text-xl">＋</button>
         <button onClick={onOpenTools} title="工具" className="text-gray-300 hover:text-white text-xl mt-auto mb-1">🧰</button>
@@ -36,7 +36,7 @@ export const Sidebar: React.FC<{ onOpenTools: () => void }> = ({ onOpenTools }) 
   }
 
   return (
-    <div className="w-64 shrink-0 bg-dark-lighter border-r border-border flex flex-col">
+    <div data-sidebar className="w-64 shrink-0 bg-dark-lighter border-r border-border flex flex-col">
       {/* 头部 */}
       <div className="flex items-center justify-between px-3 py-3">
         <div className="flex items-center gap-2">

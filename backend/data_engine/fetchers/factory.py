@@ -27,14 +27,9 @@ class FetcherFactory:
 
     @classmethod
     def get_fetcher_for_symbol(cls, symbol: str, config: Dict = None) -> BaseFetcher:
-        """根据股票代码自动识别市场并创建获取器"""
-        if symbol.endswith(('.SH', '.SZ')):
-            return cls.create("a_share", config)
-        elif symbol.endswith('.HK'):
-            return cls.create("hk_stock", config)
-        else:
-            # 默认认为是美股
-            return cls.create("us_stock", config)
+        """根据股票代码自动识别市场并创建获取器（后缀推断委托 common.market）"""
+        from common.market import infer_market_from_symbol
+        return cls.create(infer_market_from_symbol(symbol), config)
 
     @classmethod
     def list_markets(cls) -> list:

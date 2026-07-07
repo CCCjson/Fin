@@ -68,6 +68,22 @@ class KnowledgeStore:
             s.commit()
             return doc_id, True
 
+    def update_document_content(self, doc_id: str, *, full_text: Optional[str] = None,
+                                metadata: Optional[Dict[str, Any]] = None) -> None:
+        """就地更新已存在文档的正文/元数据（配合 delete_chunks 做"升级重摄入"，
+        绕开 upsert_document 对已存在 doc_id 的短路跳过）。"""
+        with get_session() as s:
+            doc = s.query(KnowledgeDocument).filter(KnowledgeDocument.doc_id == doc_id).first()
+            if not doc:
+                return
+            if full_text is not None:
+                doc.full_text = full_text
+            if metadata is not None:
+                doc.doc_metadata = json.dumps(metadata, ensure_ascii=False)
+            doc.status = "pending"
+            doc.chunk_count = 0
+            s.commit()
+
     def set_document_status(self, doc_id: str, status: str, chunk_count: Optional[int] = None) -> None:
         with get_session() as s:
             doc = s.query(KnowledgeDocument).filter(KnowledgeDocument.doc_id == doc_id).first()
@@ -122,6 +138,16 @@ class KnowledgeStore:
                 ids.append(row.id)
             s.commit()
         return ids
+
+    def delete_chunks(self, doc_id: str) -> List[int]:
+        """删除某文档的全部切片，返回被删的 chunk id 列表（调用方需同步删向量表）。"""
+        with get_session() as s:
+            rows = s.query(KnowledgeChunk.id).filter(KnowledgeChunk.doc_id == doc_id).all()
+            ids = [r[0] for r in rows]
+            if ids:
+                s.query(KnowledgeChunk).filter(KnowledgeChunk.doc_id == doc_id).delete(synchronize_session=False)
+                s.commit()
+            return ids
 
     def mark_chunks_embedded(self, chunk_ids: List[int]) -> None:
         if not chunk_ids:

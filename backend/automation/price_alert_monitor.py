@@ -47,8 +47,13 @@ def _scan_once() -> List[Dict]:
         if not alerts:
             return []
 
-        from data_engine.fetchers.realtime import fetch_a_share_realtime
-        rows = fetch_a_share_realtime()
+        # 定向拉预警涉及的票（单次 ulist 轻量请求）。原先拉全市场快照每轮要
+        # 代理翻页数十次，是本监控被关闭开机自启的原因；改定向后成本可忽略。
+        from data_engine.fetchers.realtime import fetch_quotes_by_symbols
+        symbols = sorted({a.symbol for a in alerts if a.symbol})
+        rows = fetch_quotes_by_symbols(symbols)
+        for r in rows:
+            r.setdefault("change_pct", r.get("change_percent"))
         quote_map = {r["symbol"]: r for r in rows if r.get("symbol")}
 
         # 资金量：按真实总资金算建议买入（每轮构建一次复用）

@@ -9,6 +9,7 @@ from loguru import logger
 
 from .models import Signal, BacktestTask, BacktestResult, Order, Trade
 from .database import get_session
+from .repository import get_stock_names
 
 
 class HistoryRepository:
@@ -16,6 +17,12 @@ class HistoryRepository:
 
     def __init__(self):
         self.session = get_session()
+
+    def _resolve_name(self, symbol: str, name: Optional[str] = None) -> Optional[str]:
+        """写入时把 symbol 对应的名称落成快照；调用方已传入则直接用，否则查 StockInfo 兜底成 symbol 本身"""
+        if name:
+            return name
+        return get_stock_names(self.session, [symbol]).get(symbol, symbol)
 
     # ==================== 信号管理 ====================
 
@@ -51,6 +58,7 @@ class HistoryRepository:
 
         signal = Signal(
             symbol=symbol,
+            name=self._resolve_name(symbol, kwargs.get('name')),
             date=date,
             signal_type=signal_type.upper(),  # 确保大写
             strength=strength,
@@ -300,6 +308,7 @@ class HistoryRepository:
             order_id=order_id,
             account_id=account_id,
             symbol=symbol,
+            name=self._resolve_name(symbol, kwargs.get('name')),
             side=side,
             order_type=order_type,
             quantity=quantity,
@@ -413,7 +422,8 @@ class HistoryRepository:
         price: float,
         commission: float,
         amount: float,
-        slippage: float = 0
+        slippage: float = 0,
+        name: str = None
     ) -> Trade:
         """保存成交记录"""
         trade = Trade(
@@ -421,6 +431,7 @@ class HistoryRepository:
             order_id=order_id,
             account_id=account_id,
             symbol=symbol,
+            name=self._resolve_name(symbol, name),
             direction=direction,
             quantity=quantity,
             price=price,

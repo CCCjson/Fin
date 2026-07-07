@@ -178,7 +178,7 @@ export function useAgentChat({ storeApi, getPageContext, model, onNavigate }: Us
     } catch (e: any) {
       if (e?.name !== 'AbortError') {
         storeApi.getState().updateAssistant(id, (last) =>
-          last.parts.push({ kind: 'text', text: `\n\n⚠️ ${e?.message || e}` }),
+          last.parts.push({ kind: 'error', message: e?.message || String(e) }),
         );
       }
     } finally {
@@ -189,9 +189,15 @@ export function useAgentChat({ storeApi, getPageContext, model, onNavigate }: Us
     }
   }, [storeApi, model, makeOnEvent, flushBuffer]);
 
+  const lastUserTextRef = useRef<string | null>(null);
+
   const send = useCallback(async (text: string) => {
     const msg = text.trim();
     if (!msg || loading) return;
+    // 弹窗还开着就发新消息 = 打字即取消：关掉弹窗，后端 prepare_turn 会自动
+    // 作废对应的悬空确认（补一条 tool 响应），不会导致历史 tool_calls 缺配对。
+    if (pendingConfirm) setPendingConfirm(null);
+    lastUserTextRef.current = msg;
     const store = storeApi.getState();
     const id = store.ensureActive();
     const serverSessionId = store.sessions.find((x) => x.id === id)?.serverSessionId;
@@ -203,7 +209,13 @@ export function useAgentChat({ storeApi, getPageContext, model, onNavigate }: Us
       message: msg,
       ...(page_context ? { page_context } : {}),
     });
-  }, [loading, storeApi, getPageContext, runStream]);
+  }, [loading, pendingConfirm, storeApi, getPageContext, runStream]);
+
+  // 网络层失败（比如慢工具调用期间连接被浏览器/WebView 判定空闲失活）后手动重试：
+  // 同一 session_id 把刚才那句话重新问一遍，新起一轮，不假装能接上上次没跑完的进度。
+  const retry = useCallback(() => {
+    if (!loading && lastUserTextRef.current) void send(lastUserTextRef.current);
+  }, [loading, send]);
 
   const respondConfirm = useCallback(async (approved: boolean) => {
     const pc = pendingConfirm;
@@ -221,5 +233,5 @@ export function useAgentChat({ storeApi, getPageContext, model, onNavigate }: Us
     setLoading(false);
   }, []);
 
-  return { loading, pendingConfirm, send, respondConfirm, stop } as const;
+  return { loading, pendingConfirm, send, respondConfirm, stop, retry } as const;
 }

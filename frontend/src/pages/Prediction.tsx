@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
+import { useStockNames } from '../hooks/useStockNames';
 import {
   predictionService,
   type TrainProgressEvent,
@@ -69,6 +70,7 @@ const TrainTab: React.FC = () => {
   const [trainResult, setTrainResult] = useState<TrainResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const modelNames = useStockNames(models.map(m => m.symbol));
   const abortRef = useRef<AbortController | null>(null);
   const progressRef = useRef({ progress: 0, stage: '', message: '' });
   const rafRef = useRef(0);
@@ -280,7 +282,10 @@ const TrainTab: React.FC = () => {
                     : '-';
                   return (
                     <tr key={m.id} className="border-b border-border/50 hover:bg-dark-light/50">
-                      <td className="py-2 px-3 text-primary-light font-mono">{m.symbol}</td>
+                      <td className="py-2 px-3 text-primary-light font-mono">
+                        {m.symbol}
+                        {modelNames[m.symbol] && <span className="text-gray-500 ml-1.5 font-sans">{modelNames[m.symbol]}</span>}
+                      </td>
                       <td className="py-2 px-3 text-gray-300">{m.train_period}</td>
                       <td className="py-2 px-3 text-right text-gray-300">{m.data_points}</td>
                       <td className="py-2 px-3 text-right text-gray-300 font-mono">{lstmMse}</td>
@@ -515,6 +520,7 @@ const PredictTab: React.FC = () => {
 const ValidateTab: React.FC = () => {
   const [perf, setPerf] = useState<PerformanceData | null>(null);
   const [records, setRecords] = useState<PredictionRecord[]>([]);
+  const recordNames = useStockNames(records.map(r => r.symbol));
   const [loading, setLoading] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
   const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
@@ -686,7 +692,10 @@ const ValidateTab: React.FC = () => {
                   {records.map(r => (
                     <tr key={r.id} className="border-b border-border/50 hover:bg-dark-light/50">
                       <td className="py-2 px-3 text-gray-300">{r.prediction_date}</td>
-                      <td className="py-2 px-3 text-primary-light font-mono">{r.symbol}</td>
+                      <td className="py-2 px-3 text-primary-light font-mono">
+                        {r.symbol}
+                        {recordNames[r.symbol] && <span className="text-gray-500 ml-1.5 font-sans">{recordNames[r.symbol]}</span>}
+                      </td>
                       <td className="py-2 px-3 text-center">
                         <span className={r.direction === 'UP' ? 'text-green-400' : 'text-red-400'}>
                           {r.direction === 'UP' ? '\u2191 UP' : '\u2193 DOWN'}

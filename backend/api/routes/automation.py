@@ -475,6 +475,16 @@ async def get_broker_positions(
         else:
             return {"success": False, "message": f"不支持的券商类型: {broker_type}"}
 
+        # 批量补充股票名称
+        from data_engine.storage.repository import get_stock_names
+        session = get_session()
+        try:
+            names = get_stock_names(session, [p["symbol"] for p in positions])
+        finally:
+            session.close()
+        for p in positions:
+            p["name"] = names.get(p["symbol"], p["symbol"])
+
         return {"success": True, "positions": positions, "total": len(positions)}
 
     except Exception as e:

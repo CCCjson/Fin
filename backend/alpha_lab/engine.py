@@ -25,6 +25,10 @@ class AlphaLabEngine:
 
     # 探索期/精炼期分界线
     EXPLORE_ROUNDS = 5
+    # max_iterations 硬上限：所有入口（MoneyBill subagent / knowledge 的 ideas 回测路由）
+    # 都汇聚到 start_session，在此统一钳制才能真正兜住。20 轮足够 explore(5)+refine，
+    # 再多无实际收益，且无美元熔断时轮数是唯一的烧钱闸门。
+    MAX_ITERATIONS_CAP = 20
 
     def __init__(self):
         self.session_manager = SessionManager()
@@ -70,6 +74,14 @@ class AlphaLabEngine:
             logger.info(f"Alpha Lab 切换 provider: {provider}")
         else:
             self.code_generator = CodeGenerator()  # 复位为 .env ALPHA_LAB_PROVIDER 默认
+
+        # max_iterations 统一钳制（唯一汇聚点，兜住所有入口的越界值）
+        try:
+            max_iterations = int(max_iterations)
+        except (TypeError, ValueError):
+            max_iterations = 8
+        max_iterations = max(1, min(max_iterations, self.MAX_ITERATIONS_CAP))
+
         # 1. 创建会话
         session = self.session_manager.create(
             target_symbols=target_symbols,

@@ -133,83 +133,65 @@ class MetricsCalculator:
         }
 
     @staticmethod
+    def _realized_pnls(trades: List[dict]) -> List[float]:
+        """FIFO 配对每笔卖出，返回每笔卖出的净盈亏（已扣买入按比例分摊的佣金 + 卖出佣金）。
+
+        trades 中买卖 quantity 均为正数（见 Portfolio.trades 记录口径）。
+        取代旧的"buy_trades[i] 对 sell_trades[i] 下标配对 + 忽略佣金"错误口径。
+        """
+        from collections import deque
+        lots = deque()  # 每个买入批次: [剩余数量, 买入价, 每股买入佣金]
+        pnls: List[float] = []
+        for t in trades:
+            qty = t.get("quantity", 0)
+            price = t.get("price", 0.0)
+            comm = t.get("commission", 0.0)
+            if qty <= 0:
+                continue
+            if t["action"] == "BUY":
+                lots.append([qty, price, comm / qty])
+            elif t["action"] == "SELL":
+                remaining = qty
+                sell_comm_per_share = comm / qty
+                pnl = 0.0
+                while remaining > 0 and lots:
+                    lot = lots[0]
+                    take = min(remaining, lot[0])
+                    # 净盈亏 = (卖价-买价)*take - 买入佣金分摊 - 卖出佣金分摊
+                    pnl += (price - lot[1]) * take - lot[2] * take - sell_comm_per_share * take
+                    lot[0] -= take
+                    remaining -= take
+                    if lot[0] == 0:
+                        lots.popleft()
+                pnls.append(pnl)
+        return pnls
+
+    @staticmethod
     def win_rate(trades: List[dict]) -> float:
-        """
-        胜率
-
-        Args:
-            trades: 交易记录
-        """
-        if not trades:
+        """胜率 = 盈利的完整买卖回合数 / 总回合数（FIFO 净盈亏口径，已计手续费）"""
+        pnls = MetricsCalculator._realized_pnls(trades)
+        if not pnls:
             return 0.0
-
-        # 只统计完整的买卖对
-        buy_trades = [t for t in trades if t["action"] == "BUY"]
-        sell_trades = [t for t in trades if t["action"] == "SELL"]
-
-        if len(sell_trades) == 0:
-            return 0.0
-
-        wins = 0
-        for i, sell in enumerate(sell_trades):
-            if i < len(buy_trades):
-                buy = buy_trades[i]
-                if sell["price"] > buy["price"]:
-                    wins += 1
-
-        return (wins / len(sell_trades)) * 100
+        wins = sum(1 for p in pnls if p > 0)
+        return (wins / len(pnls)) * 100
 
     @staticmethod
     def win_loss_counts(trades: List[dict]) -> Dict[str, int]:
-        """
-        胜负场数（与 win_rate 同款的买卖配对，单一数据源）
-
-        winning: 卖出价 > 对应买入价 的笔数
-        losing:  卖出笔数 - winning（持平与无配对卖出归为 losing，与原口径一致）
-        """
-        buy_trades = [t for t in trades if t["action"] == "BUY"]
-        sell_trades = [t for t in trades if t["action"] == "SELL"]
-
-        winning = 0
-        for i, sell in enumerate(sell_trades):
-            if i < len(buy_trades) and sell["price"] > buy_trades[i]["price"]:
-                winning += 1
-
-        return {"winning_trades": winning, "losing_trades": len(sell_trades) - winning}
+        """胜负场数（与 win_rate 同口径：FIFO 配对 + 净盈亏，已计手续费；持平计入亏损侧）。"""
+        pnls = MetricsCalculator._realized_pnls(trades)
+        winning = sum(1 for p in pnls if p > 0)
+        return {"winning_trades": winning, "losing_trades": len(pnls) - winning}
 
     @staticmethod
     def profit_factor(trades: List[dict]) -> float:
-        """
-        盈亏比 = 总盈利 / 总亏损
-
-        Args:
-            trades: 交易记录
-        """
-        if not trades:
+        """盈亏比 = 总盈利 / 总亏损（FIFO 净盈亏口径，已计手续费）"""
+        pnls = MetricsCalculator._realized_pnls(trades)
+        if not pnls:
             return 0.0
-
-        buy_trades = [t for t in trades if t["action"] == "BUY"]
-        sell_trades = [t for t in trades if t["action"] == "SELL"]
-
-        if len(sell_trades) == 0:
-            return 0.0
-
-        total_profit = 0.0
-        total_loss = 0.0
-
-        for i, sell in enumerate(sell_trades):
-            if i < len(buy_trades):
-                buy = buy_trades[i]
-                pnl = (sell["price"] - buy["price"]) * sell["quantity"]
-
-                if pnl > 0:
-                    total_profit += pnl
-                else:
-                    total_loss += abs(pnl)
-
+        total_profit = sum(p for p in pnls if p > 0)
+        total_loss = sum(-p for p in pnls if p < 0)
         if total_loss == 0:
             return float('inf') if total_profit > 0 else 0.0
-
         return total_profit / total_loss
 
     @staticmethod

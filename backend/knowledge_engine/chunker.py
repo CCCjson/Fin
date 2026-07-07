@@ -3,13 +3,16 @@
 
 token 计数用 embedding 模型自带的 tokenizer（只加载 tokenizer，很轻，不碰 2GB 权重）。
 """
+import os
 import re
 import threading
 from typing import List, Dict, Optional
 
 from knowledge_engine.config import get_embed_model, get_chunk_tokens, get_chunk_overlap
 
-# transformers 首次 import 前同步代理 env（见 embedding.py 说明）
+# transformers 首次 import 前强制 HF 离线 + 同步代理 env（见 embedding.py 说明）
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 from net_proxy import apply_proxy_env as _apply_proxy_env
 _apply_proxy_env()
 
@@ -51,17 +54,38 @@ def _split_paragraphs(text: str) -> List[str]:
     return out
 
 
-def _window_split(tokens: List[int], size: int, overlap: int) -> List[List[int]]:
-    """对超长段落做带 overlap 的滑窗切。"""
+def _window_split_text(para: str, size: int, overlap: int) -> List[str]:
+    """
+    对超长段落做带 overlap 的滑窗切，返回**原文切片**。
+    用 tokenizer 的 offset_mapping 按 token 窗口定位字符边界，切原文字符串——
+    绝不 tok.decode（decode 会把某些中文标点还原成 <unk>，污染正文）。
+    """
+    tok = _get_tokenizer()
+    try:
+        enc = tok(para, add_special_tokens=False, return_offsets_mapping=True)
+        offsets = enc["offset_mapping"]
+    except Exception:
+        # 慢 tokenizer 无 offset_mapping → 退回字符等分（近似）
+        offsets = None
+    if not offsets:
+        step_c = max(1, (size - overlap) * 2)             # 粗估 2 字符/token
+        win_c = max(step_c, size * 2)
+        return [para[i:i + win_c] for i in range(0, len(para), step_c)] or [para]
+
+    n = len(offsets)
     step = max(1, size - overlap)
-    windows = []
-    i = 0
-    while i < len(tokens):
-        windows.append(tokens[i:i + size])
-        if i + size >= len(tokens):
+    out, i = [], 0
+    while i < n:
+        j = min(i + size, n)
+        start_char = offsets[i][0]
+        end_char = offsets[j - 1][1]
+        seg = para[start_char:end_char].strip()
+        if seg:
+            out.append(seg)
+        if j >= n:
             break
         i += step
-    return windows
+    return out
 
 
 def chunk_text(text: str, *, chunk_tokens: Optional[int] = None,
@@ -92,9 +116,8 @@ def chunk_text(text: str, *, chunk_tokens: Optional[int] = None,
             if buf:
                 emit(buf)
                 buf, buf_tokens = "", 0
-            ids = tok.encode(para, add_special_tokens=False)
-            for win in _window_split(ids, size, ov):
-                emit(tok.decode(win))
+            for seg in _window_split_text(para, size, ov):
+                emit(seg)                                  # 已是原文切片，无 <unk>
             continue
         if buf_tokens + p_tokens <= size:
             buf = f"{buf}\n\n{para}" if buf else para

@@ -1,38 +1,31 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { agentService } from '../../services/agentService';
-import type { AgentStreamEvent } from '../../services/agentService';
 import { MarkdownView } from '../common/MarkdownView';
 import { WidgetRenderer } from './WidgetRenderer';
 import { ConfirmDialog } from './ConfirmDialog';
+import { SessionIdBadge } from './SessionIdBadge';
 import { useChatStore } from '../../store/agentChatStore';
 import type { ChatMessage, ChatSession } from '../../store/agentChatStore';
-import { useUsageStore, estimateTokens } from '../../store/usageStore';
+import { estimateTokens } from '../../store/usageStore';
+import { useAgentChat } from '../../hooks/useAgentChat';
+import { useImeGuard } from '../../hooks/useImeGuard';
+import { navigateFromAgent } from '../../utils/agentNavigate';
 import {
   fadeFromLeft, fadeFromRight, popIn, staggerContainer, fadeUp, pickVariants,
 } from '../common/motion';
 import {
-  THINKING_COPY, TOOL_RUNNING_COPY, AGENT_RUNNING_COPY, TOOL_DONE_LABEL,
-  FALLBACK_RUNNING, useRotatingPhrase, pickStable,
+  THINKING_COPY, TOOL_COPY, AGENT_RUNNING_COPY, FALLBACK_COPY, TOOL_FAIL,
+  useRotatingPhrase, pickStable,
 } from './statusCopy';
 
 /* ================================================================
    MoneyBill 💰 聊天主体（接入多会话 store；统一外壳主区使用）
    ================================================================ */
 
-const TOOL_LABELS: Record<string, string> = {
-  search_stocks: '搜索股票',
-  get_daily_data: '获取日线',
-  get_realtime_quote: '实时行情',
-  get_cockpit_score: '五维体检',
-  predict_stock: '涨跌预测',
-  get_positions: '查询持仓',
-  get_performance: '组合绩效',
-};
-
 const AGENT_LABELS: Record<string, string> = {
   run_deep_stock: '深度个股研判',
-  run_news_analysis: '新闻舆情解读',
+  Newnew: '新闻舆情解读',
   run_research_report: '投研报告',
   run_alpha_lab: '策略研发',
 };
@@ -53,175 +46,71 @@ export const ChatThread: React.FC = () => {
   const messages = active?.messages ?? [];
 
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [pendingConfirm, setPendingConfirm] = useState<{ id: string; name: string; preview: any } | null>(null);
   const [showJump, setShowJump] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
-  const bufferRef = useRef('');
-  const rafRef = useRef<number | null>(null);
+  const onNavigate = useCallback((path: string, symbol?: string) => {
+    // 完整页导航 → 弹开浮窗续接对话（popFloating）
+    navigateFromAgent(navigate, path, symbol, { popFloating: true });
+  }, [navigate]);
+
+  const { loading, pendingConfirm, send: sendMsg, respondConfirm, stop, retry } = useAgentChat({
+    storeApi: useChatStore,
+    onNavigate,
+  });
+
+  const send = useCallback((text: string) => {
+    setInput('');
+    void sendMsg(text);
+  }, [sendMsg]);
+
+  const { onCompositionStart, onCompositionEnd, shouldSend } = useImeGuard();
 
   useEffect(() => {
     useChatStore.getState().startFresh();
   }, []);
 
+  // 粘底：只有用户没有主动上滚时才自动滚到底。
+  // 解除粘底靠 wheel 向上（程序化平滑滚动不触发 wheel，不会误判）；滚回底部附近恢复粘底。
+  const pinnedRef = useRef(true);
+
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (pinnedRef.current) chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
+
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    if (e.deltaY < 0) pinnedRef.current = false;
+  }, []);
 
   // 上滑查看历史时显示「回到最新」按钮
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (dist < 120) pinnedRef.current = true;
     setShowJump(dist > 240);
   }, []);
 
   const jumpToLatest = useCallback(() => {
+    pinnedRef.current = true;
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
-
-  const flushBuffer = useCallback((id: string) => {
-    rafRef.current = null;
-    const text = bufferRef.current;
-    if (!text) return;
-    bufferRef.current = '';
-    useChatStore.getState().updateAssistant(id, (last) => {
-      const lastPart = last.parts[last.parts.length - 1];
-      if (lastPart && lastPart.kind === 'text') {
-        last.parts[last.parts.length - 1] = { kind: 'text', text: lastPart.text + text };
-      } else {
-        last.parts.push({ kind: 'text', text });
-      }
-    });
-  }, []);
-
-  const scheduleFlush = useCallback((id: string) => {
-    if (rafRef.current == null) rafRef.current = requestAnimationFrame(() => flushBuffer(id));
-  }, [flushBuffer]);
-
-  const makeOnEvent = useCallback((id: string) => (ev: AgentStreamEvent) => {
-    const s = useChatStore.getState();
-    switch (ev.event) {
-      case 'session_created':
-        if (ev.session_id) s.setServerSessionId(id, ev.session_id);
-        break;
-      case 'chunk':
-        if (ev.content) {
-          bufferRef.current += ev.content;
-          useUsageStore.getState().addLiveTokens(estimateTokens(ev.content));
-          scheduleFlush(id);
-        }
-        break;
-      case 'tool_call':
-        flushBuffer(id);
-        s.updateAssistant(id, (last) =>
-          last.parts.push({ kind: 'tool', id: ev.id || '', name: ev.name || '', status: 'running' }),
-        );
-        break;
-      case 'tool_result':
-        s.updateAssistant(id, (last) => {
-          last.parts = last.parts.map((p) =>
-            p.kind === 'tool' && p.id === ev.id ? { ...p, status: 'done', ok: ev.ok } : p,
-          );
-        });
-        break;
-      case 'agent_handoff':
-        flushBuffer(id);
-        s.updateAssistant(id, (last) => last.parts.push({ kind: 'handoff', agent: ev.agent || '' }));
-        break;
-      case 'agent_progress':
-        flushBuffer(id);
-        s.updateAssistant(id, (last) => {
-          const lp = last.parts[last.parts.length - 1];
-          if (lp && lp.kind === 'progress') {
-            last.parts[last.parts.length - 1] = { kind: 'progress', text: ev.message || '' };
-          } else {
-            last.parts.push({ kind: 'progress', text: ev.message || '' });
-          }
-        });
-        break;
-      case 'widget':
-        flushBuffer(id);
-        if (ev.widget) s.updateAssistant(id, (last) => last.parts.push({ kind: 'widget', widget: ev.widget! }));
-        break;
-      case 'confirm_required':
-        flushBuffer(id);
-        setPendingConfirm({ id: ev.id || '', name: ev.name || '', preview: ev.preview });
-        break;
-      case 'error':
-        flushBuffer(id);
-        s.updateAssistant(id, (last) => last.parts.push({ kind: 'text', text: `\n\n⚠️ ${ev.message || '出错了'}` }));
-        break;
-      case 'usage':
-        if (ev.cumulative) useUsageStore.getState().setSnapshot(ev.cumulative);
-        break;
-      case 'done':
-        flushBuffer(id);
-        break;
-      default:
-        break;
-    }
-  }, [flushBuffer, scheduleFlush]);
-
-  const runStream = useCallback(async (id: string, params: any) => {
-    setLoading(true);
-    abortRef.current = new AbortController();
-    try {
-      await agentService.chat(params, makeOnEvent(id), abortRef.current.signal);
-    } catch (e: any) {
-      if (e?.name !== 'AbortError') {
-        useChatStore.getState().updateAssistant(id, (last) =>
-          last.parts.push({ kind: 'text', text: `\n\n⚠️ ${e?.message || e}` }),
-        );
-      }
-    } finally {
-      flushBuffer(id);
-      setLoading(false);
-      abortRef.current = null;
-    }
-  }, [makeOnEvent, flushBuffer]);
-
-  const send = useCallback(async (text: string) => {
-    const msg = text.trim();
-    if (!msg || loading) return;
-    const store = useChatStore.getState();
-    const id = store.ensureActive();
-    const serverSessionId = store.sessions.find((x) => x.id === id)?.serverSessionId;
-    setInput('');
-    store.startTurn(id, msg);
-    await runStream(id, { session_id: serverSessionId, message: msg });
-  }, [loading, runStream]);
-
-  const respondConfirm = useCallback(async (approved: boolean) => {
-    const pc = pendingConfirm;
-    if (!pc) return;
-    setPendingConfirm(null);
-    const store = useChatStore.getState();
-    const id = store.activeId;
-    if (!id) return;
-    const serverSessionId = store.sessions.find((x) => x.id === id)?.serverSessionId;
-    await runStream(id, { session_id: serverSessionId, confirm: { tool_call_id: pc.id, approved } });
-  }, [pendingConfirm, runStream]);
-
-  const stop = useCallback(() => {
-    abortRef.current?.abort();
-    setLoading(false);
   }, []);
 
   const inputTokens = input.trim() ? estimateTokens(input) : 0;
 
   return (
     <div className="flex flex-col h-full bg-dark relative">
+      <SessionIdBadge sessionId={active?.serverSessionId} className="absolute top-2 right-4 md:right-8 z-10" />
+
       {/* 消息区（居中列，ChatGPT 风格） */}
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
+      <div ref={scrollRef} onScroll={onScroll} onWheel={onWheel} className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
         <div className="max-w-3xl mx-auto space-y-5">
         {messages.length === 0 && <EmptyHero onPick={send} />}
 
         {messages.map((m, i) => (
-          <MessageBubble key={i} msg={m} streaming={loading && i === messages.length - 1} />
+          <MessageBubble key={i} msg={m} streaming={loading && i === messages.length - 1} onRetry={retry} />
         ))}
         <div ref={chatEndRef} />
         </div>
@@ -243,14 +132,17 @@ export const ChatThread: React.FC = () => {
       </AnimatePresence>
 
       {/* 输入区 */}
-      <div className="border-t border-border px-4 md:px-8 py-4">
+      <div className="px-4 md:px-8 py-4">
         <div className="max-w-3xl mx-auto">
           <div className="flex items-end gap-2">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onCompositionStart={onCompositionStart}
+              onCompositionEnd={onCompositionEnd}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                // 输入法拼音选词按 Enter 时不发送，见 useImeGuard
+                if (e.key === 'Enter' && !e.shiftKey && shouldSend(e)) {
                   e.preventDefault();
                   send(input);
                 }
@@ -298,6 +190,7 @@ export const ChatThread: React.FC = () => {
 
       {pendingConfirm && (
         <ConfirmDialog
+          name={pendingConfirm.name}
           preview={pendingConfirm.preview}
           onConfirm={() => respondConfirm(true)}
           onCancel={() => respondConfirm(false)}
@@ -352,7 +245,8 @@ const EmptyHero: React.FC<{ onPick: (text: string) => void }> = ({ onPick }) => 
 };
 
 /* ---------------- 单条消息 ---------------- */
-const MessageBubble: React.FC<{ msg: ChatMessage; streaming: boolean }> = ({ msg, streaming }) => {
+// memo：updateAssistant 只重建最后一条消息对象，历史消息引用稳定 → 流式期间只有最后一条重渲染
+export const MessageBubble: React.FC<{ msg: ChatMessage; streaming: boolean; onRetry?: () => void }> = React.memo(({ msg, streaming, onRetry }) => {
   const reduce = useReducedMotion();
 
   // 「正在沉思」出现时机：开场，或上一步是已完成的工具 / widget（模型正憋下一句话）。
@@ -400,7 +294,7 @@ const MessageBubble: React.FC<{ msg: ChatMessage; streaming: boolean }> = ({ msg
               );
             }
             if (p.kind === 'tool') {
-              return <ToolPill key={i} id={p.id} name={p.name} status={p.status} ok={p.ok} />;
+              return <ToolPill key={i} id={p.id} name={p.name} status={p.status} ok={p.ok} desc={p.desc} verdict={p.verdict} elapsedMs={p.elapsedMs} />;
             }
             if (p.kind === 'handoff') {
               return <Handoff key={i} agent={p.agent} />;
@@ -416,6 +310,21 @@ const MessageBubble: React.FC<{ msg: ChatMessage; streaming: boolean }> = ({ msg
             if (p.kind === 'widget') {
               return <WidgetRenderer key={i} widget={p.widget} />;
             }
+            if (p.kind === 'error') {
+              return (
+                <div key={i} className="flex flex-wrap items-center gap-2 text-sm text-bear">
+                  <span>⚠️ {p.message}</span>
+                  {onRetry && (
+                    <button
+                      onClick={onRetry}
+                      className="shrink-0 rounded-full border border-bear/50 px-2.5 py-0.5 text-xs text-bear transition-colors hover:bg-bear/10"
+                    >
+                      重试
+                    </button>
+                  )}
+                </div>
+              );
+            }
             return null;
           })}
           {showThinking && <ThinkingDots />}
@@ -424,7 +333,7 @@ const MessageBubble: React.FC<{ msg: ChatMessage; streaming: boolean }> = ({ msg
       </div>
     </motion.div>
   );
-};
+});
 
 /* ---------------- 思考中：三点跳动 + 轮换趣味文案 ---------------- */
 const ThinkingDots: React.FC = () => {
@@ -480,13 +389,24 @@ const StreamCaret: React.FC = () => {
 };
 
 /* ---------------- 工具调用小药丸 ---------------- */
-const ToolPill: React.FC<{ id: string; name: string; status: 'running' | 'done'; ok?: boolean }> = ({ id, name, status, ok }) => {
+// 监控质量徽标：有效✓（沿用 ok 绿）之外，空结果/重复拦截/风控拒单单独标出来
+const PILL_BADGE: Record<string, { label: string; cls: string }> = {
+  empty: { label: '空', cls: 'text-accent-orange' },
+  duplicate: { label: '拦', cls: 'text-gray-500' },
+  negative: { label: '拒', cls: 'text-accent-purple' },
+};
+
+const ToolPill: React.FC<{ id: string; name: string; status: 'running' | 'done'; ok?: boolean; desc?: string; verdict?: string; elapsedMs?: number }> = ({ id, name, status, ok, desc, verdict, elapsedMs }) => {
   const reduce = useReducedMotion();
   const running = status === 'running';
-  // 运行中：轮换趣味文案；完成：稳定短标签（按 tool_call id 哈希，刷新也不跳）
-  const runningPhrase = useRotatingPhrase(TOOL_RUNNING_COPY[name] || FALLBACK_RUNNING, running);
-  const doneLabel = TOOL_DONE_LABEL[name] || TOOL_LABELS[name] || name;
-  const text = running ? runningPhrase : (ok === false ? `${doneLabel}失败` : doneLabel);
+  // 按 tool_call id 锁定同一对台词：开工 run → 收工 done 讲同一个梗，刷新也不跳。
+  const beat = pickStable(TOOL_COPY[name] || FALLBACK_COPY, id || name);
+  // 完成态优先显示后端下发的成果话术（「完成了什么」）；旧消息无 desc 时回退趣味文案
+  const baseText = running ? beat.run : (desc || (ok === false ? TOOL_FAIL : beat.done));
+  const text = !running && elapsedMs != null && elapsedMs >= 1000
+    ? `${baseText} · ${(elapsedMs / 1000).toFixed(1)}s`
+    : baseText;
+  const badge = !running && verdict ? PILL_BADGE[verdict] : undefined;
   return (
     <motion.div
       variants={pickVariants(reduce, popIn)}
@@ -514,9 +434,9 @@ const ToolPill: React.FC<{ id: string; name: string; status: 'running' | 'done';
             variants={pickVariants(reduce, popIn)}
             initial="hidden"
             animate="show"
-            className={ok === false ? 'text-bear' : 'text-bull'}
+            className={badge ? badge.cls : ok === false ? 'text-bear' : 'text-bull'}
           >
-            {ok === false ? '✕' : '✓'}
+            {badge ? badge.label : ok === false ? '✕' : '✓'}
           </motion.span>
         )}
       </AnimatePresence>

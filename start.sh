@@ -21,6 +21,14 @@ echo ""
 echo -e "${CYAN}${BOLD}=== Fin 量化交易系统 — 启动服务 ===${NC}"
 echo ""
 
+# 检查 T9 移动硬盘是否挂载（market.db / datasets / huggingface 缓存都软链接在上面）
+if [ ! -d /Volumes/T9 ]; then
+    echo -e "${RED}✗ 未检测到三星 T9 移动硬盘挂载在 /Volumes/T9${NC}"
+    echo -e "${RED}  backend/data、datasets、code_dataset、~/.cache/huggingface 都软链接到了 T9 上，${NC}"
+    echo -e "${RED}  没插硬盘就启动会导致后端读不到 market.db。请先插上 T9 再重试。${NC}"
+    exit 1
+fi
+
 # ============================================================
 # [1/3] 停止已有服务
 # ============================================================
@@ -49,7 +57,7 @@ echo ""
 # ============================================================
 echo -e "${YELLOW}[2/3] 启动后端 (port 8000)...${NC}"
 cd "$BACKEND_DIR"
-nohup conda run -n quant --no-capture-output python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 > /tmp/fin-backend.log 2>&1 &
+nohup conda run -n quant --no-capture-output python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload > /tmp/fin-backend.log 2>&1 &
 BACKEND_PID=$!
 echo "  PID: $BACKEND_PID  日志: /tmp/fin-backend.log"
 echo ""

@@ -53,6 +53,9 @@ TEST(PortfolioTest, BuyThenSell) {
     p.execute_order(Order::market_buy("AAPL", 100), 150.0, "2025-01-15");
     EXPECT_TRUE(p.has_position("AAPL"));
 
+    // T+1：当日买入不可卖，需到次日 settle_t1() 解冻后才可卖出
+    p.settle_t1();
+
     // 卖出
     auto fill = p.execute_order(
         Order::market_sell("AAPL", 100),
@@ -66,6 +69,28 @@ TEST(PortfolioTest, BuyThenSell) {
 
     // 应该赚了钱（扣除手续费后）
     EXPECT_GT(p.get_cash(), 100000.0 - 100);  // 大致检查
+}
+
+// ── T+1：当日买入当日不可卖 ──
+
+TEST(PortfolioTest, T1SameDaySellRejected) {
+    Portfolio p(100000.0, CommissionConfig::us_stock());
+
+    p.execute_order(Order::market_buy("AAPL", 100), 150.0, "2025-01-15");
+    ASSERT_TRUE(p.has_position("AAPL"));
+
+    // 当日（未 settle_t1）立即卖出 → 被拒（可卖量 available 为 0）
+    auto same_day = p.execute_order(
+        Order::market_sell("AAPL", 100), 160.0, "2025-01-15");
+    EXPECT_FALSE(same_day.has_value());
+    EXPECT_EQ(p.get_position_quantity("AAPL"), 100);  // 仍全额持有
+
+    // 次日 settle 后可卖
+    p.settle_t1();
+    auto next_day = p.execute_order(
+        Order::market_sell("AAPL", 100), 160.0, "2025-01-16");
+    EXPECT_TRUE(next_day.has_value());
+    EXPECT_FALSE(p.has_position("AAPL"));
 }
 
 // ── 资金不足被拒绝 ──

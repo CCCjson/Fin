@@ -7,6 +7,7 @@ import type { WidgetSpec } from '../../services/agentService';
 import { MetricCard } from '../backtest/MetricCard';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 import { fadeUp, pickVariants } from '../common/motion';
+import { openExternal } from '../../utils/openExternal';
 
 /* ================================================================
    Widget 分发器：按 type 渲染成图表/卡片（复用现成组件）
@@ -84,7 +85,7 @@ const CockpitScoreWidget: React.FC<{ data: any }> = ({ data }) => {
         <div className="flex items-center gap-3">
           <div className="text-center">
             <div className="text-2xl font-bold text-white leading-none">
-              <AnimatedNumber value={data.composite} decimals={0} placeholder="—" />
+              <AnimatedNumber value={data.composite} decimals={1} placeholder="—" />
             </div>
             <div className="text-[10px] text-gray-500">综合评分</div>
           </div>
@@ -122,8 +123,9 @@ const CockpitScoreWidget: React.FC<{ data: any }> = ({ data }) => {
         ))}
       </div>
 
-      {/* 按资金建议 */}
-      {sug && sug.affordable && (
+      {/* 按资金建议：只有真的判定 BUY 才显示「建议买入」，避免跟 HOLD/SELL 的
+          结论矛盾——sug.affordable 只代表买得起，不代表这次就该买。 */}
+      {data.recommendation === 'BUY' && sug && sug.affordable && (
         <div className="bg-dark-light rounded-lg p-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
           <span className="text-gray-500 text-xs">💰 建议买入 <span className="text-green-300 font-semibold">{sug.shares} 股（{sug.lots} 手）</span></span>
           <span className="text-gray-500 text-xs">约 <span className="text-white">¥{sug.amount?.toLocaleString?.()}</span></span>
@@ -347,7 +349,8 @@ const KnowledgeSourcesWidget: React.FC<{ data: any; title?: string }> = ({ data,
               <div className="flex items-center gap-2 flex-wrap">
                 {s.url ? (
                   <a href={s.url} target="_blank" rel="noreferrer"
-                     className="text-sm text-gray-200 hover:text-blue-300 truncate font-medium">{s.title}</a>
+                     onClick={(e) => { e.preventDefault(); openExternal(s.url); }}
+                     className="text-sm text-gray-200 hover:text-blue-300 truncate font-medium cursor-pointer">{s.title}</a>
                 ) : (
                   <span className="text-sm text-gray-200 truncate font-medium">{s.title}</span>
                 )}
@@ -367,6 +370,264 @@ const KnowledgeSourcesWidget: React.FC<{ data: any; title?: string }> = ({ data,
   );
 };
 
+const PHASE_LABELS: Record<string, string> = {
+  intraday: '盘中',
+  pre_market: '盘前',
+  after_close: '盘后',
+  closed_day: '休市',
+};
+
+const STATE_STYLE: Record<string, { label: string; cls: string }> = {
+  active: { label: '有可买标的', cls: 'bg-green-500/20 text-green-300 border-green-500/40' },
+  weak: { label: '弱市观望', cls: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40' },
+  empty_signals: { label: '空仓观望', cls: 'bg-gray-500/20 text-gray-300 border-gray-500/40' },
+};
+
+const yuan = (v: any) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? `¥${n.toLocaleString()}` : '—';
+};
+
+/** 选股推荐榜：新买入 / 持仓处置 / 买不起（剔除） 三区 */
+const RecommendationBoardWidget: React.FC<{ data: any; title?: string }> = ({ data, title }) => {
+  const buys: any[] = data.buys || [];
+  const holdings: any[] = data.holdings_advice || [];
+  const skipped: any[] = data.skipped_unaffordable || [];
+  const st = STATE_STYLE[data.market_state] || STATE_STYLE.weak;
+
+  return (
+    <WidgetShell className="p-4">
+      {/* 头部 */}
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div className="text-base font-bold text-white flex items-center gap-2">
+          🎯 {title || '选股推荐'}
+          <span className="text-[10px] text-gray-500 font-normal">
+            {PHASE_LABELS[data.session_phase] || data.session_phase}
+            {data.provisional && ' · 盘中实时'}
+          </span>
+        </div>
+        <span className={`px-2.5 py-1 rounded-lg border text-xs font-semibold ${st.cls}`}>{st.label}</span>
+      </div>
+
+      {/* 账户约束条 */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500 mb-3">
+        <span>总资金 <span className="text-gray-300">{yuan(data.total_capital)}</span></span>
+        <span>可用现金 <span className="text-gray-300">{yuan(data.available_cash)}</span></span>
+        <span>单股上限 <span className="text-gray-300">{yuan(data.max_single_amount)}</span></span>
+        {data.signal_date && <span>信号日 <span className="text-gray-300">{data.signal_date}</span></span>}
+      </div>
+
+      {/* 新买入推荐 */}
+      <div className="mb-3">
+        <div className="text-xs font-semibold text-gray-400 mb-1.5">新买入推荐（{buys.length}）</div>
+        {buys.length === 0 ? (
+          <div className="text-xs text-gray-500 bg-dark-light rounded-lg p-2.5">
+            暂无达标标的（需综合评级 BUY + 按账户买得起 + 过风控）
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {buys.map((b) => (
+              <div key={b.symbol} className="bg-dark-light rounded-lg p-2.5 flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-white font-medium truncate">{b.name}</span>
+                  <span className="text-gray-500 text-[10px]">{b.symbol}</span>
+                  <span className="px-1.5 py-0.5 rounded border text-[10px] bg-green-500/20 text-green-300 border-green-500/40">买入</span>
+                </div>
+                <div className="flex items-center gap-3 text-[11px] text-gray-400">
+                  <span>综合 <span className="text-white font-semibold">{b.composite?.toFixed?.(0) ?? '—'}</span></span>
+                  <span>现价 <span className="text-gray-200">{b.price ?? '—'}</span></span>
+                  <span className="text-green-300">{b.suggested?.lots}手/{yuan(b.suggested?.amount)}</span>
+                  {b.stop_loss && <span>止损 {b.stop_loss}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 持仓处置建议 */}
+      {holdings.length > 0 && (
+        <div className="mb-3">
+          <div className="text-xs font-semibold text-gray-400 mb-1.5">持仓处置建议（{holdings.length}）</div>
+          <div className="space-y-1.5">
+            {holdings.map((h) => {
+              const rec = REC_STYLE[h.recommendation] || REC_STYLE['N/A'];
+              const pnl = h.unrealized_pnl_pct;
+              return (
+                <div key={h.symbol} className="bg-dark-light rounded-lg p-2.5 flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-white font-medium truncate">{h.name}</span>
+                    <span className="text-gray-500 text-[10px]">{h.symbol}</span>
+                    <span className={`px-1.5 py-0.5 rounded border text-[10px] ${rec.cls}`}>{rec.label}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-[11px] text-gray-400">
+                    <span>综合 <span className="text-white font-semibold">{h.composite?.toFixed?.(0) ?? '—'}</span></span>
+                    {typeof pnl === 'number' && (
+                      <span className={pnl >= 0 ? 'text-green-300' : 'text-red-300'}>
+                        浮盈 {pnl >= 0 ? '+' : ''}{pnl.toFixed(1)}%
+                      </span>
+                    )}
+                    {h.stop_loss && <span>止损 {h.stop_loss}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 买不起（透明剔除） */}
+      {skipped.length > 0 && (
+        <details className="mb-2">
+          <summary className="text-xs text-gray-500 cursor-pointer">按账户买不起，已剔除（{skipped.length}）</summary>
+          <div className="mt-1.5 space-y-1">
+            {skipped.map((s) => (
+              <div key={s.symbol} className="text-[11px] text-gray-500 flex justify-between gap-2">
+                <span>{s.name} <span className="text-gray-600">{s.symbol}</span></span>
+                <span>现价 {s.price} · 一手 {yuan(s.one_lot_cost)}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* 结论 */}
+      {data.note && (
+        <div className="text-[11px] text-gray-400 bg-dark rounded-lg p-2.5 leading-relaxed">{data.note}</div>
+      )}
+    </WidgetShell>
+  );
+};
+
+const SOURCE_LABELS: Record<string, string> = {
+  strong: '强势股池',
+  continuation: '昨涨停仍强势',
+  quasi: '准涨停扫描',
+};
+
+/** 涨停池复盘：家数/连板梯队/炸板率/赚钱效应 + 连板榜（参考数据，非买入候选） */
+const LimitUpPoolWidget: React.FC<{ data: any; title?: string }> = ({ data, title }) => {
+  const ladder: Record<string, number> = data.ladder_distribution || {};
+  const ladderKeys = Object.keys(ladder).sort((a, b) => parseInt(a) - parseInt(b));
+  const profit = data.profit_effect || {};
+  const boards: any[] = data.top_boards || [];
+
+  return (
+    <WidgetShell className="p-4">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div className="text-base font-bold text-white flex items-center gap-2">
+          🔥 {title || '涨停池全览'}
+          {data.trade_date && <span className="text-[10px] text-gray-500 font-normal">{data.trade_date}</span>}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500 mb-3">
+        <span>涨停 <span className="text-bull font-semibold">{data.limit_up_count ?? '—'}</span> 家</span>
+        <span>炸板 <span className="text-gray-300">{data.break_count ?? '—'}</span> 家</span>
+        {typeof data.break_rate === 'number' && (
+          <span>炸板率 <span className="text-gray-300">{(data.break_rate * 100).toFixed(0)}%</span></span>
+        )}
+        {typeof profit.avg_change_pct === 'number' && (
+          <span>
+            昨涨停股今日平均{' '}
+            <span className={profit.avg_change_pct >= 0 ? 'text-bull' : 'text-bear'}>
+              {profit.avg_change_pct >= 0 ? '+' : ''}{profit.avg_change_pct.toFixed(1)}%
+            </span>
+          </span>
+        )}
+        {typeof profit.promotion_count === 'number' && <span>晋级(再涨停) {profit.promotion_count} 家</span>}
+      </div>
+
+      {ladderKeys.length > 0 && (
+        <div className="mb-3">
+          <div className="text-xs font-semibold text-gray-400 mb-1.5">连板梯队分布</div>
+          <div className="flex flex-wrap gap-2">
+            {ladderKeys.map((k) => (
+              <span key={k} className="px-2 py-1 rounded-lg bg-dark-light text-[11px] text-gray-300">
+                {k} <span className="text-white font-semibold">{ladder[k]}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {boards.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-gray-400 mb-1.5">连板榜（{boards.length}）</div>
+          <div className="space-y-1.5">
+            {boards.slice(0, 10).map((b) => (
+              <div key={b.symbol} className="bg-dark-light rounded-lg p-2.5 flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-white font-medium truncate">{b.name}</span>
+                  <span className="text-gray-500 text-[10px]">{b.symbol}</span>
+                  {b.industry && <span className="text-[10px] text-gray-500">{b.industry}</span>}
+                </div>
+                <div className="flex items-center gap-3 text-[11px] text-gray-400">
+                  <span className="text-bull font-semibold">{b.consecutive_boards ?? '—'}板</span>
+                  {b.zt_stat && <span>{b.zt_stat}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3 text-[10px] text-gray-500">已封板涨停股买不进，仅作复盘参考，不是买入候选</div>
+    </WidgetShell>
+  );
+};
+
+/** 次日涨停候选池：打分排名 + 归因，候选只包含当前能买的票 */
+const LimitUpCandidatesWidget: React.FC<{ data: any; title?: string }> = ({ data, title }) => {
+  const candidates: any[] = data.candidates || [];
+
+  return (
+    <WidgetShell className="p-4">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div className="text-base font-bold text-white flex items-center gap-2">
+          🎯 {title || '次日涨停候选池'}
+          {data.target_date && <span className="text-[10px] text-gray-500 font-normal">目标日 {data.target_date}</span>}
+        </div>
+      </div>
+
+      {candidates.length === 0 ? (
+        <div className="text-xs text-gray-500 bg-dark-light rounded-lg p-2.5">今日无达标候选，建议观望</div>
+      ) : (
+        <div className="space-y-1.5 mb-2">
+          {candidates.map((c) => (
+            <details key={c.symbol} className="bg-dark-light rounded-lg p-2.5">
+              <summary className="cursor-pointer flex items-center justify-between gap-2 flex-wrap list-none">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-gray-500 text-[10px] shrink-0">#{c.rank}</span>
+                  <span className="text-white font-medium truncate">{c.name}</span>
+                  <span className="text-gray-500 text-[10px]">{c.symbol}</span>
+                  <span className="px-1.5 py-0.5 rounded border text-[10px] bg-blue-500/15 text-blue-300 border-blue-500/30">
+                    {SOURCE_LABELS[c.source] || c.source}
+                  </span>
+                </div>
+                <span className="text-[11px] text-gray-400">
+                  打分 <span className="text-white font-semibold">{(c.score * 100).toFixed(0)}</span>
+                </span>
+              </summary>
+              <div className="mt-2 space-y-1">
+                {(c.reasons || []).map((r: any, i: number) => (
+                  <div key={i} className="text-[11px] text-gray-400">
+                    <span className="text-gray-300">{r.indicator}</span>：{r.detail}
+                  </div>
+                ))}
+              </div>
+            </details>
+          ))}
+        </div>
+      )}
+
+      <div className="text-[11px] text-gray-400 bg-dark rounded-lg p-2.5 leading-relaxed">
+        ⚠️ {data.disclaimer || '预测基于历史规律统计，非100%准确，仅供参考，不构成投资建议'}
+      </div>
+    </WidgetShell>
+  );
+};
+
 const WIDGET_MAP: Record<string, React.FC<{ data: any; title?: string }>> = {
   cockpit_score: CockpitScoreWidget,
   metric_cards: MetricCardsWidget,
@@ -375,6 +636,9 @@ const WIDGET_MAP: Record<string, React.FC<{ data: any; title?: string }>> = {
   price_quote: QuoteWidget,
   price_sparkline: SparklineWidget,
   knowledge_sources: KnowledgeSourcesWidget,
+  recommendation_board: RecommendationBoardWidget,
+  limit_up_pool: LimitUpPoolWidget,
+  limit_up_candidates: LimitUpCandidatesWidget,
 };
 
 export const WidgetRenderer: React.FC<{ widget: WidgetSpec }> = ({ widget }) => {

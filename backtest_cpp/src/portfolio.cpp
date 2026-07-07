@@ -79,8 +79,9 @@ std::optional<Fill> Portfolio::execute_order(const Order& order,
     } else {
         // 卖出检查：是否持有足够的股票
         auto it = positions_.find(order.symbol);
-        if (it == positions_.end() || it->second.quantity < order.quantity) {
-            return std::nullopt;   // 股票不够，订单被拒绝
+        // T+1：只能卖出"可卖数量"available（当日买入的部分被冻结，不计入）
+        if (it == positions_.end() || it->second.available < order.quantity) {
+            return std::nullopt;   // 可卖股票不足，订单被拒绝
         }
     }
 
@@ -112,15 +113,17 @@ std::optional<Fill> Portfolio::execute_order(const Order& order,
         double old_cost = pos.avg_cost * pos.quantity;
         double new_cost = fill_price * order.quantity;
         pos.quantity += order.quantity;
+        // T+1：当日买入不增加 available，要等下一交易日 settle_t1() 解冻
         pos.avg_cost = (old_cost + new_cost) / pos.quantity;
         pos.current_price = fill_price;
     } else {
         /*
-         * 卖出：减少持仓
+         * 卖出：减少持仓（持有量与可卖量同减）
          * 如果卖光了，从 positions_ 里删除
          */
         auto& pos = positions_[order.symbol];
         pos.quantity -= order.quantity;
+        pos.available -= order.quantity;
         if (pos.quantity <= 0) {
             positions_.erase(order.symbol);
         }
@@ -153,6 +156,19 @@ void Portfolio::update_price(const std::string& symbol, double price) {
     auto it = positions_.find(symbol);
     if (it != positions_.end()) {
         it->second.current_price = price;
+    }
+}
+
+/*
+ * settle_t1 — T+1 结算
+ *
+ * 每个交易日开盘时调用：把所有持仓的可卖数量 available 解冻为当前持有量 quantity。
+ * 由于买入时只加 quantity 不加 available，当日买入的股票在当日 available 仍为旧值，
+ * 只有到了下一交易日的 settle_t1() 才会被计入可卖，从而实现 A 股 T+1 规则。
+ */
+void Portfolio::settle_t1() {
+    for (auto& kv : positions_) {
+        kv.second.available = kv.second.quantity;
     }
 }
 

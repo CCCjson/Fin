@@ -15,11 +15,29 @@ from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from data_engine.fetchers.realtime import fetch_a_share_realtime, fetch_index_realtime
+from data_engine.fetchers.realtime import (
+    fetch_a_share_realtime_cached,
+    fetch_index_realtime,
+)
 from data_engine.storage.database import get_session
 from data_engine.storage.models import RealtimeSnapshot
 
 router = APIRouter(prefix="/realtime", tags=["实时行情"])
+
+# 缓存 TTL（秒）：页面刷新/多端并发在窗口内复用同一次全量拉取
+QUOTES_CACHE_TTL = 15.0
+
+
+def _sort_quotes(quotes: list, sort_by: str, ascending: bool) -> list:
+    """内存排序（缓存的全量数据不区分排序字段，5400 条 dict 排序 <5ms）"""
+    valid_keys = {"change_pct", "amount", "turnover", "volume", "price"}
+    key = sort_by if sort_by in valid_keys else "change_pct"
+    sentinel = float("inf") if ascending else float("-inf")
+    return sorted(
+        quotes,
+        key=lambda q: q.get(key) if q.get(key) is not None else sentinel,
+        reverse=not ascending,
+    )
 
 
 def _get_proxy() -> Optional[dict]:
@@ -40,148 +58,83 @@ def _get_proxy() -> Optional[dict]:
 
 @router.get("/quotes")
 async def get_realtime_quotes(
-    use_proxy: bool = Query(False, description="是否使用代理 IP"),
+    use_proxy: bool = Query(False, description="[已废弃] 代理由后端快代理池自动管理"),
     sort_by: str = Query("change_pct", description="排序字段: change_pct, amount, turnover"),
     ascending: bool = Query(False, description="是否升序"),
     save: bool = Query(True, description="是否保存到数据库"),
+    force: bool = Query(False, description="强制刷新（跳过 15s 共享缓存）"),
 ):
     """
     获取全部 A股实时行情
 
-    - 分页获取 5000+ 只股票，被限流自动切换代理
-    - 可选代理 IP
+    - 并发分页获取 5000+ 只股票（多代理 IP 并行）
+    - 15s 共享缓存：窗口内重复请求秒回；force=true 强制重拉
+    - 排序在内存完成，不同 sort_by 复用同一份缓存
     - 默认保存到 realtime_snapshots 表
     """
-    sort_map = {
-        "change_pct": "f3",
-        "amount": "f6",
-        "turnover": "f8",
-        "volume": "f5",
-        "price": "f2",
-    }
-    sort_field = sort_map.get(sort_by, "f3")
-
-    proxies = _get_proxy() if use_proxy else None
-
     # 放入线程池执行，避免阻塞 async 事件循环
     loop = asyncio.get_event_loop()
     quotes = await loop.run_in_executor(
         None,
-        lambda: fetch_a_share_realtime(
-            proxies=proxies,
-            sort_field=sort_field,
-            ascending=ascending,
-        ),
+        lambda: fetch_a_share_realtime_cached(ttl=QUOTES_CACHE_TTL, force=force),
     )
 
     if not quotes:
         return {"success": False, "message": "获取行情数据失败", "data": [], "count": 0}
 
-    # 计算统计数据
-    up_count = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] > 0)
-    down_count = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] < 0)
-    flat_count = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] == 0)
-    limit_up = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] >= 9.9)
-    limit_down = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] <= -9.9)
+    quotes = _sort_quotes(quotes, sort_by, ascending)
+    statistics = _compute_statistics(quotes)
 
     # 保存到数据库
     saved_count = 0
     if save:
-        def _save():
-            nonlocal saved_count
-            try:
-                snapshot_time = datetime.now()
-                session = get_session()
-                for q in quotes:
-                    if q.get("price") is None:
-                        continue
-                    record = RealtimeSnapshot(
-                        snapshot_time=snapshot_time,
-                        symbol=q.get("symbol", ""),
-                        name=q.get("name", ""),
-                        price=q.get("price"),
-                        change_pct=q.get("change_pct"),
-                        change_amount=q.get("change_amount"),
-                        volume=q.get("volume"),
-                        amount=q.get("amount"),
-                        amplitude=q.get("amplitude"),
-                        turnover=q.get("turnover"),
-                        pe_ratio=q.get("pe_ratio"),
-                        high=q.get("high"),
-                        low=q.get("low"),
-                        open=q.get("open"),
-                        prev_close=q.get("prev_close"),
-                    )
-                    session.add(record)
-                    saved_count += 1
-                session.commit()
-                session.close()
-                logger.info(f"实时行情已保存: {saved_count} 条 (快照时间: {snapshot_time})")
-            except Exception as e:
-                logger.error(f"保存实时行情失败: {e}")
-
-        await loop.run_in_executor(None, _save)
+        saved_count = await loop.run_in_executor(None, _save_quotes, quotes)
 
     return {
         "success": True,
         "count": len(quotes),
         "saved_count": saved_count,
-        "statistics": {
-            "total": len(quotes),
-            "up": up_count,
-            "down": down_count,
-            "flat": flat_count,
-            "limit_up": limit_up,
-            "limit_down": limit_down,
-        },
+        "statistics": statistics,
         "data": quotes,
     }
 
 
-def _compute_statistics(quotes: list) -> dict:
-    """计算市场统计数据"""
-    up = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] > 0)
-    down = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] < 0)
-    flat = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] == 0)
-    limit_up = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] >= 9.9)
-    limit_down = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] <= -9.9)
-    return {
-        "total": len(quotes),
-        "up": up, "down": down, "flat": flat,
-        "limit_up": limit_up, "limit_down": limit_down,
-    }
+from data_engine.fetchers.realtime import compute_statistics as _compute_statistics  # noqa: E402（下沉后回导）
 
 
 def _save_quotes(quotes: list) -> int:
-    """保存行情到数据库，返回保存条数"""
+    """保存行情到数据库（bulk_insert_mappings，5000+ 行一次性写入），返回保存条数"""
     saved_count = 0
     try:
         snapshot_time = datetime.now()
+        rows = [
+            {
+                "snapshot_time": snapshot_time,
+                "symbol": q.get("symbol", ""),
+                "name": q.get("name", ""),
+                "price": q.get("price"),
+                "change_pct": q.get("change_pct"),
+                "change_amount": q.get("change_amount"),
+                "volume": q.get("volume"),
+                "amount": q.get("amount"),
+                "amplitude": q.get("amplitude"),
+                "turnover": q.get("turnover"),
+                "pe_ratio": q.get("pe_ratio"),
+                "high": q.get("high"),
+                "low": q.get("low"),
+                "open": q.get("open"),
+                "prev_close": q.get("prev_close"),
+            }
+            for q in quotes
+            if q.get("price") is not None
+        ]
         session = get_session()
-        for q in quotes:
-            if q.get("price") is None:
-                continue
-            record = RealtimeSnapshot(
-                snapshot_time=snapshot_time,
-                symbol=q.get("symbol", ""),
-                name=q.get("name", ""),
-                price=q.get("price"),
-                change_pct=q.get("change_pct"),
-                change_amount=q.get("change_amount"),
-                volume=q.get("volume"),
-                amount=q.get("amount"),
-                amplitude=q.get("amplitude"),
-                turnover=q.get("turnover"),
-                pe_ratio=q.get("pe_ratio"),
-                high=q.get("high"),
-                low=q.get("low"),
-                open=q.get("open"),
-                prev_close=q.get("prev_close"),
-            )
-            session.add(record)
-            saved_count += 1
-        session.commit()
-        session.close()
+        try:
+            session.bulk_insert_mappings(RealtimeSnapshot, rows)
+            session.commit()
+            saved_count = len(rows)
+        finally:
+            session.close()
         logger.info(f"实时行情已保存: {saved_count} 条 (快照时间: {snapshot_time})")
     except Exception as e:
         logger.error(f"保存实时行情失败: {e}")
@@ -193,10 +146,13 @@ async def stream_realtime_quotes(
     sort_by: str = Query("change_pct", description="排序字段"),
     ascending: bool = Query(False, description="是否升序"),
     save: bool = Query(True, description="是否保存到数据库"),
-    use_proxy: bool = Query(False, description="是否使用代理 IP"),
+    use_proxy: bool = Query(False, description="[已废弃] 代理由后端快代理池自动管理"),
+    force: bool = Query(False, description="强制刷新（跳过 15s 共享缓存）"),
 ):
     """
     流式获取全 A股实时行情（NDJSON）
+
+    命中 15s 共享缓存时进度直接打满、秒级完成。
 
     事件类型:
     - progress: 获取进度 {fetched, total, percent}
@@ -204,11 +160,6 @@ async def stream_realtime_quotes(
     - done: 完成 {data, statistics, count, saved_count}
     - error: 失败 {message}
     """
-    sort_map = {
-        "change_pct": "f3", "amount": "f6", "turnover": "f8",
-        "volume": "f5", "price": "f2",
-    }
-    sort_field = sort_map.get(sort_by, "f3")
 
     async def _streaming():
         loop = asyncio.get_event_loop()
@@ -218,11 +169,12 @@ async def stream_realtime_quotes(
             progress_queue.put((fetched, total, percent))
 
         def _fetch():
-            return fetch_a_share_realtime(
-                sort_field=sort_field,
-                ascending=ascending,
+            quotes = fetch_a_share_realtime_cached(
+                ttl=QUOTES_CACHE_TTL,
+                force=force,
                 progress_callback=_on_progress,
             )
+            return _sort_quotes(quotes, sort_by, ascending)
 
         # 启动后台线程获取数据
         import concurrent.futures

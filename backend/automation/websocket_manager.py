@@ -98,6 +98,18 @@ async def notify_order_status(order_id: str, status: str, order: Dict[str, Any])
         "data": {"order_id": order_id, "status": status, **order},
         "timestamp": datetime.now().isoformat(),
     })
+    # 成交事件汇入业务总线（自动化路径）
+    if status.lower() == "filled":
+        try:
+            from business_events import publish_event, ORDER_FILLED
+            sym = order.get("symbol")
+            publish_event(
+                ORDER_FILLED, source="automation", symbol=sym,
+                title=f"自动化成交 {order.get('name') or sym or order_id}",
+                order_id=order_id, **{k: order.get(k) for k in ("side", "price", "quantity") if k in order},
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 async def notify_risk_alert(symbol: str, alert_type: str, message: str, detail: Dict = None):
@@ -112,6 +124,12 @@ async def notify_risk_alert(symbol: str, alert_type: str, message: str, detail: 
         },
         "timestamp": datetime.now().isoformat(),
     })
+    try:
+        from business_events import publish_event, RISK_ALERT
+        publish_event(RISK_ALERT, source="automation", symbol=symbol, severity="warn",
+                      title=f"风控告警：{message}", alert_type=alert_type)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def notify_scan_started(config_id: str, scan_type: str, symbols_count: int):
@@ -138,6 +156,16 @@ async def notify_scan_completed(config_id: str, scan_type: str, result: Dict):
         },
         "timestamp": datetime.now().isoformat(),
     })
+    try:
+        from business_events import publish_event, SCAN_COMPLETED
+        found = result.get("signals_found") or result.get("orders_created")
+        publish_event(SCAN_COMPLETED, source="automation",
+                      title=f"扫描完成（{scan_type}）" + (f"，发现 {found}" if found else ""),
+                      config_id=config_id, scan_type=scan_type,
+                      signals_found=result.get("signals_found"),
+                      orders_created=result.get("orders_created"))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def notify_scheduler_status(running: bool, message: str = ""):

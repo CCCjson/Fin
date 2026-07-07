@@ -9,7 +9,8 @@ HTTP 会话层 — 隔离 curl_cffi 细节，给 DDG / read_url / EDGAR 复用�
 直接翻墙（新加坡），websearch 都能用，无需改配置。
 """
 from knowledge_engine.config import get_scraper_proxy
-from net_proxy import resolve_proxy as _resolve_base, clash_alive, reset_probe  # noqa: F401
+from net.overseas import resolve_overseas   # 海外：先探直连,不通走 7898
+from net_proxy import clash_alive, reset_probe  # noqa: F401
 
 # 抄自 Scrapper config：chrome131 在该版 curl_cffi 有 TLS bug，统一用 chrome120 指纹
 IMPERSONATE = "chrome120"
@@ -29,14 +30,15 @@ def reset_proxy_probe() -> None:
 def resolve_proxy(force_direct: bool = False) -> str | None:
     """
     解析本次该用的代理 URL，None 表示直连。
-    显式反爬代理 KNOWLEDGE_SCRAPER_PROXY 优先；否则走全局统一策略 net_proxy（HTTP_PROXY_MODE）。
+    优先级：强反爬专用代理 KNOWLEDGE_SCRAPER_PROXY → 海外自适配 resolve_overseas
+    （DDG/EDGAR 都是海外：先探本地直连,通就直连,不通走 Shadowrocket 7898）。
     """
     if force_direct:
         return None
-    sp = get_scraper_proxy()                     # 强反爬专用代理优先
+    sp = get_scraper_proxy()                      # 强反爬专用代理优先
     if sp:
         return sp
-    return _resolve_base()                        # 全系统统一 auto/direct/url
+    return resolve_overseas()                      # 海外：直连优先，不通走 7898
 
 
 def make_cffi_session(force_direct: bool = False):

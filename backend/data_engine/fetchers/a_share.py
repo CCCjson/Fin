@@ -21,14 +21,16 @@ class AShareFetcher(BaseFetcher):
         """获取日线数据"""
         try:
             import akshare as ak
+            from net import domestic_akshare
 
             # akshare 使用 6 位代码
             symbol_code = request.symbol[:6]
 
             logger.info(f"正在获取 {request.symbol} 的日线数据...")
 
-            # 获取数据
-            df = ak.stock_zh_a_hist(
+            # 获取数据（统一网络层：快代理轮换 + 直连兜底，Clash 无关）
+            df = domestic_akshare(
+                ak.stock_zh_a_hist,
                 symbol=symbol_code,
                 period="daily",
                 start_date=request.start_date.strftime("%Y%m%d"),
@@ -119,11 +121,12 @@ class AShareFetcher(BaseFetcher):
         """搜索股票"""
         try:
             import akshare as ak
+            from net import domestic_akshare
 
             logger.info(f"搜索股票: {keyword}")
 
-            # 获取所有股票列表
-            df = ak.stock_zh_a_spot_em()
+            # 获取所有股票列表（统一网络层）
+            df = domestic_akshare(ak.stock_zh_a_spot_em)
 
             # 搜索代码或名称包含关键字的股票
             matched = df[
@@ -155,10 +158,11 @@ class AShareFetcher(BaseFetcher):
         """获取所有 A股列表"""
         try:
             import akshare as ak
+            from net import domestic_akshare
 
             logger.info("获取 A股股票列表...")
 
-            df = ak.stock_info_a_code_name()
+            df = domestic_akshare(ak.stock_info_a_code_name)
 
             result = []
             for _, row in df.iterrows():

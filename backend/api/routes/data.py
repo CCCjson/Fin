@@ -8,8 +8,10 @@ from typing import List, Optional
 import pandas as pd
 from datetime import datetime
 from loguru import logger
+from pydantic import BaseModel
 from sqlalchemy import or_
 
+from api.routes._stream_utils import bridge_sync_stream
 from api.models.schemas import (
     StockDataRequest,
     StockDataResponse,
@@ -72,20 +74,22 @@ async def get_daily_data(request: StockDataRequest):
 
 
 @router.get("/stocks", response_model=StockListResponse)
-async def get_stock_list(market: str = "A"):
+async def get_stock_list(market: str = "a_share"):
     """
-    获取股票列表
+    获取指定市场的股票列表
 
     Args:
-        market: 市场类型 (A=A股, HK=港股, US=美股)
+        market: 市场标识，任意写法（a_share/hk_stock/us_stock、A/HK/US 等）会归一到 canonical
     """
     try:
-        stocks = data_engine.get_stock_list(market=market)
-
-        return StockListResponse(
-            stocks=stocks,
-            count=len(stocks)
-        )
+        from common.market import normalize_market
+        canonical = normalize_market(market)
+        rows = data_engine.stock_repo.get_stocks_by_market(canonical)
+        stocks = [
+            {"symbol": s.symbol, "name": s.name or "", "market": s.market or canonical}
+            for s in rows
+        ]
+        return StockListResponse(stocks=stocks, count=len(stocks))
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -145,13 +149,10 @@ async def update_daily_stream():
         updater = DailyUpdater()
         sync_gen = updater.update_stream()
 
-        async def _flushing_wrapper():
-            for chunk in sync_gen:
-                yield chunk
-                await asyncio.sleep(0)
-
+        # 用线程+队列桥接：阻塞式抓取跑在 daemon 线程里，不占事件循环，
+        # 避免全市场更新把整个后端 API 卡死。
         return StreamingResponse(
-            _flushing_wrapper(),
+            bridge_sync_stream(sync_gen),
             media_type="application/x-ndjson",
             headers={
                 "Cache-Control": "no-cache",
@@ -173,6 +174,48 @@ async def get_update_status():
         return updater.get_update_status()
     except Exception as e:
         logger.error(f"查询更新状态失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 全市场财务数据回补 ====================
+
+class FinancialBackfillRequest(BaseModel):
+    """财务回补请求参数"""
+    mode: str = "incremental"   # incremental=跳过近 stale_days 内有报告的 | full=全量
+    stale_days: int = 150
+    workers: int = 3
+    start_year: str = "2015"
+
+
+@router.post("/financial/backfill/stream", summary="流式补齐全市场财务数据")
+async def financial_backfill_stream(request: FinancialBackfillRequest):
+    """
+    增量/全量补齐全市场 A 股财务数据（流式进度）
+
+    直连新浪财务指标接口 + 多代理 IP 并发；增量模式自动跳过
+    近期已有报告期的股票。同一时间只允许一个回补在跑（busy 时
+    流内返回 error 事件）。
+    """
+    try:
+        from data_engine.financial_updater import FinancialUpdater
+
+        updater = FinancialUpdater()
+        sync_gen = updater.update_stream(
+            mode=request.mode,
+            stale_days=request.stale_days,
+            start_year=request.start_year,
+            workers=request.workers,
+        )
+        return StreamingResponse(
+            bridge_sync_stream(sync_gen),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    except Exception as e:
+        logger.error(f"财务数据回补失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -219,12 +262,30 @@ async def search_stocks(
         session.close()
 
 
+@router.get("/stocks/names", summary="按代码列表批量查名称")
+async def get_stocks_names(
+    symbols: str = Query(..., description="逗号分隔的股票代码列表，如 600519.SH,AAPL"),
+):
+    """
+    按 symbol 列表批量查名称，供前端"记录表本身没存 name"的场景按需查询。
+    返回 {symbol: name} dict，查不到的 symbol 不出现在结果里。
+    """
+    from data_engine.storage.repository import get_stock_names
+
+    symbol_list = [s.strip() for s in symbols.split(",") if s.strip()][:200]
+    session = get_session()
+    try:
+        return get_stock_names(session, symbol_list)
+    finally:
+        session.close()
+
+
 # ==================== 用户设置 ====================
 
 # 默认设置（启动时自动写入）
 _DEFAULT_SETTINGS = {
     "total_capital": {"value": "5000", "description": "总资金（元），用于计算仓位占比与建议买入金额/股数"},
-    "max_position_pct": {"value": "0.5", "description": "单股最大仓位占比（集中度）：0.2 分散 / 0.5 集中 / 1.0 all-in"},
+    "max_position_pct": {"value": "0.2", "description": "单股最大仓位占比（集中度）：0.2 分散 / 0.5 集中 / 1.0 all-in（默认取风控规格最严值）"},
 }
 
 

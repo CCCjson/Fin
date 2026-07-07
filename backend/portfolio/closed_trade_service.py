@@ -572,7 +572,8 @@ class ClosedTradeService:
         """从 akshare 获取沪深300日线数据"""
         try:
             import akshare as ak
-            df = ak.stock_zh_index_daily_em(symbol="sh000300")
+            from net import domestic_akshare
+            df = domestic_akshare(ak.stock_zh_index_daily_em, symbol="sh000300")
             if df is None or df.empty:
                 return None
 

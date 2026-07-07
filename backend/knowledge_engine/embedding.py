@@ -18,28 +18,29 @@ from knowledge_engine.config import (
     get_embed_model, get_embed_dim, get_embed_device, get_embed_batch_size,
 )
 
-# 在 transformers 首次 import 前同步代理 env：direct 模式清掉残留死代理，
-# 否则 HF 校验会走死代理把 http client 弄坏，缓存模型也加载不了。
+# ★ transformers 首次 import 前**强制 HF 离线**：模型是预下载好的，加载走本地缓存、零网络，
+# 根治「HF 联网校验(直连不通/死代理)把 httpx client 弄坏 → 缓存模型也加载不了」的坑。
+# setdefault 保留逃生口：换新模型首下时 export HF_HUB_OFFLINE=0 即可联网下载。
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+# 顺带在 import 前同步代理 env（direct 模式清残留死代理），供联网下载场景用。
 from net_proxy import apply_proxy_env as _apply_proxy_env
 _apply_proxy_env()
 
 
 def _robust_load(model_name: str, device: str):
     """
-    稳健加载 SentenceTransformer：先在线试，失败退到 HF 离线缓存重试，再退 cpu。
-    解决「HF 校验走了死代理(Clash 关)导致缓存模型也加载不了」的坑——模型已缓存就不需联网。
+    稳健加载 SentenceTransformer：默认 HF 离线(缓存)，mps 失败退 cpu。
+    模型已缓存就零网络；若需联网首下，外部 export HF_HUB_OFFLINE=0。
     """
     from sentence_transformers import SentenceTransformer
     last_err = None
-    for dev, offline in [(device, False), (device, True), ("cpu", True)]:
-        if offline:
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    for dev in [device, "cpu"]:
         try:
             return SentenceTransformer(model_name, device=dev)
         except Exception as e:  # noqa: BLE001
             last_err = e
-            logger.warning(f"embedding 加载失败 device={dev} offline={offline}: {e}")
+            logger.warning(f"embedding 加载失败 device={dev}: {e}")
     raise RuntimeError(f"embedding 模型加载彻底失败：{last_err}")
 
 

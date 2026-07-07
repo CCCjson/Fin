@@ -12,6 +12,8 @@ import hashlib
 import re
 from typing import Optional
 
+from loguru import logger
+
 from agents.context import AgentSession
 from agents.skills_loader import load_monitor_system_prompt
 
@@ -65,14 +67,67 @@ def format_page_context(pc: dict, *, visible_unchanged: bool = False) -> str:
     return " ".join(parts)
 
 
+def _void_pending_confirm(session: AgentSession) -> None:
+    """用户没响应确认弹窗就发了新消息：自动作废挂起的确认，保持 tool_calls 配对。
+
+    不作废的话，历史里 assistant 的 tool_calls 缺响应，上游 API 每次调用都 400，
+    整个会话永久损坏（连事后补 confirm 都救不回——tool 响应必须紧跟 tool_calls）。
+    """
+    pending = session.pending_tool_call
+    if pending is None:
+        return
+    session.pending_tool_call = None
+    session.messages.append({
+        "role": "tool", "tool_call_id": pending.id,
+        "content": "用户未在确认弹窗中响应就发起了新对话，该操作已自动取消，未执行。"})
+    logger.info(f"悬空确认自动作废: {pending.name} ({pending.id})")
+
+
+def _repair_orphan_tool_calls(messages: list[dict]) -> int:
+    """补齐历史中缺失响应的 assistant tool_calls（插占位 tool 消息），返回修补条数。
+
+    孤儿的来源：旧版悬空确认、进程中断、异常截断。一旦存在，整个会话不可用；
+    每 turn 开局兜底扫一遍，把存量损坏会话也救活。
+    """
+    repaired = 0
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            expected = [tc.get("id") for tc in m["tool_calls"] if tc.get("id")]
+            j = i + 1
+            answered = set()
+            while j < len(messages) and messages[j].get("role") == "tool":
+                answered.add(messages[j].get("tool_call_id"))
+                j += 1
+            for tc_id in expected:
+                if tc_id not in answered:
+                    messages.insert(j, {
+                        "role": "tool", "tool_call_id": tc_id,
+                        "content": "该操作响应缺失，已作废。"})
+                    j += 1
+                    repaired += 1
+            i = j
+        else:
+            i += 1
+    if repaired:
+        logger.warning(f"历史修补：补齐 {repaired} 条孤儿 tool_calls 响应")
+    return repaired
+
+
 def prepare_turn(
     session: AgentSession,
     user_message: str,
     page_context: Optional[dict],
 ) -> None:
     """把一条新用户消息落进 session.messages，做好本 turn 开局的所有副作用：
-    系统提示注入（仅空会话）、tool_groups 初始化、page_context 格式化/去重、
-    历史压缩、TurnMonitor 重建。"""
+    悬空确认作废/历史修补、系统提示注入（仅空会话）、tool_groups 初始化、
+    page_context 格式化/去重、历史压缩、TurnMonitor 重建。"""
+    # 必须在追加 user 消息之前：pending 意味着最后一条 assistant 带未响应的
+    # tool_calls，作废响应要紧跟其后才合法。
+    _void_pending_confirm(session)
+    _repair_orphan_tool_calls(session.messages)
+
     if not session.messages:
         session.messages.append(
             {"role": "system", "content": load_monitor_system_prompt()})

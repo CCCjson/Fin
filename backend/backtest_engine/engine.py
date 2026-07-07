@@ -7,7 +7,7 @@ from datetime import datetime
 from loguru import logger
 
 from .strategies import BaseStrategy, StrategyContext
-from .portfolio import Portfolio, OrderType
+from .portfolio import Portfolio, OrderType, infer_market
 from .metrics import MetricsCalculator, ReportGenerator
 
 
@@ -17,14 +17,16 @@ class BacktestEngine:
     def __init__(
         self,
         initial_capital: float = 100000.0,
-        commission_rate: float = 0.0003
+        commission_rate: float = 0.00025
     ):
         """
         初始化回测引擎
 
         Args:
             initial_capital: 初始资金
-            commission_rate: 手续费率
+            commission_rate: 佣金率（已不再直接生效——run() 会按 symbol 后缀推断市场，
+                通过 Portfolio.for_market() 套用对应市场的费率预设，A股/港股/美股各不相同；
+                此参数仅为向后兼容保留）
         """
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
@@ -62,9 +64,11 @@ class BacktestEngine:
         self.symbol = symbol
         self.data = data.copy()
         self.strategy = strategy
-        self.portfolio = Portfolio(
-            initial_capital=self.initial_capital,
-            commission_rate=self.commission_rate
+        # 按 symbol 后缀推断市场（A股/港股/美股），套用对应费率预设——
+        # 避免用 A 股印花税+最低佣金误伤港股/美股策略的回测结果
+        self.portfolio = Portfolio.for_market(
+            infer_market(symbol),
+            initial_capital=self.initial_capital
         )
 
         # 过滤日期范围
@@ -84,14 +88,40 @@ class BacktestEngine:
         strategy.on_start()
 
         # 逐日回测
+        # 【真实成交模型】信号在 bar i 收盘产生，成交推迟到 bar i+1 开盘（next-bar-open）：
+        #   杜绝"当日收盘出信号又按当日收盘价成交"的未来函数；并配合 settle_t1() 强制 A 股 T+1。
+        #   （与 C++ 引擎 backtest_cpp 保持同构语义）
+        pending = []  # 上一 bar 产生、待本 bar 开盘成交的订单
+        has_open = "open" in self.data.columns
+
         for i in range(len(self.data)):
             current_date = self.data.index[i]
             current_price = self.data.iloc[i]["close"]
+            # 成交价 = 今日开盘价（无 open 列则退化为收盘价，保证兼容）
+            fill_price = self.data.iloc[i]["open"] if has_open else current_price
 
-            # 更新持仓价格
+            # T+1 结算：昨日及更早买入的持仓，在今日开盘解冻为可卖
+            self.portfolio.settle_t1()
+
+            # 先按【今日开盘价】执行上一 bar 挂起的订单
+            for order in pending:
+                success = self.portfolio.process_order(order, fill_price)
+                if success:
+                    action = "买入" if order.is_buy else "卖出"
+                    # 安全地格式化日期
+                    date_str = current_date.strftime('%Y-%m-%d') if hasattr(current_date, 'strftime') else str(current_date)
+                    logger.info(
+                        f"[{date_str}] "
+                        f"{action} {abs(order.quantity)} 股 @ {order.filled_price:.2f}, "
+                        f"现金: {self.portfolio.cash:.2f}, "
+                        f"总资产: {self.portfolio.total_value:.2f}"
+                    )
+            pending = []
+
+            # 用今日收盘价更新持仓市值
             self.portfolio.update_prices({symbol: current_price})
 
-            # 构建策略上下文
+            # 构建策略上下文（策略看到截至今日收盘的数据）
             context = StrategyContext(
                 symbol=symbol,
                 current_time=current_date,
@@ -103,25 +133,14 @@ class BacktestEngine:
                 total_value=self.portfolio.total_value
             )
 
-            # 生成信号
+            # 生成信号 → 挂起到下一 bar 开盘成交（本 bar 不成交）
             orders = strategy.generate_signals(context)
-
-            # 处理订单
-            for order in orders:
-                success = self.portfolio.process_order(order, current_price)
-                if success:
-                    action = "买入" if order.is_buy else "卖出"
-                    # 安全地格式化日期
-                    date_str = current_date.strftime('%Y-%m-%d') if hasattr(current_date, 'strftime') else str(current_date)
-                    logger.info(
-                        f"[{date_str}] "
-                        f"{action} {abs(order.quantity)} 股 @ {order.filled_price:.2f}, "
-                        f"现金: {self.portfolio.cash:.2f}, "
-                        f"总资产: {self.portfolio.total_value:.2f}"
-                    )
+            pending.extend(orders)
 
             # 记录权益曲线
             self.portfolio.record_equity(current_date)
+
+        # 回测最后一 bar 的挂单没有"次日开盘"可成交 → 丢弃（现实中同样无法执行）
 
         # 策略结束
         strategy.on_finish()

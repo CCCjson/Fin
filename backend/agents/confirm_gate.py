@@ -105,6 +105,8 @@ class ConfirmationGate:
                 pass
             if result.get("widget"):
                 yield emit(EV.WIDGET, widget=result["widget"])
+            if result.get("navigate"):
+                yield emit(EV.NAVIGATE, **result["navigate"])
             session.messages.append({
                 "role": "tool", "tool_call_id": pending.id,
                 "content": tool_msg_content(result["summary"])})

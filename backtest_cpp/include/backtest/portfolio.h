@@ -75,6 +75,12 @@ public:
      */
     void record_equity(const std::string& date);
 
+    /*
+     * settle_t1 — T+1 结算：把所有持仓的可卖数量（available）解冻为当前持有量。
+     * 每个交易日开盘时调用一次；当日买入的股票要到次日 settle 后才可卖出。
+     */
+    void settle_t1();
+
     // ── 查询方法（const = 不修改状态） ──
 
     double get_cash() const { return cash_; }

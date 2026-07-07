@@ -1,8 +1,10 @@
 """
 东方财富 A股实时行情获取器
 
-- 并发分页获取全市场 5000+ 只股票当日行情
+- 并发分页获取全市场 5000+ 只股票当日行情（多代理 IP 并行，直连时回退串行）
 - 自动代理切换（被限流后自动启用/切换代理）
+- 短 TTL 单飞缓存（fetch_a_share_realtime_cached），多消费方共享一次拉取
+- 腾讯/新浪批量接口兜底（东财失败或覆盖不足时自动补齐）
 - 支持大盘指数获取
 """
 
@@ -10,12 +12,18 @@ import math
 import random
 import threading
 import time
-from concurrent.futures import as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional, Dict, List, Any, Tuple
 
 import requests
 from loguru import logger
+
+# 全市场覆盖低于该数量时触发腾讯/新浪备源补齐
+FALLBACK_MIN_COVERAGE = 4500
+# 并发翻页配置
+CONCURRENT_POOL_SIZE = 3
+CONCURRENT_PAGE_WORKERS = 6
 
 
 # 东方财富实时行情字段映射
@@ -62,18 +70,9 @@ def _build_headers() -> Dict[str, str]:
 
 
 def _get_proxy_manager():
-    """延迟导入并创建 ProxyManager（避免循环依赖）"""
-    try:
-        import sys
-        from pathlib import Path
-        scripts_dir = str(Path(__file__).parent.parent.parent / "scripts")
-        if scripts_dir not in sys.path:
-            sys.path.insert(0, scripts_dir)
-        from proxy_manager import ProxyManager
-        return ProxyManager()
-    except Exception as e:
-        logger.debug(f"无法创建 ProxyManager: {e}")
-        return None
+    """延迟创建 ProxyManager（统一走 net 层）"""
+    from net import get_proxy_manager
+    return get_proxy_manager()
 
 
 def _parse_items(raw_items: list) -> List[Dict[str, Any]]:
@@ -92,18 +91,9 @@ def _parse_items(raw_items: list) -> List[Dict[str, Any]]:
 
 
 def _make_session(proxies: Optional[Dict[str, str]] = None) -> requests.Session:
-    """
-    创建绕过系统代理的 Session
-
-    系统可能配置了 Clash/V2Ray 等本地代理 (127.0.0.1:7897)，
-    并发请求时会压垮本地代理。用 trust_env=False 绕过，
-    只使用显式传入的代理。
-    """
-    session = requests.Session()
-    session.trust_env = False  # 忽略系统代理
-    if proxies:
-        session.proxies.update(proxies)
-    return session
+    """创建绕过系统代理的 Session（复用 net.make_domestic_session）。"""
+    from net import make_domestic_session
+    return make_domestic_session(proxies)
 
 
 def _fetch_one_page(
@@ -182,6 +172,130 @@ def _fetch_one_page(
     return [], 0
 
 
+def _dedupe_by_symbol(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按 symbol 去重，保留先出现的行"""
+    seen = set()
+    unique = []
+    for row in rows:
+        sym = row.get("symbol", "")
+        if sym and sym not in seen:
+            seen.add(sym)
+            unique.append(row)
+    return unique
+
+
+def _maybe_fill_from_fallback(unique_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """东财覆盖不足时用腾讯/新浪备源补齐缺口（东财行优先）"""
+    if len(unique_data) >= FALLBACK_MIN_COVERAGE:
+        return unique_data
+    try:
+        from data_engine.fetchers.china_batch_quotes import fetch_a_share_realtime_via_fallback
+        have = {r.get("symbol") for r in unique_data}
+        extra = fetch_a_share_realtime_via_fallback(exclude=have)
+        if extra:
+            logger.info(f"备源补齐 {len(extra)} 只（东财 {len(unique_data)} 只覆盖不足）")
+            unique_data = unique_data + extra
+    except Exception as e:
+        logger.warning(f"腾讯/新浪备源补齐失败: {e}")
+    return unique_data
+
+
+def _fetch_all_concurrent(
+    sort_field: str,
+    ascending: bool,
+    proxy_mgr,
+    report,
+    start_time: float,
+) -> List[Dict[str, Any]]:
+    """并发翻页模式：N 个代理 IP 并行拉页，每 IP 独立限速。
+
+    每 IP 请求节奏 ~0.15-1.0s（比旧串行版单 IP 连打 10 页还保守），
+    3 IP 并行 → 54 页约 5-8s（旧串行 ~30s）。
+    """
+    from net.proxy_pool import ProxyPool
+
+    pool = ProxyPool(size=CONCURRENT_POOL_SIZE, mgr=proxy_mgr,
+                     min_delay=0.15, max_delay=1.0)
+
+    def _fetch_page_via_pool(page: int, max_attempts: int = 2,
+                             retries: int = 0) -> Tuple[List[Dict[str, Any]], int]:
+        for _ in range(max_attempts):
+            slot = pool.acquire()
+            try:
+                slot.rate_limiter.wait()
+                items, total = _fetch_one_page(
+                    page, sort_field, ascending,
+                    slot.to_requests_proxies(), max_retries=retries,
+                )
+                if items:
+                    slot.rate_limiter.on_success()
+                    return items, total
+                slot.rate_limiter.on_failure(is_rate_limit=True)
+                pool.report_failure(slot)
+            finally:
+                pool.release(slot)
+        return [], 0
+
+    # ---- Step 1: 第 1 页确定 total ----
+    page1_items, total = _fetch_page_via_pool(1, max_attempts=3, retries=1)
+    if not page1_items:
+        logger.error("实时行情第 1 页获取失败（并发模式），转备源")
+        return _maybe_fill_from_fallback([])
+
+    items_per_page = len(page1_items)
+    total_pages = min(math.ceil(total / items_per_page), 80) if items_per_page > 0 else 1
+    logger.info(f"第 1 页: {items_per_page} 条, total={total}, 共 {total_pages} 页（并发模式）")
+    report(items_per_page, total, round(90 / total_pages))
+
+    if total_pages <= 1:
+        return _maybe_fill_from_fallback(page1_items)
+
+    # ---- Step 2: 并发拉剩余页 ----
+    all_data: List[Dict[str, Any]] = list(page1_items)
+    failed_pages: List[int] = []
+    lock = threading.Lock()
+    done_count = [1]
+
+    def _one_page(page: int) -> None:
+        items, _ = _fetch_page_via_pool(page, max_attempts=2)
+        with lock:
+            done_count[0] += 1
+            done = done_count[0]
+            if items:
+                all_data.extend(items)
+            else:
+                failed_pages.append(page)
+            fetched = len(all_data)
+        report(fetched, total, min(round(done * 95 / total_pages), 95))
+
+    with ThreadPoolExecutor(max_workers=CONCURRENT_PAGE_WORKERS,
+                            thread_name_prefix="rt-page") as ex:
+        list(ex.map(_one_page, range(2, total_pages + 1)))
+
+    # ---- Step 3: 失败页最后一轮重试 ----
+    still_failed = 0
+    if failed_pages:
+        logger.warning(f"{len(failed_pages)} 页失败，最后一轮重试...")
+        for i, page in enumerate(sorted(failed_pages)):
+            items, _ = _fetch_page_via_pool(page, max_attempts=2, retries=1)
+            if items:
+                all_data.extend(items)
+            else:
+                still_failed += 1
+            report(len(all_data), total, min(95 + round((i + 1) * 5 / len(failed_pages)), 100))
+    else:
+        report(len(all_data), total, 100)
+
+    unique_data = _dedupe_by_symbol(all_data)
+    elapsed = time.time() - start_time
+    logger.info(
+        f"实时行情获取完成(并发): {len(unique_data)} 条 "
+        f"(原始 {len(all_data)}, 预期 {total}, 失败页 {still_failed}, "
+        f"IP 使用 {pool.stats['ip_fetches']}, 耗时 {elapsed:.1f}s)"
+    )
+    return _maybe_fill_from_fallback(unique_data)
+
+
 def fetch_a_share_realtime(
     proxies: Optional[Dict[str, str]] = None,
     sort_field: str = "f3",
@@ -191,11 +305,10 @@ def fetch_a_share_realtime(
     """
     获取全部 A股实时行情（5000+ 只）
 
-    策略（串行 + 快代理轮换，绕过 Clash TUN）：
-    1. 通过快代理获取代理 IP
-    2. 串行逐页获取，每 10 页切换新代理 IP
-    3. 失败页收集后换代理重试
-    4. 合并、去重、返回
+    策略：
+    - 未显式传代理且配置了快代理 → 并发模式（多 IP 并行翻页，~5-8s）
+    - 显式传代理或直连 → 串行模式（旧行为，逐页 + 轮换）
+    - 覆盖不足/东财失败 → 腾讯/新浪备源自动补齐
 
     Args:
         proxies: 显式代理配置（可选，未传时自动通过快代理获取）
@@ -230,12 +343,19 @@ def fetch_a_share_realtime(
 
     # ---- 进度报告 ----
     _last_pct = [-1]
+    _pct_lock = threading.Lock()
 
     def _report(fetched: int, total_count: int, pct: int):
         pct = max(0, min(pct, 100))
-        if progress_callback and pct > _last_pct[0]:
+        with _pct_lock:
+            if not (progress_callback and pct > _last_pct[0]):
+                return
             _last_pct[0] = pct
-            progress_callback(fetched, total_count, pct, 100)
+        progress_callback(fetched, total_count, pct, 100)
+
+    # ---- 并发模式：未显式传代理且快代理可用 ----
+    if proxies is None and proxy_mgr is not None and getattr(proxy_mgr, "api_url", ""):
+        return _fetch_all_concurrent(sort_field, ascending, proxy_mgr, _report, start_time)
 
     # ---- Step 1: 拉第 1 页，确定 total ----
     cur_proxies = _get_fresh_proxy()
@@ -247,8 +367,8 @@ def fetch_a_share_realtime(
         page1_items, total = _fetch_one_page(1, sort_field, ascending, cur_proxies, max_retries=3)
 
     if not page1_items:
-        logger.error("实时行情第 1 页获取失败")
-        return []
+        logger.error("实时行情第 1 页获取失败，转备源")
+        return _maybe_fill_from_fallback([])
 
     items_per_page = len(page1_items)
     total_pages = min(math.ceil(total / items_per_page), 80) if items_per_page > 0 else 1
@@ -257,7 +377,7 @@ def fetch_a_share_realtime(
     _report(items_per_page, total, round(1 * 90 / total_pages))
 
     if total_pages <= 1:
-        return page1_items
+        return _maybe_fill_from_fallback(page1_items)
 
     # ---- Step 2: 串行逐页获取，失败立即换代理重试该页 ----
     all_data: List[Dict[str, Any]] = list(page1_items)
@@ -322,13 +442,7 @@ def fetch_a_share_realtime(
         _report(len(all_data), total, 100)
 
     # ---- Step 4: 按 symbol 去重 ----
-    seen = set()
-    unique_data = []
-    for row in all_data:
-        sym = row.get("symbol", "")
-        if sym and sym not in seen:
-            seen.add(sym)
-            unique_data.append(row)
+    unique_data = _dedupe_by_symbol(all_data)
 
     elapsed = time.time() - start_time
     logger.info(
@@ -337,7 +451,78 @@ def fetch_a_share_realtime(
         f"失败页 {len(failed_pages)}, 耗时 {elapsed:.1f}s)"
     )
 
-    return unique_data
+    return _maybe_fill_from_fallback(unique_data)
+
+
+# ======== 全市场行情短 TTL 单飞缓存 ========
+# 多消费方（/realtime 路由、价格预警监控、日线批量路径）共享一次全量拉取，
+# 避免 30s 轮询和页面刷新各自重复拉 5000+ 只。
+_QUOTE_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
+_QUOTE_CACHE_LOCK = threading.Lock()
+_QUOTE_FETCH_EVENT: Optional[threading.Event] = None
+
+
+def fetch_a_share_realtime_cached(
+    ttl: float = 20.0,
+    force: bool = False,
+    progress_callback: Optional[object] = None,
+) -> List[Dict[str, Any]]:
+    """带短 TTL 缓存的全市场实时行情（single-flight）。
+
+    - 缓存新鲜（< ttl 秒）→ 直接返回缓存副本，进度回调立即打满
+    - 缓存过期 → 第一个调用方真正拉取，其余并发调用方等待并复用结果
+    - force=True → 发起方强制重新拉取（等待中的跟随方仍复用最新缓存）
+
+    Returns:
+        行情列表副本（浅拷贝，调用方可自行排序，勿改行内 dict）
+    """
+    global _QUOTE_FETCH_EVENT
+
+    with _QUOTE_CACHE_LOCK:
+        fresh = (
+            _QUOTE_CACHE["data"] is not None
+            and time.time() - _QUOTE_CACHE["ts"] < ttl
+        )
+        if fresh and not force:
+            data = _QUOTE_CACHE["data"]
+            if progress_callback:
+                progress_callback(len(data), len(data), 100, 100)
+            return list(data)
+
+        if _QUOTE_FETCH_EVENT is None:
+            _QUOTE_FETCH_EVENT = threading.Event()
+            event = _QUOTE_FETCH_EVENT
+            leader = True
+        else:
+            event = _QUOTE_FETCH_EVENT
+            leader = False
+
+    if leader:
+        data: List[Dict[str, Any]] = []
+        try:
+            data = fetch_a_share_realtime(progress_callback=progress_callback)
+            if data:
+                with _QUOTE_CACHE_LOCK:
+                    _QUOTE_CACHE["data"] = data
+                    _QUOTE_CACHE["ts"] = time.time()
+        finally:
+            with _QUOTE_CACHE_LOCK:
+                _QUOTE_FETCH_EVENT = None
+            event.set()
+        if data:
+            return list(data)
+        # 本次拉取失败 → 退回旧缓存（可能过期，聊胜于无）
+        with _QUOTE_CACHE_LOCK:
+            stale = _QUOTE_CACHE["data"]
+        return list(stale) if stale else []
+
+    # 跟随方：等发起方完成后复用缓存
+    event.wait(timeout=120)
+    with _QUOTE_CACHE_LOCK:
+        data = _QUOTE_CACHE["data"]
+    if progress_callback and data:
+        progress_callback(len(data), len(data), 100, 100)
+    return list(data) if data else []
 
 
 def fetch_index_realtime(
@@ -453,7 +638,7 @@ def fetch_quotes_by_symbols(symbols: List[str], max_rounds: int = 3) -> List[Dic
     params = {
         "fltt": 2,
         "invt": 2,
-        "fields": "f2,f3,f4,f5,f6,f12,f13,f14,f15,f16,f17,f18",
+        "fields": "f2,f3,f4,f5,f6,f7,f8,f12,f13,f14,f15,f16,f17,f18",
         "secids": ",".join(secid_map.keys()),
         "ut": "bd1d9ddb04089700cf9c27f6f7426281",
         "_": str(int(time.time() * 1000)),
@@ -501,6 +686,9 @@ def fetch_quotes_by_symbols(symbols: List[str], max_rounds: int = 3) -> List[Dic
                     "open": _num(it.get("f17"), float, 0),
                     "high": _num(it.get("f15"), float, 0),
                     "low": _num(it.get("f16"), float, 0),
+                    "prev_close": _num(it.get("f18")),
+                    "amplitude": _num(it.get("f7")),
+                    "turnover": _num(it.get("f8")),
                     "timestamp": datetime.now().isoformat(),
                     "is_index": _looks_like_index(symbol),
                 })
@@ -540,4 +728,18 @@ def _fetch_nasdaq() -> Optional[Dict[str, Any]]:
         "change_pct": change_pct,
         "change_amount": change_amount,
         "amount": None,
+    }
+
+
+def compute_statistics(quotes: list) -> dict:
+    """计算全市场涨跌统计（涨/跌/平/涨停/跌停家数）"""
+    up = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] > 0)
+    down = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] < 0)
+    flat = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] == 0)
+    limit_up = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] >= 9.9)
+    limit_down = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] <= -9.9)
+    return {
+        "total": len(quotes),
+        "up": up, "down": down, "flat": flat,
+        "limit_up": limit_up, "limit_down": limit_down,
     }

@@ -133,7 +133,7 @@ def get_recent_news_conclusions(symbol: str = "", limit: int = 5) -> ToolEnvelop
     try:
         query = session.query(NewsAnalysis)
         if symbol:
-            query = query.filter(NewsAnalysis.symbol == symbol.split(".")[0])
+            query = query.filter(NewsAnalysis.symbol == symbol)
         else:
             query = query.filter(NewsAnalysis.symbol.is_(None))
         rows = (

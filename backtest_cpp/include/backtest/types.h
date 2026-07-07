@@ -190,6 +190,7 @@ struct Fill {
 struct Position {
     std::string symbol;             // 股票代码
     int quantity = 0;               // 持有数量
+    int available = 0;              // 可卖数量（A股 T+1：当日买入不可卖，次日开盘 settle_t1() 解冻）
     double avg_cost = 0.0;          // 平均成本价
     double current_price = 0.0;     // 当前市场价格
 

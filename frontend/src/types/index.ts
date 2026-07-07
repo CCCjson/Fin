@@ -23,6 +23,7 @@ export interface Account {
 
 export interface Position {
   symbol: string;
+  name?: string;
   quantity: number;
   available_quantity: number;
   avg_cost: number;

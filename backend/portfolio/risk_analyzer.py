@@ -109,8 +109,9 @@ class PortfolioRiskAnalyzer:
         """计算组合相对沪深300的 Beta"""
         try:
             import akshare as ak
-            # 获取沪深300日线
-            index_df = ak.stock_zh_index_daily_em(symbol="sh000300")
+            from net import domestic_akshare
+            # 获取沪深300日线（统一网络层）
+            index_df = domestic_akshare(ak.stock_zh_index_daily_em, symbol="sh000300")
             index_df["date"] = pd.to_datetime(index_df["date"]).dt.date
             index_df = index_df[(index_df["date"] >= start_date) & (index_df["date"] <= as_of_date)]
             index_df = index_df.sort_values("date").set_index("date")
@@ -171,9 +172,10 @@ class PortfolioRiskAnalyzer:
             if not industry:
                 try:
                     import akshare as ak
+                    from net import domestic_akshare
                     # 只取A股代码的纯数字部分
                     code = sym.split(".")[0] if "." in sym else sym
-                    info_df = ak.stock_individual_info_em(symbol=code)
+                    info_df = domestic_akshare(ak.stock_individual_info_em, symbol=code)
                     if info_df is not None and not info_df.empty:
                         # info_df 格式: item / value
                         info_dict = dict(zip(info_df["item"], info_df["value"]))

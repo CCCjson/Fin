@@ -76,15 +76,18 @@ class KnowledgeScheduler:
                 for j in self._scheduler.get_jobs()]
 
     async def _ingest_job(self):
-        """定时摄入：慢任务丢线程池，绝不阻塞事件循环。只摄入，不回测。"""
-        from knowledge_engine.ingest.web_source import ingest_papers
-        queries = get_search_queries()
-        if not queries:
-            return
+        """定时摄入：慢任务丢线程池，绝不阻塞事件循环。只摄入，不回测。
+
+        2026-07 起改走 arxiv_source.ingest_arxiv_papers（官方API，按 q-fin.* 分类
+        +提交日期过滤，比原先 DDG 搜"site:arxiv.org"精准得多）。KNOWLEDGE_SEARCH_QUERIES
+        沿用作为叠加关键词过滤（留空则只按默认分类拉全部，不强制要求非空）。
+        """
+        from knowledge_engine.ingest.arxiv_source import ingest_arxiv_papers
+        keywords = get_search_queries() or None
         loop = asyncio.get_event_loop()
         try:
             result = await loop.run_in_executor(
-                None, lambda: ingest_papers(queries, max_docs=get_sched_max_docs())
+                None, lambda: ingest_arxiv_papers(keywords=keywords, max_results=get_sched_max_docs())
             )
             logger.info(f"定时摄入完成: {result}")
         except Exception as e:  # noqa: BLE001

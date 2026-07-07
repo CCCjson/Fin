@@ -5,14 +5,13 @@
   技术面 / 基本面 / 新闻情感 / ML 预测 / 持仓风险
 所有重操作（collect / predict）放线程池由路由层调度；本模块同步实现。
 """
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Optional, List
 
 from loguru import logger
 
 from advisor_engine.context_collector import AdvisorContextCollector
 from data_engine.storage.database import get_session
-from data_engine.storage.models import NewsArticle, NewsSentiment
 from data_engine.storage.repository import FinancialRepository, ValuationRepository
 from portfolio.calculator import PortfolioCalculator
 from cockpit_engine.scorer import score_cockpit
@@ -179,42 +178,23 @@ class CockpitAggregator:
 
     @staticmethod
     def _score_sentiment(symbol: str, days: int = 7) -> (Optional[float], Dict):
-        """新闻情感：近 N 日新闻的 positive/negative 净占比"""
-        raw_symbol = symbol.split(".")[0]
-        since = datetime.now() - timedelta(days=days)
-        session = get_session()
-        try:
-            rows = (
-                session.query(NewsArticle, NewsSentiment)
-                .outerjoin(NewsSentiment, NewsArticle.article_id == NewsSentiment.article_id)
-                .filter(NewsArticle.symbol == raw_symbol)
-                .filter(NewsArticle.published_at >= since)
-                .all()
-            )
-        except Exception:
-            logger.debug(f"新闻情感查询失败: {symbol}")
-            return None, {"available": False}
-        finally:
-            session.close()
+        """新闻情感：实时抓取近 N 日新闻做 BERT 情绪聚合（无状态，不入库）。
 
-        pos = neg = neu = 0
-        for _, sent in rows:
-            if not sent or not sent.sentiment:
-                continue
-            s = sent.sentiment.lower()
-            if s == "positive":
-                pos += 1
-            elif s == "negative":
-                neg += 1
-            else:
-                neu += 1
-        total = pos + neg + neu
-        if total == 0:
-            return None, {"available": False, "article_count": len(rows)}
-        score = 50 + 50 * (pos - neg) / total
-        detail = {"available": True, "positive": pos, "negative": neg,
-                  "neutral": neu, "total": total, "days": days}
-        return round(_clamp(score, 0, 100), 1), detail
+        复用 news_engine.realtime.get_realtime_sentiment，口径与其一致：
+        score = 50 + 50*(pos-neg)/total。抓不到/无新闻则 available=False，
+        由 scorer 走缺失维度归一化。market 按 symbol 后缀自动推断（A股/港股/美股），
+        避免港美股被误路由到 A 股新闻源。
+        """
+        from news_engine.realtime import get_realtime_sentiment
+        from news_engine.news_scheduler import _infer_market
+
+        r = get_realtime_sentiment(symbol, days=days, market=_infer_market(symbol))
+        if not r.get("available"):
+            return None, {"available": False, "reason": r.get("reason"),
+                          "article_count": r.get("article_count", 0)}
+        detail = {"available": True, "positive": r["positive"], "negative": r["negative"],
+                  "neutral": r["neutral"], "total": r["total"], "days": days}
+        return r["score"], detail
 
     @staticmethod
     def _score_ml(symbol: str) -> (Optional[float], Dict):
@@ -277,8 +257,15 @@ class CockpitAggregator:
 
     # ---------- 主入口 ----------
 
-    def aggregate(self, symbol: str) -> Dict:
-        """聚合单只股票的五维分 + 综合建议（同步，调用方应放线程池）"""
+    def aggregate(self, symbol: str, light: bool = False) -> Dict:
+        """聚合单只股票的五维分 + 综合建议（同步，调用方应放线程池）。
+
+        Args:
+            symbol: 股票代码
+            light: 轻量档。跳过最慢的「新闻情感 + ML」两维（走网络/推理），
+                只用技术+基本面+持仓三维，scorer 会对缺失维度自动重新归一化权重。
+                批量选股(recommend_stocks)用它把单只耗时从 ~30s 降到亚秒级。
+        """
         ctx = self._collector.collect(symbol, enable_web_search=False)
         name = ctx.get("name") or symbol
         price_data = ctx.get("price_data") or {}
@@ -302,8 +289,12 @@ class CockpitAggregator:
         finally:
             session.close()
 
-        senti_score, senti_detail = self._score_sentiment(symbol)
-        ml_score, ml_detail = self._score_ml(symbol)
+        if light:
+            senti_score, senti_detail = None, {"skipped": "light 档跳过新闻情感"}
+            ml_score, ml_detail = None, {"skipped": "light 档跳过 ML 预测"}
+        else:
+            senti_score, senti_detail = self._score_sentiment(symbol)
+            ml_score, ml_detail = self._score_ml(symbol)
         pos_score, pos_detail = self._score_position(symbol, latest_price)
 
         dimensions = {

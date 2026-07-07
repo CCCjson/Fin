@@ -23,12 +23,17 @@ from loguru import logger
 
 from data_engine.storage.history_repository import HistoryRepository
 
-router = APIRouter(prefix="/backtest_cpp", tags=["C++回测引擎"])
+from services.backtest_cpp_client import (
+    BATCH_TIMEOUT,
+    CPP_SERVICE_URL,
+    TIMEOUT,
+    proxy as _proxy,
+    proxy_sync as _proxy_sync,
+    run_single_backtest as _run_single_backtest_sync,
+    safe_float as _safe_float,
+)
 
-# C++ 回测服务地址
-CPP_SERVICE_URL = "http://localhost:8002"
-TIMEOUT = 10.0
-BATCH_TIMEOUT = 60.0  # 批量模式超时更长（C++ 服务可能排队）
+router = APIRouter(prefix="/backtest_cpp", tags=["C++回测引擎"])
 
 
 # ── 请求模型 ──
@@ -54,55 +59,6 @@ class BacktestRunRequest(BaseModel):
     risk_config: Optional[RiskConfigModel] = Field(default=None, description="风控配置")
 
 
-# ── 代理工具函数（同步 requests，在线程池中运行，不受事件循环阻塞影响） ──
-
-def _proxy_sync(method: str, path: str, body: dict = None, timeout: float = None) -> dict:
-    """转发请求到 C++ 服务（同步版本，运行在线程池）"""
-    url = f"{CPP_SERVICE_URL}{path}"
-    _timeout = timeout or TIMEOUT
-    try:
-        if method == "GET":
-            resp = requests.get(url, timeout=_timeout)
-        elif method == "POST":
-            resp = requests.post(url, json=body or {}, timeout=_timeout)
-        else:
-            raise ValueError(f"Unsupported method: {method}")
-
-        if resp.status_code >= 400:
-            try:
-                detail = resp.json().get("error", resp.text)
-            except Exception:
-                detail = resp.text or f"C++ 服务返回 {resp.status_code}"
-            raise HTTPException(status_code=resp.status_code, detail=detail)
-
-        return resp.json()
-    except requests.ConnectionError:
-        raise HTTPException(
-            status_code=503,
-            detail="C++ 回测服务未启动。请先运行: cd backtest_cpp/build && ./backtest_server"
-        )
-    except requests.Timeout:
-        raise HTTPException(status_code=504, detail="C++ 回测服务响应超时")
-
-
-async def _proxy(method: str, path: str, body: dict = None) -> dict:
-    """转发请求到 C++ 服务（线程池隔离，不受事件循环阻塞影响）"""
-    return await asyncio.to_thread(_proxy_sync, method, path, body)
-
-
-def _safe_float(val, default=0.0):
-    """将 None / NaN / Infinity / 垃圾浮点数转为安全值"""
-    if val is None:
-        return default
-    try:
-        f = float(val)
-        if math.isnan(f) or math.isinf(f) or abs(f) > 1e12:
-            return default
-        return f
-    except (TypeError, ValueError):
-        return default
-
-
 # ── API 端点 ──
 
 @router.get("/strategies")
@@ -115,7 +71,9 @@ async def get_strategies():
 @router.post("/run")
 async def run_backtest(req: BacktestRunRequest):
     """运行 C++ 回测"""
+    from common.market import to_cpp_market
     body = req.model_dump(exclude_none=True)
+    body["market"] = to_cpp_market(body.get("market"))  # canonical → C++ wire(us/hk/a_share)
 
     # 如果前端没有传 bars，从 DataEngine 获取数据（在线程池中运行，避免阻塞事件循环）
     if not body.get("bars"):
@@ -198,7 +156,9 @@ async def run_and_save(req: BacktestRunAndSaveRequest):
         repo.update_backtest_status(task_id, "running")
 
         # 3. 准备回测请求体
+        from common.market import to_cpp_market
         body = req.model_dump(exclude={"name", "symbol2"}, exclude_none=True)
+        body["market"] = to_cpp_market(body.get("market"))  # canonical → C++ wire(us/hk/a_share)
 
         # 获取主股票的 K 线数据
         if not body.get("bars"):
@@ -301,12 +261,24 @@ async def run_and_save(req: BacktestRunAndSaveRequest):
                 "daily_return": eq.get("daily_return", 0),
             })
 
-        # 转换交易记录
+        # 转换交易记录（顺带批量补充股票名称）
+        from data_engine.storage.database import get_session
+        from data_engine.storage.repository import get_stock_names
+
+        raw_trades = cpp_result.get("trades", [])
+        _session = get_session()
+        try:
+            _names = get_stock_names(_session, [t.get("symbol", req.symbol) for t in raw_trades])
+        finally:
+            _session.close()
+
         trade_records = []
-        for t in cpp_result.get("trades", []):
+        for t in raw_trades:
+            sym = t.get("symbol", req.symbol)
             trade_records.append({
                 "date": t.get("date", ""),
-                "symbol": t.get("symbol", req.symbol),
+                "symbol": sym,
+                "name": _names.get(sym, sym),
                 "action": t.get("side", ""),
                 "quantity": t.get("quantity", 0),
                 "price": t.get("price", 0),
@@ -351,7 +323,8 @@ async def run_and_save(req: BacktestRunAndSaveRequest):
             if task_obj:
                 import json as json_mod
                 params = json_mod.loads(task_obj.strategy_params) if task_obj.strategy_params else {}
-                params["market"] = req.market
+                from common.market import normalize_market
+                params["market"] = normalize_market(req.market)  # 落库统一存 canonical
                 task_obj.strategy_params = json_mod.dumps(params, ensure_ascii=False)
                 repo.session.commit()
         except Exception as e:
@@ -475,196 +448,6 @@ def _expand_batch_tasks(req: BatchBacktestRequest) -> List[Dict[str, Any]]:
         raise HTTPException(status_code=400, detail="展开后无子任务")
 
     return tasks
-
-
-def _run_single_backtest_sync(
-    symbol: str,
-    strategy: str,
-    params: Dict[str, Any],
-    start_date: str,
-    end_date: str,
-    initial_capital: float,
-    market: str,
-    batch_id: str,
-    task_label: str,
-) -> Dict[str, Any]:
-    """线程安全的单次回测（复用 run_and_save 核心逻辑）"""
-    task_id = f"cpp_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    repo = HistoryRepository()
-    try:
-        strategy_type = f"CPP_{strategy}"
-        repo.save_backtest_task(
-            task_id=task_id,
-            name=f"[Batch] {strategy} {symbol} {task_label}",
-            strategy_type=strategy_type,
-            symbols=[symbol],
-            start_date=datetime.strptime(start_date, '%Y-%m-%d').date(),
-            end_date=datetime.strptime(end_date, '%Y-%m-%d').date(),
-            initial_capital=initial_capital,
-            strategy_params=params,
-        )
-        # 标记 batch_id
-        from data_engine.storage.models import BacktestTask as _BT
-        task_obj = repo.session.query(_BT).filter(_BT.task_id == task_id).first()
-        if task_obj:
-            task_obj.batch_id = batch_id
-            repo.session.commit()
-
-        repo.update_backtest_status(task_id, "running")
-
-        # 获取 K 线数据
-        from data_engine import DataEngine
-        de = DataEngine()
-        df = de.get_daily_data(symbol, start_date=start_date, end_date=end_date)
-        bars = []
-        if df is not None and not df.empty:
-            for _, row in df.iterrows():
-                bars.append({
-                    "date": str(row.get("date", row.name))[:10],
-                    "open": float(row["open"]),
-                    "high": float(row["high"]),
-                    "low": float(row["low"]),
-                    "close": float(row["close"]),
-                    "volume": float(row.get("volume", 0)),
-                })
-
-        body = {
-            "symbol": symbol,
-            "strategy": strategy,
-            "params": params,
-            "bars": bars,
-            "initial_capital": initial_capital,
-            "market": market,
-            "start_date": start_date,
-            "end_date": end_date,
-        }
-
-        # 调用 C++ 服务（同步，批量模式用更长超时）
-        cpp_result = _proxy_sync("POST", "/api/backtest/run", body, timeout=BATCH_TIMEOUT)
-
-        # 映射指标（_safe_float 防止 None/NaN/Infinity/垃圾值）
-        cpp_metrics = cpp_result.get("metrics", {})
-        final_val = _safe_float(cpp_metrics.get("final_value"), initial_capital)
-        total_return = final_val - initial_capital
-        total_return_pct = _safe_float(cpp_metrics.get("total_return")) * 100
-        annual_return = _safe_float(cpp_metrics.get("annualized_return")) * 100
-
-        metrics = {
-            "total_return": total_return,
-            "total_return_pct": total_return_pct,
-            "annual_return": annual_return,
-            "final_value": final_val,
-            "max_drawdown": _safe_float(cpp_metrics.get("max_drawdown_amount")),
-            "max_drawdown_pct": _safe_float(cpp_metrics.get("max_drawdown")) * 100,
-            "volatility": _safe_float(cpp_metrics.get("volatility")),
-            "sharpe_ratio": _safe_float(cpp_metrics.get("sharpe_ratio")),
-            "sortino_ratio": _safe_float(cpp_metrics.get("sortino_ratio")),
-            "total_trades": int(_safe_float(cpp_metrics.get("total_trades"))),
-            "winning_trades": int(_safe_float(cpp_metrics.get("winning_trades"))),
-            "losing_trades": int(_safe_float(cpp_metrics.get("losing_trades"))),
-            "win_rate": _safe_float(cpp_metrics.get("win_rate")) * 100,
-            "profit_factor": _safe_float(cpp_metrics.get("profit_factor")),
-            "total_commission": _safe_float(cpp_metrics.get("total_commission")),
-            "total_slippage": _safe_float(cpp_metrics.get("total_slippage")),
-        }
-
-        daily_records = [
-            {
-                "date": eq.get("date", ""),
-                "total_value": eq.get("total_value", 0),
-                "cash": eq.get("cash", 0),
-                "market_value": eq.get("market_value", 0),
-                "daily_return": eq.get("daily_return", 0),
-            }
-            for eq in cpp_result.get("equity_curve", [])
-        ]
-        trade_records = [
-            {
-                "date": t.get("date", ""),
-                "symbol": t.get("symbol", symbol),
-                "action": t.get("side", ""),
-                "quantity": t.get("quantity", 0),
-                "price": t.get("price", 0),
-                "commission": t.get("commission", 0),
-                "slippage": t.get("slippage", 0),
-                "amount": t.get("price", 0) * t.get("quantity", 0),
-                "reason": t.get("reason", "signal"),
-            }
-            for t in cpp_result.get("trades", [])
-        ]
-
-        # 保存 market 到 strategy_params
-        try:
-            task_obj = repo.session.query(_BT).filter(_BT.task_id == task_id).first()
-            if task_obj:
-                sp = json.loads(task_obj.strategy_params) if task_obj.strategy_params else {}
-                sp["market"] = market
-                task_obj.strategy_params = json.dumps(sp, ensure_ascii=False)
-                repo.session.commit()
-        except Exception:
-            pass
-
-        repo.save_backtest_result(
-            task_id=task_id,
-            metrics=metrics,
-            daily_records=daily_records,
-            trade_records=trade_records,
-        )
-        repo.update_backtest_status(task_id, "completed")
-        repo.close()
-
-        return {
-            "task_id": task_id,
-            "symbol": symbol,
-            "strategy": strategy,
-            "params": params,
-            "label": task_label,
-            "metrics": metrics,
-            "status": "completed",
-        }
-
-    except Exception as e:
-        try:
-            repo.update_backtest_status(task_id, "failed", str(e))
-            repo.close()
-        except Exception:
-            pass
-        logger.warning(f"[Batch] 子任务失败 {symbol}/{strategy}: {e}")
-        return {
-            "task_id": task_id,
-            "symbol": symbol,
-            "strategy": strategy,
-            "params": params,
-            "label": task_label,
-            "metrics": None,
-            "status": "failed",
-            "error": str(e),
-        }
-
-
-def _build_ranking(results: List[Dict], mode: str) -> List[Dict]:
-    """按 sharpe_ratio 降序构建排行榜"""
-    completed = [r for r in results if r.get("status") == "completed" and r.get("metrics")]
-    completed.sort(key=lambda x: _safe_float(x["metrics"].get("sharpe_ratio"), -999), reverse=True)
-    ranking = []
-    for rank, r in enumerate(completed, 1):
-        m = r["metrics"]
-        ranking.append({
-            "rank": rank,
-            "task_id": r["task_id"],
-            "symbol": r.get("symbol", ""),
-            "strategy": r.get("strategy", ""),
-            "params": r.get("params", {}),
-            "label": r.get("label", ""),
-            "total_return_pct": round(_safe_float(m.get("total_return_pct")), 2),
-            "annual_return": round(_safe_float(m.get("annual_return")), 2),
-            "sharpe_ratio": round(_safe_float(m.get("sharpe_ratio")), 4),
-            "max_drawdown_pct": round(_safe_float(m.get("max_drawdown_pct")), 2),
-            "win_rate": round(_safe_float(m.get("win_rate")), 2),
-            "profit_factor": round(_safe_float(m.get("profit_factor")), 2),
-            "total_trades": int(_safe_float(m.get("total_trades"))),
-        })
-    return ranking
 
 
 @router.post("/batch")

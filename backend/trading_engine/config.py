@@ -1,17 +1,20 @@
 """
 交易引擎配置
-"""
 
-# OpenCTP 7x24 测试环境配置
+凭证一律从环境变量读取（.env），不得硬编码进仓库。
+"""
+import os
+
+# OpenCTP 7x24 测试环境配置（账号/密码从 .env 读取：OPENCTP_USER_ID / OPENCTP_PASSWORD）
 OPENCTP_CONFIG = {
     # 经纪商配置
-    "broker_id": "9999",  # SimNow 经纪商代码
-    "user_id": "254987",  # 你的账号
-    "password": "Chenjinsheng0828!",  # SimNow 交易密码
+    "broker_id": os.getenv("OPENCTP_BROKER_ID", "9999"),  # SimNow 经纪商代码
+    "user_id": os.getenv("OPENCTP_USER_ID", ""),
+    "password": os.getenv("OPENCTP_PASSWORD", ""),
 
     # 认证信息
-    "app_id": "simnow_client_test",  # 应用ID
-    "auth_code": "0000000000000000",  # 授权码
+    "app_id": os.getenv("OPENCTP_APP_ID", "simnow_client_test"),
+    "auth_code": os.getenv("OPENCTP_AUTH_CODE", "0000000000000000"),
 
     # 服务器地址（7x24 测试环境 - 电信线路）
     "md_address": "tcp://180.168.146.187:10131",  # 行情服务器

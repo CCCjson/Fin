@@ -304,8 +304,8 @@ export const BatchBacktestForm: React.FC<Props> = ({ onSubmit, loading, error })
           <label className="block text-xs text-gray-400 mb-1">市场</label>
           <select value={market} onChange={e => setMarket(e.target.value)} className="form-input">
             <option value="a_share">A股</option>
-            <option value="us">美股</option>
-            <option value="hk">港股</option>
+            <option value="us_stock">美股</option>
+            <option value="hk_stock">港股</option>
           </select>
         </div>
         <div>

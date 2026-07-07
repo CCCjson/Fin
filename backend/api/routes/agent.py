@@ -1,12 +1,13 @@
 """
 MoneyBill multi-agent API —— 全局聊天主入口（流式 NDJSON）。
 
-桥接模式照搬 advisor.py：同步 Generator(orchestrator) + thread/queue → async StreamingResponse。
+桥接模式：同步 Generator(orchestrator) + thread/queue → async StreamingResponse。
 """
 import asyncio
 import json
 import queue
 import threading
+import time
 from typing import Optional
 
 from fastapi import APIRouter
@@ -18,6 +19,8 @@ from agents.orchestrator import MonitorOrchestrator
 from agents.context import STORE
 
 router = APIRouter(prefix="/agent", tags=["MoneyBill"])
+
+HEARTBEAT_INTERVAL_S = 12.0  # 队列空转超过这么久没吐过东西，插一次心跳防连接被误判空闲
 
 _orchestrator = MonitorOrchestrator()
 
@@ -104,31 +107,50 @@ async def agent_chat(request: AgentChatRequest):
 
     async def _streaming():
         # 只负责从 queue 消费并 yield，不再承担驱动线程生命周期的职责。
+        completed = False  # True = 队列给出了终结项（哨兵/异常），本轮是自然结束，不是被砍断
+        last_yield = time.monotonic()
         try:
             if created:
                 yield _ndjson({"event": "session_created",
                                "session_id": session.session_id})
+                last_yield = time.monotonic()
                 await asyncio.sleep(0)
             while True:
                 try:
                     item = chunk_queue.get_nowait()
                 except queue.Empty:
+                    # 慢工具调用（比如 recommend_stocks 撞上代理重试/DB 锁竞争跑到几十秒）
+                    # 期间队列一直空，NDJSON 流会持续零字节输出——浏览器/WKWebView 的网络栈
+                    # 会把这种"看着活着但一直不出声"的连接判定为空闲失活，主动掐断 TCP
+                    # （前端表现为 fetch 抛 "Load failed"）。定期吐一行无害心跳，让连接
+                    # 一直有动静，扛住任意时长的慢工具调用。前端未识别的 event 类型会被
+                    # useAgentChat 的 switch default 安静吃掉，不用改前端。
+                    if time.monotonic() - last_yield >= HEARTBEAT_INTERVAL_S:
+                        yield _ndjson({"event": "heartbeat"})
+                        last_yield = time.monotonic()
                     await asyncio.sleep(0.03)
                     continue
                 if item is _SENTINEL:
+                    completed = True
                     break
                 if isinstance(item, Exception):
+                    completed = True  # drain 内部报错也是本轮自己跑完了，不是客户端断开
                     raise item
                 yield item
+                last_yield = time.monotonic()
                 await asyncio.sleep(0)
         except Exception as e:  # noqa: BLE001
             logger.error(f"MoneyBill chat 流式异常: {e}")
             yield _ndjson({"event": "error", "message": str(e)})
         finally:
-            # 客户端断开（本 async 生成器被取消）或正常结束都会走到这里：
-            # 置协作取消位，orchestrator 在下一轮轮首会停止，不再白烧 token。
+            # 只有真·客户端断开（本 async 生成器被 GeneratorExit/CancelledError 取消、
+            # 队列还没吐出哨兵/异常）才置协作取消位。正常结束（含 drain 内部报错这种
+            # "自然走完"）不再碰 cancel_event——否则会跟下一轮 turn 在锁释放窗口里
+            # 撞车：A 的 finally 比 B 的 clear() 晚到，把 B 的取消位错误置位，导致 B
+            # 在轮首检查时被误判为该停，回复被静默截断。
             # 放锁不在这里——由 _drain 线程 finally 独占负责，避免双重释放。
-            session.cancel_event.set()
+            if not completed:
+                session.cancel_event.set()
 
     return StreamingResponse(
         _streaming(),

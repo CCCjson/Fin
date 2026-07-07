@@ -8,6 +8,7 @@
 #include "backtest/engine.h"
 #include "backtest/strategy_context.h"
 #include <algorithm>   // std::find_if
+#include <iostream>    // std::cerr
 #include <stdexcept>   // std::runtime_error
 
 namespace backtest {
@@ -107,18 +108,55 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
     RiskManager risk_mgr(risk_config_);
 
     // ── Step 5: 逐 bar 循环 ──
+    /*
+     * 【真实成交模型】信号在 bar i 收盘产生，成交推迟到 bar i+1 开盘（next-bar-open）：
+     *   杜绝"当日收盘出信号、又按当日收盘价成交"的未来函数（look-ahead bias）；
+     *   并配合 settle_t1() 强制 A 股 T+1（当日买入次日才可卖）。
+     * pending：上一 bar 产生、等待本 bar 开盘成交的订单（策略单与止损单共用）。
+     */
     std::vector<Bar> history;
+    std::vector<Order> pending;
 
     for (int i = start_idx; i <= end_idx; ++i) {
         const Bar& bar = bars_[i];
 
-        // (a) 更新持仓的当前价格（用今天的收盘价）
+        // (a0) T+1 结算：昨日及更早买入的持仓，在今日开盘解冻为可卖
+        portfolio.settle_t1();
+
+        // (a1) 先按【今日开盘价】执行上一 bar 挂起的订单
+        for (auto& order : pending) {
+            // 买单仓位上限必须用实际成交价（今日开盘价）+ 成交前最新总资产重新核验，
+            // 而不是信号产生时（上一 bar 收盘）的价格——否则隔夜跳空高开会让实际
+            // 成交仓位击穿 max_position_pct（single-stock cap）。
+            if (risk_mgr.is_enabled() && order.side == Side::BUY) {
+                int adjusted = risk_mgr.filter_buy_quantity(
+                    order.quantity, bar.open, portfolio.get_total_value());
+                if (adjusted <= 0) continue;  // 开盘价下已超仓位上限，拒绝成交
+                order.quantity = adjusted;
+            }
+            auto fill = portfolio.execute_order(order, bar.open, bar.date);
+            if (fill) {
+                // 止损单（order_id 以 "RISK_" 开头）标注成交原因
+                if (order.order_id.rfind("RISK_", 0) == 0) {
+                    std::string reason = order.order_id.length() > 5
+                        ? order.order_id.substr(5) : "stop_loss";
+                    portfolio.set_last_fill_reason(reason);
+                }
+                // 卖光后重置止损追踪
+                if (order.side == Side::SELL && !portfolio.has_position(symbol_)) {
+                    risk_mgr.reset_tracking(symbol_);
+                }
+            }
+        }
+        pending.clear();
+
+        // (b) 用今日收盘价标记持仓市值
         portfolio.update_price(symbol_, bar.close);
 
-        // (b) 把当前 bar 加入历史
+        // (c) 把当前 bar 加入历史
         history.push_back(bar);
 
-        // (c) 构建策略上下文
+        // (d) 构建策略上下文
         StrategyContext ctx;
         ctx.symbol = symbol_;
         ctx.bar_index = i - start_idx;
@@ -129,59 +167,44 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
         ctx.position_avg_price = portfolio.get_position_avg_price(symbol_);
         ctx.total_value = portfolio.get_total_value();
 
-        // (d) 风控检查：是否触发止损（在策略决策之前）
+        // (e) 风控：止损检查（用今日收盘价判定）→ 触发则挂到下一 bar 开盘成交
         auto risk_orders = risk_mgr.check_stop_loss(
             symbol_, bar.close, ctx.position_quantity,
             ctx.position_avg_price, ctx.total_value);
 
         if (!risk_orders.empty()) {
-            // 强制止损，执行风控订单
             for (auto& order : risk_orders) {
-                auto fill = portfolio.execute_order(order, bar.close, bar.date);
-                if (fill) {
-                    // order_id = "RISK_stop_loss" or "RISK_trailing_stop"
-                    std::string reason = order.order_id.length() > 5
-                        ? order.order_id.substr(5) : "stop_loss";
-                    portfolio.set_last_fill_reason(reason);
-                }
+                order.symbol = symbol_;
+                pending.push_back(order);
             }
-            risk_mgr.reset_tracking(symbol_);
-            // 止损后跳过策略决策，直接记录净值
+            // 止损触发后跳过本 bar 策略决策，直接记录净值
             portfolio.record_equity(bar.date);
             continue;
         }
 
-        // (e) 调用策略的 on_bar() 方法
+        // (f) 调用策略 on_bar() 获取订单
         auto orders = strategy_->on_bar(ctx);
 
-        // (f) 执行所有订单（风控过滤买入量）
+        // (g) 订单不在本 bar 成交，挂起到下一 bar 开盘（买入仓位上限在 (a1) 用实际
+        // 成交价重新核验，这里不再用今日收盘价预判——预判用的价与实际成交价不同，
+        // 判断结果没有意义）
         for (auto& order : orders) {
             order.symbol = symbol_;
-
-            // 风控：限制买入仓位
-            if (risk_mgr.is_enabled() && order.side == Side::BUY) {
-                int adjusted = risk_mgr.filter_buy_quantity(
-                    order.quantity, bar.close, portfolio.get_total_value());
-                if (adjusted <= 0) continue;  // 拒绝买入
-                order.quantity = adjusted;
-            }
-
-            auto fill = portfolio.execute_order(order, bar.close, bar.date);
-
-            // 买入后开始追踪止损
-            if (fill && order.side == Side::BUY && risk_mgr.is_enabled()) {
-                // trailing state 会在 check_stop_loss 中自动初始化
-            }
-            // 卖出后重置追踪
-            if (fill && order.side == Side::SELL) {
-                if (!portfolio.has_position(symbol_)) {
-                    risk_mgr.reset_tracking(symbol_);
-                }
-            }
+            pending.push_back(order);
         }
 
-        // (g) 记录今天的净值
+        // (h) 记录今天的净值
         portfolio.record_equity(bar.date);
+    }
+
+    // 回测区间最后一 bar 挂起的订单没有"次日开盘"可成交 → 丢弃（现实中同样无法执行）。
+    // 不静默：记下数量，随结果一起返回，避免两次仅相差一天的回测因为这批订单
+    // 消失而报出看似矛盾的成交数/绩效。
+    int dropped_last_bar_orders = static_cast<int>(pending.size());
+    if (dropped_last_bar_orders > 0) {
+        std::cerr << "[backtest] " << symbol_ << " 回测区间最后一 bar 有 "
+                  << dropped_last_bar_orders << " 笔挂单因无次日开盘可成交而被丢弃"
+                  << std::endl;
     }
 
     // ── Step 6: 策略清理 ──
@@ -201,6 +224,7 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
     result.metrics = metrics;
     result.equity_curve = portfolio.get_equity_curve();
     result.trades = portfolio.get_fills();
+    result.dropped_last_bar_orders = dropped_last_bar_orders;
 
     return result;
 }

@@ -68,6 +68,68 @@ TEST(EngineTest, NoDataThrows) {
     EXPECT_THROW(engine.run(), std::runtime_error);
 }
 
+// ── 防未来函数回归：信号在第 i bar 收盘产生，必须按第 i+1 bar 的【开盘价】成交 ──
+// 锁死历史 bug「同 bar 收盘出信号又按当日收盘价成交」的修复，防其被静默改回。
+namespace {
+// 测试专用策略：只在 bar_index==0 下一笔市价买单，之后不再动作。
+class BuyOnceStrategy : public IStrategy {
+public:
+    std::string name() const override { return "BUY_ONCE"; }
+    std::string description() const override { return "test only"; }
+    std::vector<Order> on_bar(const StrategyContext& ctx) override {
+        if (ctx.bar_index == 0) return { Order::market_buy(ctx.symbol, 100) };
+        return {};
+    }
+};
+}  // namespace
+
+TEST(EngineTest, FillsAtNextBarOpenNotSameBarClose) {
+    // 构造 open 与 close 明显不同的数据，才能区分成交价用了哪个。
+    std::vector<Bar> bars;
+    for (int i = 0; i < 3; ++i) {
+        Bar b;
+        char buf[16];
+        snprintf(buf, sizeof(buf), "2025-01-%02d", i + 1);
+        b.date = buf;
+        b.open = 100.0 + i * 10.0;   // 100, 110, 120
+        b.close = b.open + 5.0;      // 105, 115, 125（open≠close）
+        b.high = b.close + 1.0;
+        b.low = b.open - 1.0;
+        b.volume = 1000000;
+        bars.push_back(b);
+    }
+
+    BacktestEngine engine(100000.0, CommissionConfig::us_stock());
+    engine.set_strategy(std::make_unique<BuyOnceStrategy>());
+    engine.load_data("TEST", std::move(bars));
+    auto result = engine.run();
+
+    ASSERT_EQ(result.trades.size(), 1u);
+    // 信号在 bar 0（收盘 105）产生 → 必须按 bar 1 的开盘价 110 成交（含滑点，
+    // 买入按 open×(1+slippage) 略高于 110），绝不能是 bar 0 收盘价 105（未来函数）。
+    // 容差取 1% 覆盖滑点；下界 108 足以把「按 105 成交」这条错误路径挡在外面。
+    EXPECT_NEAR(result.trades[0].price, 110.0, 110.0 * 0.01);
+    EXPECT_GT(result.trades[0].price, 108.0);  // 若误用 bar0 收盘 105，此处必失败
+}
+
+// ── 防未来函数回归：最后一 bar 产生的信号无「次日开盘」可成交 → 必须丢弃 ──
+TEST(EngineTest, LastBarSignalDiscarded) {
+    // 只给 1 根 bar：bar 0 出买入信号，但没有 bar 1 可成交 → 零成交。
+    std::vector<Bar> bars;
+    Bar b;
+    b.date = "2025-01-01";
+    b.open = 100.0; b.close = 105.0; b.high = 106.0; b.low = 99.0;
+    b.volume = 1000000;
+    bars.push_back(b);
+
+    BacktestEngine engine(100000.0, CommissionConfig::us_stock());
+    engine.set_strategy(std::make_unique<BuyOnceStrategy>());
+    engine.load_data("TEST", std::move(bars));
+    auto result = engine.run();
+
+    EXPECT_EQ(result.trades.size(), 0u);
+}
+
 // ── 先跌后涨时 MA_CROSS 应该捕获到金叉并盈利 ──
 
 TEST(EngineTest, MACrossProfitOnUptrend) {

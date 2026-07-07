@@ -7,6 +7,7 @@ stream_options 不支持时回退）。
 """
 import json
 import os
+import threading
 from typing import Generator, Optional
 
 from loguru import logger
@@ -95,6 +96,7 @@ def stream_chat(
     tools: Optional[list[dict]] = None,
     temperature: float = 0.5,
     client: Optional[OpenAI] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> Generator[dict, None, None]:
     """
     流式调用 chat.completions。
@@ -104,6 +106,10 @@ def stream_chat(
       {"type": "done", "message": {...}, "tool_calls": [...], "tokens": int}
         message: OpenAI 格式 assistant message（含 tool_calls 时带 tool_calls 字段）
         tool_calls: [{id, name, args}]，无工具调用时为 []
+
+    cancel_event: 客户端断连时会被置位（见 agents/context.py::AgentSession）。命中时
+    立即关闭底层流并跳出循环——大多数 OpenAI 兼容端点会因连接断开而提前停止生成，
+    真的省下后续 token，而不是等这轮吐完字才在下一轮开头才发现该停。
     """
     client = client or build_client()
 
@@ -132,6 +138,12 @@ def stream_chat(
     acc = _ToolCallAccumulator()
 
     for chunk in stream:
+        if cancel_event is not None and cancel_event.is_set():
+            try:
+                stream.close()
+            except Exception:
+                pass
+            break
         if getattr(chunk, "usage", None):
             token_count = chunk.usage.total_tokens
             prompt_tokens = getattr(chunk.usage, "prompt_tokens", 0) or 0

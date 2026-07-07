@@ -13,11 +13,11 @@ import requests
 from loguru import logger
 
 
-# 市场 → 基准指数映射
+# 市场 → 基准指数映射（键用 canonical：a_share / hk_stock / us_stock）
 MARKET_BENCHMARK: Dict[str, Dict[str, str]] = {
-    "a_share": {"symbol": "000300.SH", "name": "沪深300", "ak_code": "sh000300"},
-    "hk":      {"symbol": "HSI",       "name": "恒生指数", "secid": "100.HSI"},
-    "us":      {"symbol": "SPX",       "name": "标普500",  "secid": "100.SPX"},
+    "a_share":  {"symbol": "000300.SH", "name": "沪深300", "ak_code": "sh000300"},
+    "hk_stock": {"symbol": "HSI",       "name": "恒生指数", "secid": "100.HSI"},
+    "us_stock": {"symbol": "SPX",       "name": "标普500",  "secid": "100.SPX"},
 }
 
 
@@ -38,7 +38,7 @@ class BenchmarkService:
         获取基准指数归一化曲线。
 
         Args:
-            market: 市场类型 (a_share / hk / us)
+            market: 市场类型（任意写法，内部归一到 canonical a_share/hk_stock/us_stock）
             start_date: 开始日期 YYYY-MM-DD
             end_date: 结束日期 YYYY-MM-DD
             initial_capital: 初始资金（用于归一化）
@@ -47,6 +47,8 @@ class BenchmarkService:
             {benchmark_name, benchmark_symbol, benchmark_return_pct, benchmark_curve: [{date, benchmark_value}]}
             获取失败时返回 None
         """
+        from common.market import normalize_market
+        market = normalize_market(market)
         bm = MARKET_BENCHMARK.get(market)
         if not bm:
             logger.warning(f"未知市场类型: {market}")
@@ -155,7 +157,8 @@ class BenchmarkService:
         """通过 akshare 获取沪深300日线"""
         try:
             import akshare as ak
-            df = ak.stock_zh_index_daily_em(symbol="sh000300")
+            from net import domestic_akshare
+            df = domestic_akshare(ak.stock_zh_index_daily_em, symbol="sh000300")
             if df is None or df.empty:
                 return None
 
@@ -206,8 +209,11 @@ class BenchmarkService:
         }
 
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=10)
-            data = resp.json()
+            from net import domestic_json
+            data = domestic_json(url, params=params, headers=headers, timeout=10)
+            if data is None:
+                logger.warning(f"东方财富请求失败: secid={secid}")
+                return None
             klines = data.get("data", {}).get("klines", [])
             if not klines:
                 logger.warning(f"东方财富返回空数据: secid={secid}")

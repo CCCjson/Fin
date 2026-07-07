@@ -3,8 +3,16 @@
  *
  * 自动重连（指数退避），心跳保活，消息分发
  */
+import { getAuthToken } from '../utils/authFetch';
 
 type MessageHandler = (data: any) => void;
+
+/** 给 WS URL 追加 ?token= 鉴权参数（浏览器 WS 不能带 header）。 */
+function withToken(url: string): string {
+  const token = getAuthToken();
+  if (!token) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+}
 
 class WebSocketService {
   private ws: WebSocket | null = null;
@@ -30,7 +38,8 @@ class WebSocketService {
     this._url = baseUrl;
 
     try {
-      this.ws = new WebSocket(baseUrl);
+      // 每次连接时取最新 token 拼上（重连也能拿到刷新后的 token）
+      this.ws = new WebSocket(withToken(baseUrl));
 
       this.ws.onopen = () => {
         this._connected = true;

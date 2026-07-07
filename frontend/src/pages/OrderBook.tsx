@@ -90,7 +90,7 @@ interface MarketPreset {
 
 const MARKET_PRESETS: MarketPreset[] = [
   {
-    id: 'A', name: 'A 股', flag: '\u{1F1E8}\u{1F1F3}',
+    id: 'a_share', name: 'A 股', flag: '\u{1F1E8}\u{1F1F3}',
     defaultSymbol: '600519', defaultMidPrice: 1500.00,
     tickSize: 0.01, spreadTicks: 2, lotSize: 100,
     hasLotRestriction: true, hasPriceLimit: true, priceLimitPct: 0.10,
@@ -101,7 +101,7 @@ const MARKET_PRESETS: MarketPreset[] = [
     quickLots: [1, 5, 10, 50, 100],
   },
   {
-    id: 'HK', name: '港 股', flag: '\u{1F1ED}\u{1F1F0}',
+    id: 'hk_stock', name: '港 股', flag: '\u{1F1ED}\u{1F1F0}',
     defaultSymbol: '00700', defaultMidPrice: 380.00,
     tickSize: 0.20, spreadTicks: 3, lotSize: 100,
     hasLotRestriction: true, hasPriceLimit: false, priceLimitPct: 0,
@@ -112,7 +112,7 @@ const MARKET_PRESETS: MarketPreset[] = [
     quickLots: [1, 5, 10, 50, 100],
   },
   {
-    id: 'US', name: '美 股', flag: '\u{1F1FA}\u{1F1F8}',
+    id: 'us_stock', name: '美 股', flag: '\u{1F1FA}\u{1F1F8}',
     defaultSymbol: 'AAPL', defaultMidPrice: 185.00,
     tickSize: 0.01, spreadTicks: 1, lotSize: 1,
     hasLotRestriction: false, hasPriceLimit: false, priceLimitPct: 0,
@@ -272,7 +272,7 @@ export const OrderBook: React.FC = () => {
   const [quantity, setQuantity] = useState('100');
 
   // ── 创建会话表单 ──
-  const [selectedMarket, setSelectedMarket] = useState<string>('A');
+  const [selectedMarket, setSelectedMarket] = useState<string>('a_share');
   const [symbol, setSymbol] = useState('');
   const [midPrice, setMidPrice] = useState('');
   const [seedCount, setSeedCount] = useState('200');
