@@ -6,6 +6,7 @@
 （已 diff 验证 parity）。
 """
 import io
+import os
 import queue
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +15,10 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 import pandas as pd
 from loguru import logger
+
+# 并发抓取的 worker 上限（= 代理池 IP 槽数）。新浪对单源并发容忍度有限，默认保守 4；
+# 快代理 IP 充足、限速可控时可用 env 上调（限速换 IP 的兜底逻辑不受影响）。
+_MAX_WORKERS = max(1, int(os.getenv("FINANCIAL_FETCH_WORKERS", "4")))
 
 # 新浪财务指标页（与 akshare stock_financial_analysis_indicator 同源）
 SINA_INDICATOR_URL = (
@@ -235,14 +240,19 @@ class FinancialFetcher:
         symbols: List[str],
         start_year: str = "2015",
         workers: int = 3,
-    ) -> Iterator[Tuple[str, pd.DataFrame]]:
+    ) -> Iterator[Tuple[Optional[str], Optional[pd.DataFrame]]]:
         """
         批量获取财务数据，按完成顺序逐只 yield (symbol, DataFrame)。
 
         失败的 symbol 也会 yield（空 DataFrame），保证消费方能对齐进度。
         workers > 1 时用代理池并发（每 worker 独立 IP + 独立限速器，
         新浪限速信号 HTTP 456 自动换 IP）；workers=1 为串行回滚模式。
-        worker 内所有异常均被兜住，迭代器必然产出 len(symbols) 个结果后终止。
+        worker 内所有异常（含 `pool.acquire()` 本身失败）均在 `_one` 的
+        finally 里兜住并恰好 put 一次结果，迭代器必然产出 len(symbols) 个
+        终态结果后终止。
+
+        并发模式下偶尔会 yield `(None, None)` 作为心跳标记（消费方长时间
+        收不到结果时用于探活，不代表任何 symbol 的数据，调用方应跳过）。
         """
         if workers <= 1 or len(symbols) <= 1:
             for i, sym in enumerate(symbols, 1):
@@ -255,9 +265,10 @@ class FinancialFetcher:
                 yield sym, df
             return
 
-        from net.proxy_pool import ProxyPool
+        from net.proxy_pool import ProxyPool, is_proxy_connect_error
+        from data_engine.liveness import LivenessTracker
 
-        workers = min(workers, 4)  # 新浪对单源并发容忍度有限
+        workers = min(workers, _MAX_WORKERS)  # 上限可经 FINANCIAL_FETCH_WORKERS 调
         pool = ProxyPool(size=workers, min_delay=0.5, max_delay=3.0)
         if pool.direct_mode:
             logger.warning("无快代理，财务批量退回串行模式")
@@ -267,8 +278,10 @@ class FinancialFetcher:
         result_q: "queue.Queue[Tuple[str, pd.DataFrame]]" = queue.Queue()
 
         def _one(sym: str) -> None:
-            slot = pool.acquire()
+            df = pd.DataFrame()
+            slot = None
             try:
+                slot = pool.acquire()
                 try:
                     df = self.fetch_financial_data(
                         sym, start_year=start_year,
@@ -276,22 +289,61 @@ class FinancialFetcher:
                         rate_wait=slot.rate_limiter.wait,
                     )
                     slot.rate_limiter.on_success()
+                    pool.report_success(slot)
                 except Exception as e:
                     # 456/连接重置等 → 标记 IP 失效，akshare 兜底已在内层做过
                     slot.rate_limiter.on_failure(is_rate_limit=True)
-                    pool.report_failure(slot)
+                    pool.report_failure(slot, proxy_connect=is_proxy_connect_error(e))
                     logger.warning(f"{sym} 财务批量获取失败: {e}")
                     df = pd.DataFrame()
+            except Exception as e:  # noqa: BLE001 — 连 pool.acquire() 本身失败也不能让该 symbol 永不产出结果
+                logger.warning(f"{sym} 财务批量 worker 意外异常: {e}")
             finally:
-                pool.release(slot)
-            result_q.put((sym, df))
+                if slot is not None:
+                    pool.release(slot)
+                # 无论成败都恰好入队一次：旧实现里 acquire() 抛异常会跳过这行，
+                # 消费侧的定长 range(len(symbols)) 就会永久卡在 result_q.get()
+                result_q.put((sym, df))
 
+        tracker = LivenessTracker(stall_timeout=180.0, heartbeat_interval=2.0)
         ex = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fin-batch")
+        futures = []
         try:
             for sym in symbols:
-                ex.submit(_one, sym)
-            for _ in range(len(symbols)):
-                yield result_q.get()
+                futures.append(ex.submit(_one, sym))
+
+            yielded: set = set()
+            while len(yielded) < len(symbols):
+                try:
+                    sym, df = result_q.get(timeout=0.5)
+                except queue.Empty:
+                    missing = [s for s in symbols if s not in yielded]
+                    if all(f.done() for f in futures) and result_q.empty():
+                        if missing:
+                            logger.error(f"财务批量：{len(missing)} 只未返回结果（worker 异常退出），按空结果补齐")
+                        for s in missing:
+                            yield s, pd.DataFrame()
+                        break
+                    if pool.breaker_state == "dead":
+                        logger.error(f"财务批量：代理与直连均不可用，{len(missing)} 只按空结果补齐后中止")
+                        for s in missing:
+                            yield s, pd.DataFrame()
+                        break
+                    if tracker.is_stalled():
+                        logger.error(f"财务批量：{tracker.stall_timeout:.0f}s 无任何 worker 活动，"
+                                     f"{len(missing)} 只按空结果补齐后中止")
+                        for s in missing:
+                            yield s, pd.DataFrame()
+                        break
+                    if tracker.should_heartbeat():
+                        yield None, None
+                        tracker.mark_yield()
+                    continue
+
+                tracker.touch()
+                yielded.add(sym)
+                yield sym, df
+                tracker.mark_yield()
         finally:
             # 消费方提前放弃（GeneratorExit）时取消未开跑的任务
             ex.shutdown(wait=False, cancel_futures=True)
@@ -310,13 +362,15 @@ class FinancialFetcher:
         """
         results: Dict[str, pd.DataFrame] = {}
         total = len(symbols)
-        for i, (sym, df) in enumerate(
-            self.fetch_batch_iter(symbols, start_year=start_year, workers=workers), 1
-        ):
+        done = 0
+        for sym, df in self.fetch_batch_iter(symbols, start_year=start_year, workers=workers):
+            if sym is None:  # 心跳标记，非终态结果，跳过
+                continue
+            done += 1
             if not df.empty:
                 results[sym] = df
-            if i % 20 == 0:
-                logger.info(f"财务批量进度: {i}/{total}")
+            if done % 20 == 0:
+                logger.info(f"财务批量进度: {done}/{total}")
 
         logger.info(f"财务批量完成: {len(results)}/{total} 只成功 (workers={workers})")
         return results

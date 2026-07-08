@@ -44,7 +44,7 @@ class IngestCninfoStartRequest(BaseModel):
 
 class IngestResearchReportStartRequest(BaseModel):
     limit_per_symbol: int = Field(60, ge=1, le=200, description="时间窗口过滤后再截断的安全阀")
-    full_text: bool = Field(True, description="True=拉PDF全文入库，False=仅元数据要点")
+    full_text: bool = Field(False, description="默认两阶段：False=仅元数据要点（快、省CPU），全市场跑完后按需走 upgrade_full_text 补全文；True=直接拉PDF全文入库（慢、吃CPU）")
     start_date: str = Field("20220101", description="研报发布起始日期 YYYYMMDD")
     end_date: str = Field("20261231", description="研报发布截止日期 YYYYMMDD")
 

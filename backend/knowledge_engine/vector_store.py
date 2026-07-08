@@ -71,12 +71,15 @@ def upsert(rows: List[Tuple[int, List[float]]]) -> int:
         return 0
     conn = _connect()
     try:
-        for rid, vec in rows:
-            conn.execute(f"DELETE FROM {_TABLE} WHERE rowid = ?", (rid,))
-            conn.execute(
-                f"INSERT INTO {_TABLE}(rowid, embedding) VALUES (?, ?)",
-                (rid, sqlite_vec.serialize_float32(vec)),
-            )
+        # 先删后插的批量版：单连接 + executemany，省掉逐条 execute 的往返开销
+        conn.executemany(
+            f"DELETE FROM {_TABLE} WHERE rowid = ?",
+            [(rid,) for rid, _ in rows],
+        )
+        conn.executemany(
+            f"INSERT INTO {_TABLE}(rowid, embedding) VALUES (?, ?)",
+            [(rid, sqlite_vec.serialize_float32(vec)) for rid, vec in rows],
+        )
         conn.commit()
         return len(rows)
     finally:

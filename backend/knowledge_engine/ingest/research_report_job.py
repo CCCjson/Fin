@@ -7,6 +7,11 @@
 2026-07 全量补齐：Jason 拍板全文PDF模式（full_text=True），全市场规模下反爬风险比
 小样本验证时更高 —— sleep_between 默认比 cninfo 更保守（1.5s），且 failed_symbols
 比例异常升高时应该及时 stop 观察，不要硬跑到底。
+
+2026-07 提速改造：默认改为**两阶段**——全市场主链路默认 full_text=False（仅元数据
+要点，快、几乎不吃 CPU），把最重的 PDF 全文解析（fitz）从主循环摘掉；需要全文时
+显式传 full_text=True，或跑完元数据后走 POST /ingest/research_report/upgrade_full_text
+（upgrade_existing_to_full_text）按需补齐。doc_id 幂等，两阶段互不冲突。
 """
 import json
 import threading
@@ -25,7 +30,8 @@ PROGRESS_FILE = _BACKEND_DIR / "scripts" / "knowledge_research_report_progress.j
 
 _DEFAULT_SLEEP = 1.5
 _DEFAULT_MAX_RETRY = 3
-_FLUSH_EVERY = 1  # 每只都刷盘：批次要跑几小时，进度得能实时看
+_FLUSH_EVERY = 20  # 每 20 只刷盘一次：整份 progress dict 全量 json.dump，太频繁是纯 IO
+                   # 浪费；循环末尾/finally 已有最终刷盘保底，最多丢最近不足 20 只的进度
 
 
 def _load_progress() -> dict:
@@ -79,7 +85,7 @@ class ResearchReportIngestJob:
         self,
         *,
         limit_per_symbol: int = 60,
-        full_text: bool = True,
+        full_text: bool = False,   # 默认两阶段：主链路只抓元数据，全文按需另开
         start_date: str = "20220101",
         end_date: str = "20261231",
         sleep_between: float = _DEFAULT_SLEEP,

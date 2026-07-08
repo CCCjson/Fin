@@ -2,6 +2,7 @@
 数据相关API
 """
 import asyncio
+import os
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
@@ -183,7 +184,9 @@ class FinancialBackfillRequest(BaseModel):
     """财务回补请求参数"""
     mode: str = "incremental"   # incremental=跳过近 stale_days 内有报告的 | full=全量
     stale_days: int = 150
-    workers: int = 3
+    # 默认并发度：走 env FINANCIAL_FETCH_WORKERS（默认 3），一个旋钮同时管默认值；
+    # 实际仍会被 fetcher 侧 _MAX_WORKERS 上限钳制。请求体显式传 workers 可覆盖。
+    workers: int = int(os.getenv("FINANCIAL_FETCH_WORKERS", "3"))
     start_year: str = "2015"
 
 

@@ -122,10 +122,11 @@ class KnowledgeStore:
 
     def add_chunks(self, doc_id: str, chunks: List[Dict[str, Any]]) -> List[int]:
         """批量写切片，返回自增 id 列表（顺序与入参一致，供向量写入用 rowid）。"""
-        ids: List[int] = []
+        if not chunks:
+            return []
         with get_session() as s:
-            for ch in chunks:
-                row = KnowledgeChunk(
+            rows = [
+                KnowledgeChunk(
                     doc_id=doc_id,
                     seq=ch["seq"],
                     text=ch["text"],
@@ -133,9 +134,12 @@ class KnowledgeStore:
                     section=ch.get("section"),
                     embedded=0,
                 )
-                s.add(row)
-                s.flush()        # 拿自增 id
-                ids.append(row.id)
+                for ch in chunks
+            ]
+            s.add_all(rows)
+            s.flush()            # 一次 flush 批量 INSERT，flush 后各 row.id 已回填（同类无依赖，
+                                 # unit-of-work 按 add 顺序插入，ids 顺序 = 入参顺序）
+            ids = [row.id for row in rows]
             s.commit()
         return ids
 

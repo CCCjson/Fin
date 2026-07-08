@@ -4,8 +4,10 @@
 先探站结论（2026-07）：东财研报中心元数据（标题/机构/评级/目标价/盈利预测）经
 akshare `stock_research_report_em` 免费直连可取；全文 PDF (pdf.dfcfw.com) 有 JS 反爬盾，
 但 curl_cffi(chrome120指纹) + referer 头即可绕过，不需要 headless 浏览器。
-→ 2026-07 全量补齐：Jason 拍板全市场直接开全文模式（full_text=True 默认），
-节奏上分批跑 + 密切盯失败率（见 research_report_job.py），不追求一次性跑完。
+→ 2026-07 全量补齐初版：全市场直接开全文模式（full_text=True 默认），分批跑 + 盯失败率。
+→ 2026-07 提速改造：默认改为**两阶段**——全市场主链路默认 full_text=False（仅元数据要点，
+  快、几乎不吃 CPU），把最重的 PDF 全文解析（fitz）从主循环摘掉；需要全文时显式传
+  full_text=True，或跑完元数据后走 upgrade_existing_to_full_text 按需补齐（doc_id 幂等）。
 
 ⚠️ 国内源必须 Clash-无关：改走 net.domestic.domestic_akshare 包一层（快代理轮换+
 直连兜底）。不能只靠 apply_proxy_env()——那个仅在判定为直连模式时清代理 env，
@@ -93,7 +95,7 @@ def ingest_research_reports(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     limit_per_symbol: int = 60,
-    full_text: bool = True,
+    full_text: bool = False,
 ) -> Dict[str, Any]:
     """
     摄入一批股票的券商研报。
@@ -101,7 +103,9 @@ def ingest_research_reports(
     start_date/end_date: 'YYYYMMDD'，限定研报发布日期窗口（东财接口本身不支持按日期查询，
         硬编码拉全部历史，这里客户端过滤）。默认 start_date=今天-4年，end_date=今天。
     limit_per_symbol: 时间窗口过滤后再截断的安全阀（防止高覆盖度股票拖爆单次调用），默认 60。
-    full_text: True=拉 PDF 全文入库（多片切嵌，慢，信息量大，默认）；False=仅元数据要点（快）。
+    full_text: False=仅元数据要点（快、省 CPU，默认，两阶段第一阶段）；True=拉 PDF 全文入库
+        （多片切嵌，慢，吃 CPU）。全市场覆盖建议先默认跑元数据，再对需要的股票走
+        upgrade_existing_to_full_text 补全文。
     """
     import akshare as ak
     from net.domestic import domestic_akshare

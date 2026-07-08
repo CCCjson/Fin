@@ -222,37 +222,55 @@ class FinancialRepository:
         Returns:
             新插入的记录数
         """
+        if df is None or df.empty:
+            return 0
+
         saved_count = 0
         field_names = {c.name for c in FinancialData.__table__.columns} - {"id", "created_at", "updated_at", "symbol", "report_date", "data_source"}
+
+        # 一次 SELECT 取该 symbol 已有的 report_date 集合，替代逐行 .first()（干掉 N+1）。
+        # 联合唯一索引 idx_financial_symbol_date 保证这条查询走索引、也保证插入不撞唯一约束。
+        existing_dates = {
+            r[0] for r in self.session.query(FinancialData.report_date).filter(
+                FinancialData.symbol == symbol
+            ).all()
+        }
+
+        now = datetime.now()
+        new_mappings: List[dict] = []
 
         for _, row in df.iterrows():
             report_date = row["report_date"].date() if hasattr(row["report_date"], "date") else row["report_date"]
 
-            existing = self.session.query(FinancialData).filter(
-                and_(
-                    FinancialData.symbol == symbol,
-                    FinancialData.report_date == report_date,
-                )
-            ).first()
+            # 逐字段抽有效值（NaN 跳过），与旧逻辑一致
+            values = {
+                col: float(row[col])
+                for col in field_names
+                if col in row.index and pd.notna(row[col])
+            }
 
-            if existing:
-                # 更新已有记录
-                for col in field_names:
-                    if col in row.index and pd.notna(row[col]):
-                        setattr(existing, col, float(row[col]))
-                existing.updated_at = datetime.now()
+            if report_date in existing_dates:
+                # 已存在 → 批量 UPDATE（无 SELECT）。updated_at 显式带上以匹配旧行为
+                if values:
+                    self.session.query(FinancialData).filter(
+                        and_(
+                            FinancialData.symbol == symbol,
+                            FinancialData.report_date == report_date,
+                        )
+                    ).update({**values, "updated_at": now}, synchronize_session=False)
             else:
-                # 新插入
-                record = FinancialData(
-                    symbol=symbol,
-                    report_date=report_date,
-                    data_source=data_source,
-                )
-                for col in field_names:
-                    if col in row.index and pd.notna(row[col]):
-                        setattr(record, col, float(row[col]))
-                self.session.add(record)
+                # 新插入 → 攒批，最后一次 bulk_insert_mappings
+                new_mappings.append({
+                    "symbol": symbol,
+                    "report_date": report_date,
+                    "data_source": data_source,
+                    **values,
+                })
                 saved_count += 1
+                existing_dates.add(report_date)  # 防同一 df 内重复报告期被插两次
+
+        if new_mappings:
+            self.session.bulk_insert_mappings(FinancialData, new_mappings)
 
         self.session.commit()
         return saved_count
