@@ -44,7 +44,9 @@ bash desktop/sync-to-app.sh
 ```bash
 cd frontend
 npm run app:dev      # 开发联调 Rust 外壳本身用（会先跑 npm run build 出静态产物，不是 dev server）
-npm run app:build    # 打包出 Fin.app + .dmg，产物在 frontend/src-tauri/target/release/bundle/
+npm run app:build    # 打包出 Fin.app，产物在 frontend/src-tauri/target/release/bundle/macos/
+                      # （bundle.targets 只留了 "app"，不产出 .dmg——本地自用直接 ditto 就行，
+                      #  出 dmg 还会绕一层 hdiutil 挂载临时读写镜像，偶尔会卡镜像残留）
 ```
 
 ## Git 分支约定
