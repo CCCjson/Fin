@@ -11,7 +11,6 @@ export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 BACKEND_DIR="$ROOT/backend"
-FRONTEND_DIR="$ROOT/frontend"
 ORDERBOOK_DIR="$ROOT/orderbook_simulator"
 BACKTEST_DIR="$ROOT/backtest_cpp"
 
@@ -53,7 +52,7 @@ echo -e "${YELLOW}=== Fin 服务启动（幂等）===${NC}"
 # 关键：整段放进后台子 shell 并加 ConnectTimeout，绝不阻塞核心服务启动
 # （不在公司/家里网络时，ssh 连不可达主机会卡很久）。Alpha Lab 默认走 Claude API，
 # 隧道只影响本地模型这一可选功能。
-echo -e "${GREEN}[1/5] SSH 隧道 (port 11434, 后台尝试)...${NC}"
+echo -e "${GREEN}[1/4] SSH 隧道 (port 11434, 后台尝试)...${NC}"
 if is_listening 11434; then
     echo "  已在运行，跳过"
 else
@@ -97,31 +96,24 @@ start_cpp() {
     fi
 }
 
-echo -e "${GREEN}[2/5] C++ 订单簿服务 (port 8001)...${NC}"
+echo -e "${GREEN}[2/4] C++ 订单簿服务 (port 8001)...${NC}"
 start_cpp "订单簿服务" "$ORDERBOOK_DIR" 8001 orderbook_server /tmp/fin-orderbook.log 8001
 
-echo -e "${GREEN}[3/5] C++ 回测服务 (port 8002)...${NC}"
+echo -e "${GREEN}[3/4] C++ 回测服务 (port 8002)...${NC}"
 start_cpp "回测服务" "$BACKTEST_DIR" 8002 backtest_server /tmp/fin-backtest.log 8002
 
-# ---- 后端 uvicorn（--reload 保留，热重载）----
-echo -e "${GREEN}[4/5] 后端 (port 8000)...${NC}"
+# ---- 后端 uvicorn（app 端是稳定实例，不带 --reload，不受 web 端开发影响）----
+echo -e "${GREEN}[4/4] 后端 (port 8000，稳定实例)...${NC}"
 if is_listening 8000; then
     echo "  已在运行，跳过"
 else
     cd "$BACKEND_DIR" || exit 1
-    nohup "$PYTHON" -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload > /tmp/fin-backend.log 2>&1 &
+    nohup "$PYTHON" -m uvicorn api.main:app --host 0.0.0.0 --port 8000 > /tmp/fin-backend.log 2>&1 &
     echo "  已启动 PID $!  日志 /tmp/fin-backend.log"
 fi
 
-# ---- 前端 vite dev（HMR 来源，保留）----
-echo -e "${GREEN}[5/5] 前端 vite dev (port 5174)...${NC}"
-if is_listening 5174; then
-    echo "  已在运行，跳过"
-else
-    cd "$FRONTEND_DIR" || exit 1
-    nohup npm run dev > /tmp/fin-frontend.log 2>&1 &
-    echo "  已启动 PID $!  日志 /tmp/fin-frontend.log"
-fi
+# 前端不再需要单独起进程：App 窗口直接加载 tauri build 打进包里的静态产物，
+# 不经过 vite dev server（那是 web 端 restart.sh 的活）。
 
 # ---- 就绪汇总（供手动运行时看；Tauri 侧另有 /docs 轮询）----
 echo ""
@@ -129,9 +121,6 @@ echo -e "${YELLOW}等待服务就绪...${NC}"
 wait_http http://127.0.0.1:8000/docs 90 \
     && echo -e "${GREEN}✓ 后端就绪${NC}  http://127.0.0.1:8000/docs" \
     || echo -e "${RED}✗ 后端 90s 内未就绪，看 /tmp/fin-backend.log${NC}"
-wait_port 5174 30 \
-    && echo -e "${GREEN}✓ 前端就绪${NC}  http://127.0.0.1:5174" \
-    || echo -e "${RED}✗ 前端未就绪，看 /tmp/fin-frontend.log${NC}"
 for pc in "订单簿:8001" "回测:8002"; do
     n=${pc%:*}; p=${pc#*:}
     is_listening "$p" && echo -e "${GREEN}✓ ${n}服务就绪${NC} (:$p)" || echo -e "${YELLOW}✗ ${n}服务未监听 (:$p)${NC}"

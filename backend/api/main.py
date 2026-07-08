@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
+import os
 import sys
 from pathlib import Path
 
@@ -171,26 +172,35 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"涨停盘中扫描任务启动失败（不影响主服务）: {e}")
 
+    # 多实例部署（app 稳定后端 + web 开发后端各跑一份）时，web 端应关闭定时任务，
+    # 避免两边重复拉数据/重复扫描新闻。FIN_DISABLE_SCHEDULERS=true 由 restart.sh 注入。
+    schedulers_enabled = os.getenv("FIN_DISABLE_SCHEDULERS", "false").lower() not in ("1", "true", "yes")
+    if not schedulers_enabled:
+        logger.info("FIN_DISABLE_SCHEDULERS 已启用，跳过知识库/每日数据/新闻三个定时任务")
+
     # 知识库定时摄入论文（双重门控：默认关，需显式开+配 query；只摄入不回测）
-    try:
-        from knowledge_engine.scheduler import knowledge_scheduler
-        knowledge_scheduler.start()
-    except Exception as e:
-        logger.warning(f"知识库定时摄入启动失败（不影响主服务）: {e}")
+    if schedulers_enabled:
+        try:
+            from knowledge_engine.scheduler import knowledge_scheduler
+            knowledge_scheduler.start()
+        except Exception as e:
+            logger.warning(f"知识库定时摄入启动失败（不影响主服务）: {e}")
 
     # 每日数据更新链定时任务（开机自启，收盘后自动 更新日线→补信号→更新追踪）
-    try:
-        from data_engine.daily_pipeline_scheduler import daily_pipeline_scheduler
-        daily_pipeline_scheduler.start()
-    except Exception as e:
-        logger.warning(f"每日数据更新定时任务启动失败（不影响主服务）: {e}")
+    if schedulers_enabled:
+        try:
+            from data_engine.daily_pipeline_scheduler import daily_pipeline_scheduler
+            daily_pipeline_scheduler.start()
+        except Exception as e:
+            logger.warning(f"每日数据更新定时任务启动失败（不影响主服务）: {e}")
 
     # Newnew 新闻定时任务（开机自启，默认每 15 分钟抓取国内外新闻+分析，每周清一次去重缓存）
-    try:
-        from news_engine.news_scheduler import news_scheduler
-        news_scheduler.start()
-    except Exception as e:
-        logger.warning(f"新闻定时任务启动失败（不影响主服务）: {e}")
+    if schedulers_enabled:
+        try:
+            from news_engine.news_scheduler import news_scheduler
+            news_scheduler.start()
+        except Exception as e:
+            logger.warning(f"新闻定时任务启动失败（不影响主服务）: {e}")
 
     # 业务事件总线 → WebSocket 桥接：把 BizEvent 广播到前端活动流（复用 /ws/automation）
     try:
@@ -221,23 +231,26 @@ async def shutdown_event():
     await stop_bg_task()
     await close_client()
 
-    try:
-        from knowledge_engine.scheduler import knowledge_scheduler
-        knowledge_scheduler.stop()
-    except Exception:
-        pass
+    schedulers_enabled = os.getenv("FIN_DISABLE_SCHEDULERS", "false").lower() not in ("1", "true", "yes")
 
-    try:
-        from data_engine.daily_pipeline_scheduler import daily_pipeline_scheduler
-        daily_pipeline_scheduler.stop()
-    except Exception:
-        pass
+    if schedulers_enabled:
+        try:
+            from knowledge_engine.scheduler import knowledge_scheduler
+            knowledge_scheduler.stop()
+        except Exception:
+            pass
 
-    try:
-        from news_engine.news_scheduler import news_scheduler
-        news_scheduler.stop()
-    except Exception:
-        pass
+        try:
+            from data_engine.daily_pipeline_scheduler import daily_pipeline_scheduler
+            daily_pipeline_scheduler.stop()
+        except Exception:
+            pass
+
+        try:
+            from news_engine.news_scheduler import news_scheduler
+            news_scheduler.stop()
+        except Exception:
+            pass
 
     logger.info("量化交易系统API关闭")
 

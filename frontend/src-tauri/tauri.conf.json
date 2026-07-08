@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.jason.fin",
   "build": {
-    "frontendDist": "ui"
+    "frontendDist": "../dist",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [

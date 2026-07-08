@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Card } from '../components/common/Card';
 import { authFetch, getAuthToken } from '../utils/authFetch';
 
-const API = '/api';
+const API = import.meta.env.VITE_API_URL || '/api';
 
 // ══════════════════════════════════════════════════════════════
 // 类型定义
@@ -142,11 +142,13 @@ function useOrderBookWS(
     if (!sessionId) return;
 
     const connect = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
       const token = getAuthToken();
       const qs = token ? `?token=${encodeURIComponent(token)}` : '';
-      const url = `${protocol}//${host}/api/orderbook/sessions/${sessionId}/ws${qs}`;
+      // API 是绝对地址（打包版 VITE_API_URL）时直接转 ws(s) scheme；
+      // 是相对路径 '/api'（vite dev proxy）时才拼 window.location（走代理转发到真实后端）。
+      const url = /^https?:/.test(API)
+        ? `${API.replace(/^http/, 'ws')}/orderbook/sessions/${sessionId}/ws${qs}`
+        : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${API}/orderbook/sessions/${sessionId}/ws${qs}`;
 
       const ws = new WebSocket(url);
       wsRef.current = ws;

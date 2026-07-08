@@ -9,7 +9,7 @@ export default defineConfig({
     port: 5174,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: 'http://127.0.0.1:8010',
         changeOrigin: true,
         ws: true,   // 代理 WebSocket 升级（订单簿实时推送依赖此项）
         rewrite: (path) => path.replace(/^\/api/, ''),
