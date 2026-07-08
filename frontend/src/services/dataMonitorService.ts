@@ -160,6 +160,18 @@ export interface UpdateStreamEvent {
   backfilled_count?: number;
   backfilled_stocks?: BackfilledStock[];
   message?: string;
+  /** 慢路径重入队重试累计次数（代理故障时会持续增长） */
+  retries?: number;
+  /** 代理池熔断状态：closed=正常 / open=降级直连试探 / dead=直连也不可用 */
+  proxy_state?: 'closed' | 'open' | 'dead';
+  /** 人读的当前状态说明，如「代理连接失败，重试中…」 */
+  note?: string;
+  /** 时间驱动的心跳帧标记（计数可能与上一帧相同，仅用于告诉前端后端还活着） */
+  heartbeat?: boolean;
+  /** complete 事件：本次任务是否因熔断/静默超时被中止 */
+  aborted?: boolean;
+  /** complete 事件：中止原因 */
+  abort_reason?: 'proxy_pool_dead' | 'stalled' | 'workers_exited' | string;
   [k: string]: any;
 }
 

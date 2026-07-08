@@ -25,7 +25,8 @@ from sqlalchemy import func
 from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo, DailyQuote
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, klines_to_records
-from net.proxy_pool import ProxyPool
+from data_engine.liveness import LivenessTracker
+from net.proxy_pool import ProxyPool, is_proxy_connect_error
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -86,6 +87,9 @@ class AShareDeepHistoryJob:
         self.recent: List[dict] = []
         self.started_at: Optional[float] = None
         self.config: Dict = {}
+        self.proxy_state: str = "closed"
+        self.abort_reason: Optional[str] = None
+        self.last_activity_ago_seconds: float = 0.0
 
     # ---------- 对外：起停 + 查状态 ----------
 
@@ -138,6 +142,9 @@ class AShareDeepHistoryJob:
                 "elapsed_seconds": elapsed,
                 "recent": list(self.recent),
                 "config": dict(self.config),
+                "proxy_state": self.proxy_state,
+                "abort_reason": self.abort_reason,
+                "last_activity_ago_seconds": round(self.last_activity_ago_seconds, 1),
             }
 
     @staticmethod
@@ -274,14 +281,15 @@ class AShareDeepHistoryJob:
                                 proxies=slot.to_requests_proxies(), secid_market=secid_mkt,
                             )
                             klines = parse_kline_data(data) if data else []
+                            pool.report_success(slot)
                             result_q.put({**item, "ok": True, "klines": klines})
                             on_ip += 1
                             if on_ip >= self.SWITCH_IP_EVERY:
                                 pool.refresh(slot)
                                 crawler.reset_session(proxies=slot.to_requests_proxies())
                                 on_ip = 0
-                        except ProxyTimeoutError:
-                            pool.report_failure(slot)
+                        except ProxyTimeoutError as e:
+                            pool.report_failure(slot, proxy_connect=is_proxy_connect_error(e))
                             pool.refresh(slot)
                             crawler.reset_session(proxies=slot.to_requests_proxies())
                             result_q.put({**item, "ok": False, "klines": []})
@@ -300,24 +308,53 @@ class AShareDeepHistoryJob:
             pending_records: List[Dict] = []
             processed = 0
             last_flush = time.time()
+            tracker = LivenessTracker(stall_timeout=180.0)
+
+            def _drain_work_queue() -> None:
+                while not work_q.empty():
+                    try:
+                        work_q.get_nowait()
+                    except queue.Empty:
+                        break
 
             try:
                 while processed < len(candidates):
                     if self._stop_flag.is_set() and not stop_event.is_set():
                         stop_event.set()
-                        while not work_q.empty():
-                            try:
-                                work_q.get_nowait()
-                            except queue.Empty:
-                                break
+                        _drain_work_queue()
+
+                    with self._state_lock:
+                        self.proxy_state = pool.breaker_state
+                        self.last_activity_ago_seconds = tracker.seconds_since_activity()
+
+                    if pool.breaker_state == "dead" and not stop_event.is_set():
+                        missing = len(candidates) - processed
+                        logger.error(f"深历史回补：代理池与直连均不可用，中止本次任务，{missing} 只计为失败")
+                        with self._state_lock:
+                            self.failed += missing
+                            self.abort_reason = "proxy_pool_dead"
+                        stop_event.set()
+                        _drain_work_queue()
+                        break
 
                     try:
                         res = result_q.get(timeout=0.5)
                     except queue.Empty:
                         if all(f.done() for f in futures) and work_q.empty():
                             break
+                        if tracker.is_stalled() and not stop_event.is_set():
+                            missing = len(candidates) - processed
+                            logger.error(f"深历史回补：{tracker.stall_timeout:.0f}s 无任何 worker 活动，"
+                                         f"中止本次任务，{missing} 只计为失败")
+                            with self._state_lock:
+                                self.failed += missing
+                                self.abort_reason = "stalled"
+                            stop_event.set()
+                            _drain_work_queue()
+                            break
                         continue
 
+                    tracker.touch()
                     processed += 1
                     symbol = res["symbol"]
 
@@ -386,7 +423,7 @@ class AShareDeepHistoryJob:
             _save_progress(progress)
 
             with self._state_lock:
-                self.status = "stopped" if self._stop_flag.is_set() else "done"
+                self.status = "stopped" if (self._stop_flag.is_set() or self.abort_reason) else "done"
                 self.current_symbol = None
             logger.success(
                 f"A股深历史回补结束（status={self.status}）：成功 {self.success}, "

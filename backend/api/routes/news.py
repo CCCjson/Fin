@@ -3,8 +3,6 @@
 """
 import asyncio
 import json
-import queue
-import threading
 from datetime import datetime
 from typing import Literal, Optional, List
 
@@ -13,6 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from api.routes._stream_utils import bridge_sync_stream
 from data_engine.storage.database import get_session
 from data_engine.storage.models import NewsArticle, NewsSentiment
 from news_engine.fetcher import NewsFetcher
@@ -69,42 +68,6 @@ class ReportRequest(BaseModel):
 
 # ==================== 辅助函数 ====================
 
-def _sync_gen_to_async(sync_gen):
-    """将同步生成器桥接到 async 生成器（thread + queue）"""
-    chunk_queue: queue.Queue = queue.Queue()
-    sentinel = object()
-
-    def _drain():
-        try:
-            for item in sync_gen:
-                chunk_queue.put(item)
-        except Exception as exc:
-            chunk_queue.put(exc)
-        finally:
-            chunk_queue.put(sentinel)
-
-    thread = threading.Thread(target=_drain, daemon=True)
-    thread.start()
-
-    async def _async_iter():
-        while True:
-            try:
-                item = chunk_queue.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.05)
-                continue
-
-            if item is sentinel:
-                break
-            if isinstance(item, Exception):
-                raise item
-
-            yield item
-            await asyncio.sleep(0)
-
-    return _async_iter()
-
-
 # ==================== 端点 ====================
 
 @router.post("/fetch", summary="抓取新闻 + BERT 情感分析（流式）")
@@ -132,9 +95,9 @@ async def fetch_news(request: FetchRequest):
             )
 
             fetched_ok = False
-            for event_line in fetch_gen:
+            # 桥接为 daemon 线程跑，避免抓取的阻塞式网络 IO 占住事件循环
+            async for event_line in bridge_sync_stream(fetch_gen):
                 yield event_line
-                await asyncio.sleep(0)
                 try:
                     evt = json.loads(event_line)
                     if evt.get("event") == "fetched":
@@ -327,7 +290,7 @@ async def analyze_article(request: AnalyzeRequest):
     )
 
     return StreamingResponse(
-        _sync_gen_to_async(sync_gen),
+        bridge_sync_stream(sync_gen),
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -409,7 +372,7 @@ async def generate_report(request: ReportRequest):
     )
 
     return StreamingResponse(
-        _sync_gen_to_async(sync_gen),
+        bridge_sync_stream(sync_gen),
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

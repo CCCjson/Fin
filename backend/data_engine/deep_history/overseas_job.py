@@ -10,7 +10,7 @@ import random
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, TypeVar
 
 from loguru import logger
 
@@ -25,6 +25,38 @@ PROGRESS_FILE = _BACKEND_DIR / "scripts" / "deep_history_overseas_progress.json"
 
 FETCH_START = {"hk_stock": "1990-01-01", "us_stock": "1970-01-01"}
 _FLUSH_EVERY_BATCH = 1
+BATCH_FETCH_TIMEOUT = 180.0
+SINGLE_FETCH_TIMEOUT = 60.0
+
+_T = TypeVar("_T")
+
+
+def _call_with_timeout(fn: Callable[[], _T], timeout: float, label: str) -> _T:
+    """在独立线程里跑 fn 并最多等待 timeout 秒；超时抛 TimeoutError。
+
+    yfinance 没有原生请求超时参数（0.2.x 的 curl_cffi 路线下注入自定义
+    requests session 不可靠），用线程+join 兜底：超时后原线程直接放弃
+    （daemon 线程泄漏无害——yfinance 请求最终会完成或报错，只是没人
+    再等它），避免单批/单只请求无限期挂起，把整个回补任务的 /status
+    冻结在原地。
+    """
+    box: List = []
+    err: List[BaseException] = []
+
+    def _target() -> None:
+        try:
+            box.append(fn())
+        except BaseException as e:  # noqa: BLE001 — 把异常带回调用线程重新抛出
+            err.append(e)
+
+    t = threading.Thread(target=_target, daemon=True, name=f"yf-timeout-{label}")
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise TimeoutError(f"{label} 超过 {timeout:.0f}s 未返回，判定挂起")
+    if err:
+        raise err[0]
+    return box[0]
 
 
 def _load_progress() -> dict:
@@ -78,6 +110,7 @@ class OverseasDeepHistoryJob:
         self.recent: List[dict] = []
         self.started_at: Optional[float] = None
         self.config: Dict = {}
+        self.last_activity_at: Optional[float] = time.time()
 
     # ---------- 对外：起停 + 查状态 ----------
 
@@ -143,6 +176,8 @@ class OverseasDeepHistoryJob:
                 "elapsed_seconds": elapsed,
                 "recent": list(self.recent),
                 "config": dict(self.config),
+                "last_activity_ago_seconds": round(time.time() - self.last_activity_at, 1)
+                if self.last_activity_at else None,
             }
 
     # ---------- 后台线程实体 ----------
@@ -260,7 +295,10 @@ class OverseasDeepHistoryJob:
             # 肯定有数据的锚点票探一下路，连不通就直接中止，不处理任何 symbol。
             anchor = {"hk_stock": "00700.HK", "us_stock": "AAPL"}[market]
             try:
-                anchor_df = self._fetch_single(market, anchor, fetch_start)
+                anchor_df = _call_with_timeout(
+                    lambda: self._fetch_single(market, anchor, fetch_start),
+                    SINGLE_FETCH_TIMEOUT, f"{market} 连通性预检",
+                )
             except Exception as e:  # noqa: BLE001
                 anchor_df = None
                 logger.warning(f"{market} 连通性预检异常: {e}")
@@ -286,15 +324,21 @@ class OverseasDeepHistoryJob:
 
                     with self._state_lock:
                         self.current_batch = batch
+                        self.last_activity_at = time.time()
 
                     batch_result = None
                     for attempt in range(1, max_retry + 1):
                         try:
-                            batch_result = self._fetch_batch(market, batch, fetch_start)
+                            batch_result = _call_with_timeout(
+                                lambda: self._fetch_batch(market, batch, fetch_start),
+                                BATCH_FETCH_TIMEOUT, f"{market} 批次拉取",
+                            )
                             break
-                        except Exception as e:  # noqa: BLE001 — yfinance/网络层异常统一走退避重试
+                        except Exception as e:  # noqa: BLE001 — yfinance/网络层异常（含超时）统一走退避重试
                             wait = sleep_between * (2 ** attempt) + random.uniform(0, 1)
                             logger.warning(f"{market} 批次拉取第 {attempt}/{max_retry} 次失败: {e}，{wait:.1f}s 后重试")
+                            with self._state_lock:
+                                self.last_activity_at = time.time()
                             time.sleep(wait)
 
                     if batch_result is None:
@@ -314,7 +358,10 @@ class OverseasDeepHistoryJob:
                         if sub is None or sub.empty:
                             # 批量下载假阴性排查：单只兜底二次确认
                             try:
-                                sub2 = self._fetch_single(market, symbol, fetch_start)
+                                sub2 = _call_with_timeout(
+                                    lambda: self._fetch_single(market, symbol, fetch_start),
+                                    SINGLE_FETCH_TIMEOUT, f"{market}:{symbol} 单只兜底",
+                                )
                             except Exception:  # noqa: BLE001
                                 sub2 = None
                             if sub2 is not None and not sub2.empty:

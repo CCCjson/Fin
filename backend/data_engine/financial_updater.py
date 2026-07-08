@@ -116,9 +116,24 @@ class FinancialUpdater:
                 total = len(todo)
                 emit_interval = max(1, total // 200)
 
-                for i, (sym, df) in enumerate(
-                    fetcher.fetch_batch_iter(todo, start_year=start_year, workers=workers), 1
-                ):
+                i = 0
+                for sym, df in fetcher.fetch_batch_iter(todo, start_year=start_year, workers=workers):
+                    if sym is None:
+                        # 心跳标记：worker 仍在跑但暂无终态结果，只为避免长时间
+                        # 无输出，不计入 progress 分子
+                        yield json.dumps({
+                            "event": "progress",
+                            "current": i,
+                            "total": total,
+                            "symbol": "",
+                            "success": success,
+                            "failed": failed,
+                            "new_records": new_records,
+                            "heartbeat": True,
+                        }, ensure_ascii=False) + "\n"
+                        continue
+
+                    i += 1
                     saved = 0
                     if df is None or df.empty:
                         failed += 1

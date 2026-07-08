@@ -9,6 +9,10 @@
 - 快代理未配置（.env 无 kuaidaili_api）时退化为 size=1 直连槽 + 保守延迟，
   与现有无代理行为一致；有配置但取 IP 失败的槽也降级为保守直连节奏，
   绝不让多个槽并发裸打数据源。
+- 池级熔断器（2026-07-07 补）：快代理 API 正常发 IP 但 IP 连不上（区别于
+  「取不到 IP」）时，旧逻辑会让每个 worker 无限换 IP 狂烧配额。熔断器在
+  跨 worker 连续失败达阈值后停止买 IP、降级直连试探；直连也持续失败则
+  判定彻底不可用（dead），交由消费方中止任务并给用户清晰报错。
 """
 import queue
 import random
@@ -24,6 +28,33 @@ from net.proxy_manager import ProxyManager, ProxyInfo
 # 直连（无代理）时的保守限速区间
 DIRECT_MIN_DELAY = 2.0
 DIRECT_MAX_DELAY = 8.0
+
+# 「连接层失败」的特征子串（区别于数据源限流/业务错误）；爬虫统一把各种
+# 失败抛成同一个 ProxyTimeoutError，只能靠消息文本区分。既涵盖「代理本身
+# 连不上」（ProxyError/tunnel failed），也涵盖「连接被对端掐断/读超时」
+# （connection aborted/remote disconnected/read timed out）—— 后者是额度尽
+# 误直连一次时东财掐直连的报错，也应计入「换 IP 计数」，否则永远收敛不到 dead。
+_PROXY_CONNECT_ERROR_PATTERNS = (
+    "unable to connect to proxy",
+    "cannot connect to proxy",
+    "proxyerror",
+    "tunnel connection failed",
+    "connection refused",
+    "connection aborted",
+    "remote disconnected",
+    "read timed out",
+)
+
+
+def is_proxy_connect_error(exc: BaseException) -> bool:
+    """判断异常是否属于「连接层失败」（代理连不上/连接被掐/读超时），
+    而非数据源限流/业务错误。
+
+    用于池级熔断计数：只有连接层失败才应计入「连续换 IP 全失败」阈值，
+    避免正常的限流退避（HTTP 429/456）被误判成快代理服务不可用。
+    """
+    msg = str(exc).lower()
+    return any(p in msg for p in _PROXY_CONNECT_ERROR_PATTERNS)
 
 
 class RateLimiter:
@@ -103,10 +134,38 @@ class ProxyPool:
         mgr: Optional[ProxyManager] = None,
         min_delay: float = 0.3,
         max_delay: float = 1.5,
+        dead_after: Optional[int] = None,
+        success_floor: int = 200,
+        initial_success: int = 0,
     ):
         self.mgr = mgr or ProxyManager()
         self._mgr_lock = threading.Lock()
         self.direct_mode = not bool(self.mgr.api_url)
+
+        # 熔断只判「快代理服务从一开始就整体不可用」（额度尽/网络断），此时
+        # 连续换 _dead_after 个新 IP 全失败即 dead、停止买 IP、消费方据
+        # breaker_state == "dead" 中止本轮任务，避免对着一个挂掉的快代理白烧
+        # 几万次配额。绝不降级本地直连（东财高频接口直连会被直接掐断，见
+        # memory proxy-notes 文首铁律）。
+        #
+        # 关键：一旦已成功抓到 _success_floor 只（证明快代理整体是通的），
+        # 熔断就永久失效——之后跑到中途某批股票（如一批冷门 ETF）连不上，
+        # 只让它们各自重试到顶计单只失败、任务继续跑完剩下的，绝不因局部
+        # 失败而全局中止（Jason 2026-07-07 拍板：ETF 重要性不高，宁可跑完）。
+        #
+        # initial_success：调用方可预置「本任务已在别处成功抓到的数量」。
+        # 典型如 daily_updater：批量路径先抓了几千只（不走本 ProxyPool），
+        # 慢路径才用本池；若不预置，慢路径开局恰好撞上一批连不上的 ETF 时，
+        # 本池局部成功数还是 0，会误判「整体挂了」而中止——预置后本池一开始
+        # 就知道快代理是通的，不再误伤。
+        #
+        # 阈值按调用方传入的原始并发规模算（direct_mode 下 size 被强制为 1，
+        # 但那种情况本来就没有快代理、熔断不触发）。
+        self._dead_after = dead_after if dead_after is not None else max(4, 2 * size)
+        self._success_floor = success_floor
+        self._state = "closed"  # closed | dead
+        self._consec_proxy_failures = 0
+        self._total_success = initial_success
 
         if self.direct_mode:
             logger.warning("未配置 kuaidaili_api，代理池退化为单槽直连模式")
@@ -136,11 +195,46 @@ class ProxyPool:
         """归还槽位"""
         self._queue.put(slot)
 
-    def report_failure(self, slot: ProxySlot) -> None:
-        """标记槽内 IP 失效，下次 acquire 时换新"""
+    def report_success(self, slot: ProxySlot) -> None:
+        """请求成功后调用：清零池级「连续换 IP 全失败」计数（只要有一次成功，
+        就说明快代理服务还活着，之前的连续失败不该累积推进 dead），并累计
+        总成功数——一旦跨过 _success_floor，熔断永久失效（见 __init__ 注释）。"""
+        slot.consecutive_failures = 0
+        with self._mgr_lock:
+            self._consec_proxy_failures = 0
+            self._total_success += 1
+
+    def report_failure(self, slot: ProxySlot, proxy_connect: bool = False) -> None:
+        """标记槽内 IP 失效，下次 acquire 时换新。
+
+        Args:
+            proxy_connect: 是否属于「连接层失败」（用 `is_proxy_connect_error`
+                判定：代理连不上/连接被掐/读超时）。只有这类失败才计入
+                「连续换 IP 全失败」阈值；数据源限流等业务错误不触发熔断。
+        """
         slot.failed = True
         slot.consecutive_failures += 1
         self.failures += 1
+
+        # direct_mode（没配快代理）下没有 IP 可换，熔断无意义，不介入
+        if not proxy_connect or self.direct_mode or self._state == "dead":
+            return
+
+        with self._mgr_lock:
+            self._consec_proxy_failures += 1
+            # 已成功抓到一大批后（快代理证明是通的），不再全局中止：此后个别
+            # 股票/批次连不上只各自计单只失败，任务继续跑完剩下的。只有「开局
+            # 就大面积连续失败、成功数还没跨过下限」才判定快代理整体挂了并中止。
+            if (
+                self._total_success < self._success_floor
+                and self._consec_proxy_failures >= self._dead_after
+            ):
+                self._state = "dead"
+                logger.error(
+                    f"开局连续换 {self._consec_proxy_failures} 个快代理 IP 仍全部失败"
+                    f"（累计仅成功 {self._total_success} 只），判定快代理服务当前"
+                    f"不可用，中止本次任务（请检查快代理订单余额 / 网络）"
+                )
 
     @contextmanager
     def lease(self, timeout: float = 30) -> Iterator[ProxySlot]:
@@ -157,7 +251,10 @@ class ProxyPool:
 
     def _refresh_slot(self, slot: ProxySlot) -> None:
         with self._mgr_lock:
-            proxy = self.mgr.fetch_one_proxy()
+            # dead：快代理服务已判定不可用，不再买 IP（消费方据 breaker_state
+            # 中止）；否则正常换一个新 IP。绝不降级本地直连。
+            proxy = None if self._state == "dead" else self.mgr.fetch_one_proxy()
+
         slot.failed = False
         if proxy:
             self.ip_fetches += 1
@@ -166,10 +263,18 @@ class ProxyPool:
             slot.rate_limiter.set_delays(self._proxy_min_delay, self._proxy_max_delay)
             slot.rate_limiter.reset()
         else:
-            # 取不到 IP → 该槽降级直连并收紧节奏，避免并发裸打数据源
+            # 取不到 IP（额度尽/网络问题）或已 dead → slot 无代理。不切直连
+            # 保守节奏（既然主路径不直连，就不特殊照顾直连）：这一槽下一次请求
+            # 若真直连一次并被掐，报错会被 is_proxy_connect_error 计入换 IP 计数，
+            # 连续到 _dead_after 即收敛到 dead 中止。
             slot.proxy = None
-            slot.rate_limiter.set_delays(DIRECT_MIN_DELAY, DIRECT_MAX_DELAY)
-            logger.warning(f"代理槽 {slot.slot_id} 未取到 IP，降级为直连保守节奏")
+            if self._state == "closed":
+                logger.warning(f"代理槽 {slot.slot_id} 未取到新 IP（额度尽/网络问题？）")
+
+    @property
+    def breaker_state(self) -> str:
+        """熔断状态：closed=正常换 IP / dead=连续换 IP 全失败，快代理服务不可用"""
+        return self._state
 
     @property
     def stats(self) -> Dict:
@@ -178,6 +283,9 @@ class ProxyPool:
             "direct_mode": self.direct_mode,
             "ip_fetches": self.ip_fetches,
             "failures": self.failures,
+            "breaker_state": self._state,
+            "proxy_connect_failures": self._consec_proxy_failures,
+            "total_success": self._total_success,
         }
 
     def close(self) -> None:

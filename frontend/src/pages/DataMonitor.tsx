@@ -133,19 +133,37 @@ const AssetCard: React.FC<{
 
 /* ---------- 流式进度卡（日线/财报共用） ---------- */
 
+const ABORT_REASON_LABEL: Record<string, string> = {
+  proxy_pool_dead: '代理与直连均不可用，已中止',
+  stalled: '任务长时间无响应，已中止',
+  workers_exited: '后台任务异常退出，已中止',
+};
+
 const ProgressCard: React.FC<{
   progress: UpdateStreamEvent;
   runningTitle: string;
 }> = ({ progress, runningTitle }) => (
   <Card className="p-4">
     <div className="flex items-center justify-between mb-2">
-      <span className="text-sm text-white font-medium">
-        {progress.event === 'complete'
-          ? '✅ 更新完成'
-          : progress.event === 'error'
-          ? '❌ 更新出错'
-          : runningTitle}
-      </span>
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-white font-medium">
+          {progress.event === 'complete'
+            ? '✅ 更新完成'
+            : progress.event === 'error'
+            ? '❌ 更新出错'
+            : runningTitle}
+        </span>
+        {progress.proxy_state === 'open' && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${stalenessStyle.warn}`}>
+            代理异常·直连降级
+          </span>
+        )}
+        {progress.proxy_state === 'dead' && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${stalenessStyle.stale}`}>
+            数据源不可达
+          </span>
+        )}
+      </div>
       {progress.total ? (
         <span className="text-xs text-gray-400">
           {progress.current || 0} / {progress.total}
@@ -164,12 +182,16 @@ const ProgressCard: React.FC<{
     ) : null}
     <div className="text-xs text-gray-400 mt-2">
       {progress.event === 'complete'
-        ? `成功 ${fmtNum(progress.success)} · 跳过 ${fmtNum(progress.skipped ?? progress.skipped_fresh)} · 失败 ${fmtNum(progress.failed)}`
+        ? `${progress.aborted && progress.abort_reason ? `${ABORT_REASON_LABEL[progress.abort_reason] || '已中止'} · ` : ''}` +
+          `成功 ${fmtNum(progress.success)} · 跳过 ${fmtNum(progress.skipped ?? progress.skipped_fresh)} · 失败 ${fmtNum(progress.failed)}`
         : progress.event === 'error'
         ? progress.message
+        : progress.note
+        ? progress.note
         : progress.symbol
         ? `当前: ${progress.symbol}`
         : '准备中…'}
+      {progress.event === 'progress' && !!progress.retries && ` · 重试 ${progress.retries}`}
     </div>
     {progress.event === 'complete' && !!progress.backfilled_count && (
       <div className="mt-2 pt-2 border-t border-dark-light">
