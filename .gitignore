@@ -72,6 +72,7 @@ backend/tests/*
 !backend/tests/test_turn_monitor.py
 !backend/tests/test_stock_info_backfill.py
 !backend/tests/common/
+!backend/tests/test_a_share_symbol_suffix.py
 
 # ==================== 环境变量 & 密钥 ====================
 .env

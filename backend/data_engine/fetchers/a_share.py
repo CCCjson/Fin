@@ -7,7 +7,21 @@ import pandas as pd
 import re
 from loguru import logger
 
+from common.market import add_exchange_suffix
 from data_engine.fetchers.base import BaseFetcher, MarketDataRequest, MarketDataResponse
+
+
+def _safe_symbol(code) -> str | None:
+    """裸码补后缀，脏码返回 None 由调用方跳过。
+
+    akshare 的股票列表里偶有非常规代码（退市整理、权证等）。单只坏码不该炸掉
+    整张列表，故在此吞掉 ValueError——fetcher 层失败返回空结构而非抛异常。
+    """
+    try:
+        return add_exchange_suffix(str(code).strip())
+    except ValueError as exc:
+        logger.warning(f"跳过无法识别的 A股代码 {code!r}: {exc}")
+        return None
 
 
 class AShareFetcher(BaseFetcher):
@@ -136,11 +150,12 @@ class AShareFetcher(BaseFetcher):
 
             result = []
             for _, row in matched.iterrows():
-                # 判断市场（6开头是上海，其他是深圳）
-                market_suffix = "SH" if row["代码"].startswith("6") else "SZ"
+                symbol = _safe_symbol(row["代码"])
+                if symbol is None:
+                    continue
 
                 result.append({
-                    "symbol": f"{row['代码']}.{market_suffix}",
+                    "symbol": symbol,
                     "name": row["名称"],
                     "market": "a_share",
                     "price": float(row["最新价"]) if row["最新价"] else None,
@@ -166,10 +181,12 @@ class AShareFetcher(BaseFetcher):
 
             result = []
             for _, row in df.iterrows():
-                market_suffix = "SH" if row["code"].startswith("6") else "SZ"
+                symbol = _safe_symbol(row["code"])
+                if symbol is None:
+                    continue
 
                 result.append({
-                    "symbol": f"{row['code']}.{market_suffix}",
+                    "symbol": symbol,
                     "name": row["name"],
                     "market": "a_share"
                 })
