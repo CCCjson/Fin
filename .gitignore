@@ -70,6 +70,7 @@ backend/tests/*
 !backend/tests/test_agent_batch3.py
 !backend/tests/test_alpha_lab_sandbox.py
 !backend/tests/test_turn_monitor.py
+!backend/tests/test_stock_info_backfill.py
 
 # ==================== 环境变量 & 密钥 ====================
 .env

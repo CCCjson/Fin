@@ -1,7 +1,7 @@
 """
 数据库连接管理模块
 """
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker, scoped_session, declarative_base
 from sqlalchemy.pool import NullPool
 import os
@@ -42,6 +42,33 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # 线程安全的会话
 ScopedSession = scoped_session(SessionLocal)
+
+
+def backfill_stock_info(conn) -> None:
+    """回填 stock_info 的 stock_type / exchange（幂等，init_db 每次启动都跑）。
+
+    exchange 只对 A股有意义：港股不作交易所细分，美股恒为 NULL。
+    历史实现按代码前缀回填且**未按 market 过滤**，导致港股 5 位码撞上 A股前缀
+    规则——`89988.HK`（阿里巴巴）被标成 `BJ`（北交所），4699 只港股全部受污染。
+    现改为：先清非 A股的脏值，再直接取 A股 symbol 自带的后缀。
+
+    不再按代码前缀猜的原因：前缀规则对指数存在无解歧义
+    （`000001.SH` 是上证指数，`000001.SZ` 是平安银行，同码不同所）。
+
+    Args:
+        conn: 已开启事务的 SQLAlchemy Connection。
+    """
+    conn.execute(text(
+        "UPDATE stock_info SET stock_type = 'stock' WHERE stock_type IS NULL"
+    ))
+    conn.execute(text(
+        "UPDATE stock_info SET exchange = NULL WHERE market != 'a_share'"
+    ))
+    for suffix in ("SH", "SZ", "BJ"):
+        conn.execute(text(
+            "UPDATE stock_info SET exchange = :ex "
+            "WHERE exchange IS NULL AND market = 'a_share' AND symbol LIKE :pat"
+        ), {"ex": suffix, "pat": f"%.{suffix}"})
 
 
 def init_db():
@@ -154,23 +181,7 @@ def init_db():
     # 自动迁移：回填 stock_info 表的 stock_type 和 exchange
     if "stock_info" in insp.get_table_names():
         with engine.begin() as conn:
-            # stock_type 为空的默认设为 stock
-            conn.execute(text(
-                "UPDATE stock_info SET stock_type = 'stock' WHERE stock_type IS NULL"
-            ))
-            # exchange 为空的根据 symbol 推断
-            conn.execute(text(
-                "UPDATE stock_info SET exchange = 'SH' "
-                "WHERE exchange IS NULL AND symbol LIKE '6%'"
-            ))
-            conn.execute(text(
-                "UPDATE stock_info SET exchange = 'SZ' "
-                "WHERE exchange IS NULL AND (symbol LIKE '0%' OR symbol LIKE '3%')"
-            ))
-            conn.execute(text(
-                "UPDATE stock_info SET exchange = 'BJ' "
-                "WHERE exchange IS NULL AND (symbol LIKE '4%' OR symbol LIKE '8%')"
-            ))
+            backfill_stock_info(conn)
 
     # 自动迁移：为 orders/trades/signals 表添加 name 列，并从 stock_info 回填历史快照
     for _tbl in ("orders", "trades", "signals"):
