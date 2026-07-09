@@ -164,7 +164,13 @@ class AShareDeepHistoryJob:
 
         session = get_session()
         try:
-            stock_q = session.query(StockInfo).filter(StockInfo.market == "a_share")
+            # is_active=0（含 2026-07-09 Jason 拍板停用的全部 ETF）不进候选；
+            # stock_type 再排一道 etf，防止将来列表重导入误激活后又被深历史抓回来
+            stock_q = session.query(StockInfo).filter(
+                StockInfo.market == "a_share",
+                StockInfo.is_active == 1,
+                StockInfo.stock_type != "etf",
+            )
             if wanted_symbols:
                 stock_q = stock_q.filter(StockInfo.symbol.in_(wanted_symbols))
             stocks = stock_q.all()
