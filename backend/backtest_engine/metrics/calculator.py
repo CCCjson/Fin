@@ -5,6 +5,8 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict
 
+from loguru import logger
+
 
 class MetricsCalculator:
     """性能指标计算器"""
@@ -124,8 +126,9 @@ class MetricsCalculator:
                     "start_date": df.iloc[max_dd_start_idx]["timestamp"],
                     "end_date": df.iloc[max_dd_idx]["timestamp"]
                 }
-        except:
-            pass
+        except (IndexError, KeyError, ValueError) as exc:
+            # 起始点定位失败（空切片 / idxmax 无解），退化为不带日期的结果
+            logger.warning(f"最大回撤起始点定位失败，退化为无日期结果: {exc}")
 
         return {
             "max_drawdown": abs(max_dd) if not pd.isna(max_dd) else 0.0,

@@ -1,6 +1,10 @@
 """
 测试 OpenCTP 连接
 """
+
+import pytest
+
+pytestmark = pytest.mark.network
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))

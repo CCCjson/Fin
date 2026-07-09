@@ -1,6 +1,11 @@
 """
 测试历史记录数据库功能
 """
+
+import pytest
+
+# 直接读写生产 history.db（save_signal 重复插入返回 None），同一天跑两遍必挂
+pytestmark = pytest.mark.integration
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))

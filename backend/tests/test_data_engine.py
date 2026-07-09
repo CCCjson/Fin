@@ -1,6 +1,10 @@
 """
 数据引擎测试脚本
 """
+
+import pytest
+
+pytestmark = pytest.mark.integration
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta

@@ -136,7 +136,7 @@ async def run_and_save(req: BacktestRunAndSaveRequest):
         task_id = f"cpp_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
         # 2. 保存任务
-        repo = HistoryRepository()  # noqa: assigned to outer scope for finally
+        repo = HistoryRepository()  # 赋给外层作用域，供 finally 关闭
         symbols = [req.symbol]
         if req.symbol2:
             symbols.append(req.symbol2)
@@ -394,6 +394,34 @@ class BatchBacktestRequest(BaseModel):
     strategies: Optional[List[Dict[str, Any]]] = None  # [{strategy, params}]
     # param_optimize
     param_grid: Optional[Dict[str, List[Any]]] = None  # {param_name: [v1,v2,...]}
+
+
+def _build_ranking(results: List[Dict], mode: str) -> List[Dict]:
+    """按 sharpe_ratio 降序构建批量回测排行榜。
+
+    mode 目前不参与排序（各模式都按夏普排），保留入参是为了排序口径将来能按模式分化。
+    """
+    completed = [r for r in results if r.get("status") == "completed" and r.get("metrics")]
+    completed.sort(key=lambda x: _safe_float(x["metrics"].get("sharpe_ratio"), -999), reverse=True)
+    ranking = []
+    for rank, r in enumerate(completed, 1):
+        m = r["metrics"]
+        ranking.append({
+            "rank": rank,
+            "task_id": r["task_id"],
+            "symbol": r.get("symbol", ""),
+            "strategy": r.get("strategy", ""),
+            "params": r.get("params", {}),
+            "label": r.get("label", ""),
+            "total_return_pct": round(_safe_float(m.get("total_return_pct")), 2),
+            "annual_return": round(_safe_float(m.get("annual_return")), 2),
+            "sharpe_ratio": round(_safe_float(m.get("sharpe_ratio")), 4),
+            "max_drawdown_pct": round(_safe_float(m.get("max_drawdown_pct")), 2),
+            "win_rate": round(_safe_float(m.get("win_rate")), 2),
+            "profit_factor": round(_safe_float(m.get("profit_factor")), 2),
+            "total_trades": int(_safe_float(m.get("total_trades"))),
+        })
+    return ranking
 
 
 def _expand_batch_tasks(req: BatchBacktestRequest) -> List[Dict[str, Any]]:

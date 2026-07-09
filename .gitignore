@@ -73,6 +73,7 @@ backend/tests/*
 !backend/tests/test_stock_info_backfill.py
 !backend/tests/common/
 !backend/tests/test_a_share_symbol_suffix.py
+!backend/tests/test_lint_baseline_guard.py
 
 # ==================== 环境变量 & 密钥 ====================
 .env

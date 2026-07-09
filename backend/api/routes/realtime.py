@@ -99,7 +99,7 @@ async def get_realtime_quotes(
     }
 
 
-from data_engine.fetchers.realtime import compute_statistics as _compute_statistics  # noqa: E402（下沉后回导）
+from data_engine.fetchers.realtime import compute_statistics as _compute_statistics  # noqa: E402
 
 
 def _save_quotes(quotes: list) -> int:

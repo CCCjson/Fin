@@ -1,6 +1,10 @@
 """
 测试API接口
 """
+
+import pytest
+
+pytestmark = pytest.mark.integration
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))

@@ -123,7 +123,8 @@ class BacktestExecutor:
                             # pandas Timestamp 转字符串
                             try:
                                 date_str = timestamp.strftime('%Y-%m-%d')
-                            except:
+                            except (AttributeError, ValueError):
+                                # 已经是字符串或非 Timestamp 类型，退化为切片取日期
                                 date_str = str(timestamp)[:10]
 
                             all_daily_records.append({

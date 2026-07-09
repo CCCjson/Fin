@@ -54,3 +54,7 @@ lxml>=5.0.0                 # bs4 解析器后端
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.3
+
+# Lint / Type check（配置见 backend/pyproject.toml，规范见 docs/CODING_STANDARDS.md §10）
+ruff>=0.15
+mypy>=1.8

@@ -237,7 +237,7 @@ async def search_stocks(
         results = (
             session.query(StockInfo)
             .filter(
-                StockInfo.is_active == True,
+                StockInfo.is_active.is_(True),
                 or_(
                     StockInfo.symbol.like(keyword),
                     StockInfo.name.like(keyword),

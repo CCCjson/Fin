@@ -7,7 +7,7 @@
 - symbol 后缀 → 市场 的推断统一走 `infer_market_from_symbol()`，供 data_engine.factory、
   backtest portfolio、news_scheduler 等处委托，不再各写各的后缀判断。
 """
-from typing import Literal, Optional
+from typing import Literal
 
 # canonical 市场标识
 Market = Literal["a_share", "hk_stock", "us_stock"]
@@ -44,7 +44,7 @@ _MARKET_ALIASES = {
 }
 
 
-def normalize_market(raw: Optional[str], default: str = A_SHARE) -> str:
+def normalize_market(raw: str | None, default: str = A_SHARE) -> str:
     """把任意市场写法归一到 canonical（a_share/hk_stock/us_stock）。
 
     Args:
@@ -68,12 +68,12 @@ def normalize_market(raw: Optional[str], default: str = A_SHARE) -> str:
 _CPP_WIRE = {A_SHARE: "a_share", HK_STOCK: "hk", US_STOCK: "us"}
 
 
-def to_cpp_market(raw: Optional[str]) -> str:
+def to_cpp_market(raw: str | None) -> str:
     """把任意市场写法翻成 C++ 回测服务认的 wire 写法（us/hk/a_share）。"""
     return _CPP_WIRE.get(normalize_market(raw), "a_share")
 
 
-def infer_market_from_symbol(symbol: Optional[str]) -> str:
+def infer_market_from_symbol(symbol: str | None) -> str:
     """按 symbol 后缀推断市场：.SH/.SZ/.BJ = A股，.HK = 港股，其余（纯字母 ticker）= 美股。
 
     symbol 为空时兜底返回 a_share。全项目后缀推断的唯一实现，其余处委托本函数。
