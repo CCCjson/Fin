@@ -14,7 +14,7 @@ import threading
 from urllib.parse import urlparse, parse_qs, unquote
 
 from knowledge_engine.websearch.session import (
-    make_cffi_session, resolve_proxy, USER_AGENT, HTTP_TIMEOUT,
+    make_cffi_session, resolve_proxy, USER_AGENT, HTTP_TIMEOUT, bounded_get,
 )
 
 DDG_HTML = "https://html.duckduckgo.com/html/"
@@ -86,12 +86,14 @@ class _DDG:
         return self._direct
 
     def _one_get(self, session, q: str):
-        """单次 GET（含 202 软封退避重试一次）。失败抛异常。"""
-        r = session.get(DDG_HTML, params={"q": q}, headers=HEADERS, timeout=HTTP_TIMEOUT)
-        if r.status_code == 202:
+        """单次 GET（含 202 软封退避重试一次），返回 Capped。失败抛异常。"""
+        cap = bounded_get(session, DDG_HTML, mode="bytes",
+                          params={"q": q}, headers=HEADERS, timeout=HTTP_TIMEOUT)
+        if cap.status == 202:
             time.sleep(self.BACKOFF_ON_202)
-            r = session.get(DDG_HTML, params={"q": q}, headers=HEADERS, timeout=HTTP_TIMEOUT)
-        return r
+            cap = bounded_get(session, DDG_HTML, mode="bytes",
+                              params={"q": q}, headers=HEADERS, timeout=HTTP_TIMEOUT)
+        return cap
 
     @property
     def base_gap(self) -> float:
@@ -111,19 +113,19 @@ class _DDG:
         with self._lock:                       # 节流串行（进程级）
             self._throttle()
             try:
-                r = self._one_get(self.session, q)
+                cap = self._one_get(self.session, q)
             except Exception:
                 # 主通道连接失败（如 Clash 关了但 auto 选了代理，或代理 stale）→ 直连兜底重试一次
                 if resolve_proxy() is not None:
                     try:
-                        r = self._one_get(self._direct_session(), q)
+                        cap = self._one_get(self._direct_session(), q)
                     except Exception:
                         return []
                 else:
                     return []
-            if r.status_code != 200:
+            if cap.status != 200:
                 return []
-            return _parse_results(r.text)
+            return _parse_results((cap.data or b"").decode("utf-8", "ignore"))
 
 
 _singleton: _DDG | None = None

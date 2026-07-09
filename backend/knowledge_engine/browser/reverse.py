@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from loguru import logger
 
 from knowledge_engine.browser import sessions
+from knowledge_engine.websearch.session import bounded_get, MAX_RESPONSE_BYTES
 
 
 # cookie 过期时，部分站返回 200 + "登录失效" body（不是 403），需照样 re-discover 刷 cookie。
@@ -38,14 +39,24 @@ def _looks_auth_failed(data) -> bool:
 
 # 页面内 evaluate-fetch：整体 try/catch + AbortController 超时（防跨源接口挂死
 # 拖到 page.evaluate 的 30s 默认超时），网络错/超时返哨兵 {status:0}（§3.20 第 8 步）
-_EVAL_FETCH = """async ([url, headers, timeoutMs]) => {
+_EVAL_FETCH = """async ([url, headers, timeoutMs, maxBytes]) => {
     const h = Object.assign({'accept': '*/*'}, headers || {});
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs || 8000);
     try {
         const r = await fetch(url, {headers: h, credentials: 'include', signal: ctrl.signal});
+        // 体积封顶：先看 content-length 预判，再按已读文本长度兜底，超限不解析（防大响应撑爆内存）
+        const cl = parseInt(r.headers.get('content-length') || '0', 10);
+        if (maxBytes && cl && cl > maxBytes) {
+            return {status: r.status, json: null, too_large: true, size: cl};
+        }
+        let txt = '';
+        try { txt = await r.text(); } catch (e) { return {status: r.status, json: null}; }
+        if (maxBytes && txt.length > maxBytes) {
+            return {status: r.status, json: null, too_large: true, size: txt.length};
+        }
         let j = null;
-        try { j = await r.json(); } catch (e) {}
+        try { j = JSON.parse(txt); } catch (e) {}
         return {status: r.status, json: j};
     } catch (e) {
         return {status: 0, json: null};
@@ -57,9 +68,9 @@ _EVAL_FETCH = """async ([url, headers, timeoutMs]) => {
 
 def evaluate_fetch(page, api_url: str, gate_headers: Optional[dict] = None,
                    timeout_ms: int = 8000) -> dict:
-    """在浏览器上下文内 fetch api_url，返回 {status, json}。内置 AbortController 超时。"""
+    """在浏览器上下文内 fetch api_url，返回 {status, json}（超 50MB 返 too_large）。内置超时。"""
     try:
-        return page.evaluate(_EVAL_FETCH, [api_url, gate_headers or {}, timeout_ms])
+        return page.evaluate(_EVAL_FETCH, [api_url, gate_headers or {}, timeout_ms, MAX_RESPONSE_BYTES])
     except Exception as e:
         logger.debug(f"evaluate_fetch 异常：{str(e)[:80]}")
         return {"status": 0, "json": None}
@@ -149,17 +160,23 @@ def fast_fetch(
     try:
         for attempt in range(retries):
             try:
-                resp = session.request(
-                    method.upper(), api_url, headers=headers,
-                    params=params, proxies=proxies, timeout=20,
+                # bounded_get：流式 + 50MB 上限，杜绝大响应把整份 body 读进内存
+                cap = bounded_get(
+                    session, api_url, mode="bytes", method=method,
+                    headers=headers, params=params, proxies=proxies, timeout=20,
                 )
-                if resp.status_code == 200:
+                sc = cap.status
+                _body = (cap.data or b"").decode("utf-8", "ignore")[:2000]  # 仅诊断用，已截断
+                if sc == 200:
+                    if not cap.usable_json:                 # 超上限/被截断 → JSON 不可靠，放弃
+                        logger.warning(f"fast_fetch 200 但响应过大(>上限)，已保护放弃：{api_url}")
+                        diag.update(status=200, error="响应过大，超过内存上限（已按上限保护）", body="")
+                        return None
                     try:
-                        j = resp.json()
+                        j = json.loads(cap.data)
                     except Exception:
                         logger.warning(f"fast_fetch 200 但非 JSON：{api_url}")
-                        diag.update(status=200, error="200 但非 JSON",
-                                    body=(resp.text or "")[:2000])
+                        diag.update(status=200, error="200 但非 JSON", body=_body)
                         return None
                     # 200 但登录态失效（cookie 过期常见）→ re-discover 刷 cookie 重试
                     if not refreshed_once and _looks_auth_failed(j):
@@ -171,17 +188,15 @@ def fast_fetch(
                         return None
                     sessions.report(session_id, on_progress, "done", url=api_url)
                     return j
-                if resp.status_code in (401, 403):
-                    logger.info(f"fast_fetch {resp.status_code}，触发 re-discover 刷新 gate 头 + cookie…")
+                if sc in (401, 403):
+                    logger.info(f"fast_fetch {sc}，触发 re-discover 刷新 gate 头 + cookie…")
                     sessions.report(session_id, on_progress, "retry_403", url=api_url)
                     if _refresh():
                         continue
-                    diag.update(status=resp.status_code, error=f"HTTP {resp.status_code}",
-                                body=(resp.text or "")[:2000])
+                    diag.update(status=sc, error=f"HTTP {sc}", body=_body)
                     return None
-                logger.warning(f"fast_fetch {resp.status_code}：{api_url}（尝试 {attempt + 1}）")
-                diag.update(status=resp.status_code, error=f"HTTP {resp.status_code}",
-                            body=(resp.text or "")[:2000])
+                logger.warning(f"fast_fetch {sc}：{api_url}（尝试 {attempt + 1}）")
+                diag.update(status=sc, error=f"HTTP {sc}", body=_body)
             except Exception as e:
                 logger.warning(f"fast_fetch 异常：{str(e)[:80]}（尝试 {attempt + 1}）")
                 diag.update(status=None, error=str(e), body="")

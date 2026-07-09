@@ -384,9 +384,11 @@ def main():
 
     logger.info(f"已完成: {len(completed_symbols)} 只")
 
-    # 获取三个列表
+    # 获取列表（ETF 已停用：2026-07-09 Jason 拍板不交易 ETF、不再获取其数据，
+    # 库里 1393 只 ETF 已全部 is_active=0。这里不再调 get_etf_list，否则
+    # save_stock_list_to_db 会把它们重新置回 is_active=1 复活）
     stocks = get_all_a_share_list()
-    etfs = get_etf_list(proxy_mgr=proxy_mgr)
+    etfs: List[Dict] = []
     indices = get_index_list()
 
     # 合并

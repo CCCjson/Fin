@@ -126,7 +126,9 @@ def discover(url: str, proxy: Optional[dict] = None, settle_ms: int = 6000,
             fields = _top_keys(sj)
             # 存一小段数据样本（截断），让 discover 结果常常直接含答案
             sample = ""
-            if sj is not None:
+            if sampled.get("too_large"):             # 响应超 50MB：跳过取样，只记端点，防撑爆内存
+                sample = "(响应过大，已跳过取样)"
+            elif sj is not None:
                 try:
                     import json as _json
                     sample = _json.dumps(sj, ensure_ascii=False)[:600]

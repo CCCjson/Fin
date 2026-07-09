@@ -133,6 +133,13 @@ async def health_check():
 @app.on_event("startup")
 async def startup_event():
     """应用启动事件"""
+    # 内存泄漏追踪器（默认关闭；FIN_MEMTRACE=1 才启动，零成本）。放最前面尽早取基线。
+    try:
+        from memtrace import maybe_start_memtrace
+        maybe_start_memtrace()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"memtrace 启动失败（不影响主服务）: {e}")
+
     logger.info("=" * 80)
     logger.info("量化交易系统API启动")
     logger.info("=" * 80)

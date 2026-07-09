@@ -18,7 +18,7 @@ from loguru import logger
 from lxml import etree
 
 from knowledge_engine.ingest import IngestPipeline
-from knowledge_engine.websearch.session import make_plain_session
+from knowledge_engine.websearch.session import make_plain_session, bounded_get
 from knowledge_engine.websearch.fetch import read_url
 
 ARXIV_API = "http://export.arxiv.org/api/query"
@@ -87,9 +87,10 @@ def _fetch_page(query: str, start: int, max_results: int) -> List[Dict[str, Any]
     }
     url = f"{ARXIV_API}?{urlencode(params)}"
     session = make_plain_session()
-    resp = session.get(url, timeout=30)
-    resp.raise_for_status()
-    root = etree.fromstring(resp.content)
+    cap = bounded_get(session, url, mode="bytes", timeout=30)  # XML 封顶 50MB
+    if cap.status >= 400 or cap.status == 0:
+        raise RuntimeError(f"arxiv HTTP {cap.status}")
+    root = etree.fromstring(cap.data or b"")
     return [_parse_entry(e) for e in root.findall("atom:entry", _ATOM_NS)]
 
 

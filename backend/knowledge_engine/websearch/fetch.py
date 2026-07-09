@@ -13,6 +13,7 @@ from loguru import logger
 
 from knowledge_engine.websearch.session import (
     make_plain_session, make_cffi_session, USER_AGENT, DOWNLOAD_TIMEOUT,
+    bounded_get, Capped,
 )
 
 HEADERS = {
@@ -45,27 +46,49 @@ def _extension_for(content_type: str, url: str) -> str:
     return ".bin"
 
 
-def _download(url: str, session) -> tuple[bytes, str] | None:
-    """稳健 GET，返回 (bytes, content_type) 或 None。"""
-    try:
-        r = session.get(url, headers=HEADERS, timeout=DOWNLOAD_TIMEOUT, allow_redirects=True)
-    except Exception:
-        return None
-    if r.status_code != 200:
-        return None
-    try:
-        content = r.content
-    except Exception:
-        return None
-    if not content or len(content) < 200:
-        return None
-    return content, r.headers.get("Content-Type", "")
+def _cleanup(cap: "Capped | None") -> None:
+    """删掉落盘的临时 PDF 文件。"""
+    if cap is not None and cap.path:
+        try:
+            os.unlink(cap.path)
+        except OSError:
+            pass
 
 
-def _extract_pdf(blob: bytes, pages: int) -> tuple[str, str]:
+def _download(url: str, session) -> "Capped | None":
+    """稳健 GET（有 50MB 上限、PDF 自动切块落盘）。返回 Capped 或 None。
+
+    Capped.path 有值 → PDF 落盘（内存恒定）；Capped.data 有值 → HTML/其它在内存。
+    """
+    try:
+        cap = bounded_get(url=url, session=session, mode="auto",
+                          headers=HEADERS, timeout=DOWNLOAD_TIMEOUT)
+    except Exception:
+        return None
+    if cap.status != 200:
+        _cleanup(cap)
+        return None
+    if cap.too_large:
+        logger.warning(f"read_url 响应过大跳过（>上限）：{url} [{cap.content_type}]")
+        return None
+    if cap.path is not None:
+        try:
+            if os.path.getsize(cap.path) < 200:
+                _cleanup(cap)
+                return None
+        except OSError:
+            _cleanup(cap)
+            return None
+    elif not cap.data or len(cap.data) < 200:
+        return None
+    return cap
+
+
+def _extract_pdf(path: str, pages: int) -> tuple[str, str]:
+    """从落盘的 PDF 文件解析（fitz.open filename，内存比 stream=bytes 更省）。"""
     try:
         import fitz  # PyMuPDF
-        doc = fitz.open(stream=blob, filetype="pdf")
+        doc = fitz.open(filename=path)
         n = min(pages, doc.page_count)
         text = "\n".join(doc[i].get_text() for i in range(n))
         title = (doc.metadata or {}).get("title", "") if doc.metadata else ""
@@ -135,13 +158,14 @@ def read_url(url: str, max_chars: int | None = None, pdf_pages: int = 8) -> dict
         logger.warning(f"read_url 抓取失败: {url}")
         return {"title": "", "url": url, "snippet": "", "text": "", "source": f"url:{_domain(url)}"}
 
-    blob, ct = got
-    ext = _extension_for(ct, url)
-    if ext == ".pdf":
-        text, title = _extract_pdf(blob, pdf_pages)
-        title = title or _domain(url)
-    else:
-        text, title = _extract_html(blob, url)
+    try:
+        if got.path is not None:                     # PDF：从落盘文件解析
+            text, title = _extract_pdf(got.path, pdf_pages)
+            title = title or _domain(url)
+        else:                                        # HTML/其它：内存 bytes
+            text, title = _extract_html(got.data, url)
+    finally:
+        _cleanup(got)
 
     return {
         "title": title, "url": url, "snippet": "",

@@ -8,11 +8,14 @@ UA 用 knowledge_engine config.get_edgar_ua()（EDGAR fair-use 要求带邮箱�
 EDGAR FTS 不返回正文 snippet → 命中即合成诚实 snippet（query 词保证在文中）；
 要正文须把返回的 url 喂给 read_url。用 plain requests（EDGAR 不挑 TLS）。
 """
+import json
 import time
 import threading
 
 from knowledge_engine.config import get_edgar_ua
-from knowledge_engine.websearch.session import make_plain_session, resolve_proxy, HTTP_TIMEOUT
+from knowledge_engine.websearch.session import (
+    make_plain_session, resolve_proxy, HTTP_TIMEOUT, bounded_get,
+)
 
 SEARCH_URL = "https://efts.sec.gov/LATEST/search-index"
 ARCHIVE_FMT = "https://www.sec.gov/Archives/edgar/data/{cik}/{adsh}/{file}"
@@ -78,26 +81,27 @@ class _SEC:
         self._last_call = time.time()
 
     def _one_get(self, session, q: str, forms: str):
-        return session.get(SEARCH_URL, params={"q": q, "forms": forms},
+        return bounded_get(session, SEARCH_URL, mode="bytes",
+                           params={"q": q, "forms": forms},
                            headers=_headers(), timeout=HTTP_TIMEOUT)
 
     def http_search(self, q: str, forms: str = TARGET_FORMS) -> list[dict]:
         with self._lock:
             self._throttle()
             try:
-                r = self._one_get(self.session, q, forms)
+                cap = self._one_get(self.session, q, forms)
             except Exception:
                 if resolve_proxy() is not None:        # 主通道连接失败 → 直连兜底
                     try:
-                        r = self._one_get(self._direct_session(), q, forms)
+                        cap = self._one_get(self._direct_session(), q, forms)
                     except Exception:
                         return []
                 else:
                     return []
-            if r.status_code != 200:
+            if cap.status != 200 or not cap.usable_json:
                 return []
             try:
-                data = r.json()
+                data = json.loads(cap.data)
             except Exception:
                 return []
             return data.get("hits", {}).get("hits", [])

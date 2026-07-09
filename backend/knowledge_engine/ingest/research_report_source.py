@@ -9,8 +9,8 @@ akshare `stock_research_report_em` 免费直连可取；全文 PDF (pdf.dfcfw.co
   快、几乎不吃 CPU），把最重的 PDF 全文解析（fitz）从主循环摘掉；需要全文时显式传
   full_text=True，或跑完元数据后走 upgrade_existing_to_full_text 按需补齐（doc_id 幂等）。
 
-⚠️ 国内源必须 Clash-无关：改走 net.domestic.domestic_akshare 包一层（快代理轮换+
-直连兜底）。不能只靠 apply_proxy_env()——那个仅在判定为直连模式时清代理 env，
+⚠️ 国内源必须 Clash-无关：改走 net.domestic.domestic_akshare 包一层（快代理轮换重试，
+绝不直连兜底）。不能只靠 apply_proxy_env()——那个仅在判定为直连模式时清代理 env，
 Clash 存活时不会纠正 .env 里可能配错端口的残留代理值，仍会 ProxyError（已现场验证）。
 """
 import json
@@ -73,18 +73,36 @@ def _fetch_pdf_text(url: str, max_pages: int = 20) -> str:
     if not url:
         return ""
     try:
-        from curl_cffi import requests as cffi
+        import os
         import fitz
+        from curl_cffi import requests as cffi
+        from knowledge_engine.websearch.session import bounded_get
         s = cffi.Session(impersonate="chrome120")
-        r = s.get(url, headers={"referer": "https://data.eastmoney.com/"},
-                  timeout=30, proxies={"http": "", "https": ""})
-        if r.status_code != 200 or r.content[:4] != b"%PDF":
+        # 切块落盘（内存恒定），不把整份 PDF 读进内存
+        cap = bounded_get(s, url, mode="file", file_suffix=".pdf",
+                          headers={"referer": "https://data.eastmoney.com/"},
+                          timeout=30, proxies={"http": "", "https": ""})
+        if cap.status != 200 or not cap.path:
+            if cap.path:
+                try:
+                    os.unlink(cap.path)
+                except OSError:
+                    pass
             return ""
-        doc = fitz.open(stream=r.content, filetype="pdf")
-        n = min(max_pages, doc.page_count)
-        text = "\n".join(doc[i].get_text() for i in range(n))
-        doc.close()
-        return text
+        try:
+            with open(cap.path, "rb") as _f:
+                if _f.read(4) != b"%PDF":
+                    return ""
+            doc = fitz.open(filename=cap.path)
+            n = min(max_pages, doc.page_count)
+            text = "\n".join(doc[i].get_text() for i in range(n))
+            doc.close()
+            return text
+        finally:
+            try:
+                os.unlink(cap.path)
+            except OSError:
+                pass
     except Exception as e:  # noqa: BLE001
         logger.debug(f"研报 PDF 抽全文失败 {url}: {e}")
         return ""
