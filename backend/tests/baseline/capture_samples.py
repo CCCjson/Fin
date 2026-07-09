@@ -106,23 +106,24 @@ def capture(name: str, out_dir: Path) -> dict[str, Any]:
         print(f"  ✗ {error}", flush=True)
 
     elapsed = round(time.monotonic() - started, 1)
-    (out_dir / f"{name}.md").write_text(body or "(无正文)")
+    # alpha_lab 不吐 markdown chunk，它的产出全在 envelope 的 message/widgets 里；
+    # 落盘时把 envelope 的正文也拼进 .md，否则该任务的样本是空的、没法 diff。
+    document = body or envelope.get("message", "")
+    (out_dir / f"{name}.md").write_text(document or "(无正文)")
 
     meta = {
         "task": name,
         "elapsed_s": elapsed,
         "body_chars": len(body),
+        "document_chars": len(document),
         "events": dict(events),
-        "envelope_ok": envelope.get("ok"),
-        "envelope_business_result": envelope.get("business_result"),
-        "envelope_error_code": envelope.get("error_code"),
-        "envelope_tokens": envelope.get("tokens"),
+        "envelope": envelope,       # 完整存档：迁移后逐字段 diff 的依据
         "error": error,
     }
     (out_dir / f"{name}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1))
 
     if not error:
-        print(f"  ✓ {len(body)} 字 / {elapsed}s / ok={envelope.get('ok')}", flush=True)
+        print(f"  ✓ {len(document)} 字 / {elapsed}s / ok={envelope.get('ok')}", flush=True)
     return meta
 
 
