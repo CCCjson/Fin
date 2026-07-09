@@ -35,8 +35,18 @@ def domain_of(url: str) -> str:
         return ""
 
 
+# 凭据类字段单独存 <domain>.secrets.json（gitignore），不进版本库。
+# cookie 是登录态（如 CapitalIQ 付费订阅会话、雪球 xq_a_token），
+# 而端点/gate 头/字段样例是逆向工作的成果，应该跟着代码走。
+_SECRET_KEYS = ("cookies", "cookies_updated_at")
+
+
 def _json_path(domain: str) -> str:
     return os.path.join(get_scrapers_config_dir(), f"{domain}.json")
+
+
+def _secrets_path(domain: str) -> str:
+    return os.path.join(get_scrapers_config_dir(), f"{domain}.secrets.json")
 
 
 def _md_path(domain: str) -> str:
@@ -52,6 +62,27 @@ def _read_json(path: str) -> Optional[dict]:
         return None
 
 
+def _merge_secrets(cfg: Optional[dict], domain: str) -> Optional[dict]:
+    """把 <domain>.secrets.json 里的凭据并回 cfg。上游一律读 cfg["cookies"]，无感。"""
+    if cfg is None:
+        return None
+    secrets = _read_json(_secrets_path(domain)) if os.path.exists(_secrets_path(domain)) else None
+    if secrets:
+        cfg.update(secrets)
+    return cfg
+
+
+def _write_secrets(domain: str, secrets: dict) -> None:
+    if not secrets:
+        return
+    path = _secrets_path(domain)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(secrets, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+    os.chmod(path, 0o600)
+
+
 def load_site_config(domain: str) -> Optional[dict]:
     """读站点配置；不存在返 None。domain 可传完整 url，自动归一。
 
@@ -61,19 +92,19 @@ def load_site_config(domain: str) -> Optional[dict]:
     domain = domain_of(domain) or domain
     exact = _json_path(domain)
     if os.path.exists(exact):
-        return _read_json(exact)
+        return _merge_secrets(_read_json(exact), domain)
 
     # 后缀匹配：扫配置目录
     cfg_dir = get_scrapers_config_dir()
     if not os.path.isdir(cfg_dir):
         return None
     for fn in os.listdir(cfg_dir):
-        if not fn.endswith(".json"):
+        if not fn.endswith(".json") or fn.endswith(".secrets.json"):
             continue
         cand = fn[:-5]                              # 去 .json
         if domain.endswith("." + cand) or cand.endswith("." + domain):
             logger.info(f"站点配置后缀匹配：{domain} → {cand}")
-            return _read_json(os.path.join(cfg_dir, fn))
+            return _merge_secrets(_read_json(os.path.join(cfg_dir, fn)), cand)
     return None
 
 
@@ -86,10 +117,16 @@ def save_site_config(cfg: dict) -> str:
     cfg.setdefault("discovered_at", datetime.now().isoformat(timespec="seconds"))
 
     os.makedirs(get_scrapers_config_dir(), exist_ok=True)
+
+    # 凭据剥离到 <domain>.secrets.json；主配置进版本库
+    secrets = {k: cfg[k] for k in _SECRET_KEYS if k in cfg}
+    public = {k: v for k, v in cfg.items() if k not in _SECRET_KEYS}
+    _write_secrets(domain, secrets)
+
     jpath = _json_path(domain)
     tmp = jpath + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+        json.dump(public, f, ensure_ascii=False, indent=2)
     os.replace(tmp, jpath)                       # 原子替换
 
     try:
