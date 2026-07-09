@@ -1,0 +1,64 @@
+{
+  "domain": "mguba.eastmoney.com",
+  "page_url": "https://mguba.eastmoney.com/mguba/list/600519",
+  "endpoints": [
+    {
+      "name": "companyinfo",
+      "url": "https://eminterservice.securities.eastmoney.com/api/data/companyinfo?data=%7B%22appKey%22%3A%22%22%2C%22client%22%3A%22wap%22%2C%22method%22%3A%22qgqm%22%2C%22args%22%3A%7B%22fundId%22%3A%22%22%2C%22hkFundId%22%3A%22%22%2C%22uid%22%3A%22%22%2C%22customerId%22%3A%22%22%2C%22custid%22%3A%22%22%2C%22pageId%22%3A%22Stock_quotes_page%22%2C%22positions%22%3A%22Stock_quotes_page_gbxf_text%22%2C%22stockCodeWithoutMarket%22%3A%22600519%22%2C%22marketCode%22%3A1%7D%7D&t=0.9356049889991259",
+      "url_base": "https://eminterservice.securities.eastmoney.com/api/data/companyinfo",
+      "default_params": {
+        "data": "{\"appKey\":\"\",\"client\":\"wap\",\"method\":\"qgqm\",\"args\":{\"fundId\":\"\",\"hkFundId\":\"\",\"uid\":\"\",\"customerId\":\"\",\"custid\":\"\",\"pageId\":\"Stock_quotes_page\",\"positions\":\"Stock_quotes_page_gbxf_text\",\"stockCodeWithoutMarket\":\"600519\",\"marketCode\":1}}",
+        "t": "0.9356049889991259"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://guba.eastmoney.com/list,600519.html?jumph5=1",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    },
+    {
+      "name": "GetWebTape",
+      "url": "https://eminterservice.eastmoney.com/UserData/GetWebTape?code=sh600519",
+      "url_base": "https://eminterservice.eastmoney.com/UserData/GetWebTape",
+      "default_params": {
+        "code": "sh600519"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://guba.eastmoney.com/list,600519.html?jumph5=1",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    },
+    {
+      "name": "getcontextid",
+      "url": "https://i.eastmoney.com/websitecaptcha/api/getcontextid",
+      "url_base": "https://i.eastmoney.com/websitecaptcha/api/getcontextid",
+      "default_params": {},
+      "method": "POST",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://i.eastmoney.com/websitecaptcha/slidervalid",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-requested-with": "XMLHttpRequest"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    }
+  ],
+  "discovered_at": "2026-07-02T21:39:33"
+}

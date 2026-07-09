@@ -1,0 +1,8 @@
+{
+  "domain": "gbapi.eastmoney.com",
+  "page_url": "https://gbapi.eastmoney.com/webarticlelist/api/Article/Articlelist?code=600519&sorttype=1&ps=20&p=1&type=0",
+  "endpoints": {
+    "endpoints": []
+  },
+  "discovered_at": "2026-07-02T22:02:12"
+}

@@ -1,0 +1,27 @@
+{
+  "domain": "capitaliq.spglobal.com",
+  "page_url": "https://www.capitaliq.spglobal.com/web/client",
+  "endpoints": [
+    {
+      "name": "getSNLOAuthTokenInfo",
+      "url": "https://www.capitaliq.spglobal.com/SNL.Services.Security.Service/utilities/getSNLOAuthTokenInfo?_=1783044537580",
+      "url_base": "https://www.capitaliq.spglobal.com/SNL.Services.Security.Service/utilities/getSNLOAuthTokenInfo",
+      "default_params": {
+        "_": "1783044537580"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://www.capitaliq.spglobal.com/web/client",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-requested-with": "XMLHttpRequest"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    }
+  ],
+  "discovered_at": "2026-07-03T10:09:03"
+}

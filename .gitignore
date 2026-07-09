@@ -1,6 +1,8 @@
 # ==================== 外置金融大脑 敏感物 / 数据 ====================
-# 逆向 API 站点配置含会话 cookie（登录态 token），绝不提交
-backend/configs/scrapers/
+# 站点配置本体（端点 / gate 头 / 字段样例）是逆向侦查的成果，进版本库；
+# 会话 cookie（CapitalIQ 付费订阅登录态、雪球 xq_a_token）剥离到 sidecar，绝不提交。
+# 剥离逻辑在 knowledge_engine/browser/registry.py，由 tests/test_scraper_secrets_split.py 守着。
+backend/configs/scrapers/*.secrets.json
 # Playwright 持久化浏览器会话（cookie/登录态）
 backend/data/browser_profile/
 # 知识库数据（向量/全文，本地数据不入库）
@@ -22,29 +24,25 @@ venv/
 env/
 .venv
 
-# ==================== 核心机密：策略 & 信号 ====================
-backend/strategy/strategies.py
-backend/strategy/signal_generator.py
-backend/strategy/indicators.py
-backend/analysis_engine/signals/detector.py
-backend/analysis_engine/signal_tracker.py
+# ==================== 源码全部纳入版本控制（2026-07-09）====================
+# 此前策略/信号、爬虫/代理、风控、报告引擎、docs 都被当「核心机密」排除在版本库外，
+# 导致大重构的「按域 commit → 出问题 revert」安全模型对它们完全失效（report_engine
+# 6796 行、daily_updater 1073 行、全部 docs 都没有历史可回滚）。
+# 本仓库是私有仓，源码全部纳入版控；**只排除真正的密钥与运行时产物**（见下）。
 
-# ==================== 核心机密：爬虫 & 代理 ====================
-backend/scripts/
-backend/data_engine/daily_updater.py
-
-# ==================== 核心机密：风控 & 交易配置 ====================
-backend/trading_engine/risk/rules.py
-backend/trading_engine/config.py
-
-# ==================== 核心机密：AI 报告引擎 ====================
-backend/report_engine/
-
-# ==================== 架构文档 & 开发提示词 ====================
-docs/
-claude.md
-CLAUDE.md
+# 运行时产物 / 本机状态（不是源码）
+backend/scripts/data
+backend/scripts/proxy_pool.json
+backend/scripts/proxy_raw_responses/
+backend/scripts/*_progress.json
+backend/scripts/*_progress.json.bak.*
+backend/scripts/etf_list_cache.json
 .claude/
+frontend/.claude/
+.vscode/
+
+# 第三方参考仓库（零件仓库，非本项目代码）
+TradingAgents-main/
 
 # ==================== 数据 & 数据库 ====================
 *.db
@@ -59,23 +57,11 @@ backend/md_flow/
 backend/td_flow/
 
 # ==================== 测试文件 ====================
-# 旧版一次性脚本式测试（依赖真实网络/数据库，不追踪）继续忽略；
-# tests/agents/ 是正规 pytest 安全网（harness 回归测试），需要进版本控制。
-# 同理，backend/tests/ 顶层也混杂了几个真正的 pytest 回归测试（agent 安全/
-# alpha_lab 沙箱逃逸防护等）——按文件名单独开例外，而不是整个顶层放行
-# （test_pytdx_stress.py 之类打真实网络的压测脚本继续忽略）。
-backend/tests/*
-!backend/tests/agents/
-!backend/tests/test_agent_safety.py
-!backend/tests/test_agent_batch3.py
-!backend/tests/test_alpha_lab_sandbox.py
-!backend/tests/test_turn_monitor.py
-!backend/tests/test_stock_info_backfill.py
-!backend/tests/common/
-!backend/tests/test_a_share_symbol_suffix.py
-!backend/tests/test_lint_baseline_guard.py
-!backend/tests/_fixtures.py
-!backend/tests/baseline/
+# 全部纳入版本控制。打真实网络/连本地服务的用例靠 pytest marker 隔离
+# （backend/pyproject.toml 的 addopts 默认 -m 'not network and not integration'），
+# 不再靠 gitignore 白名单——那套 deny-by-default 让新写的测试默默不进版本库。
+backend/tests/**/__pycache__/
+backend/tests/**/.pytest_cache/
 
 # ==================== 环境变量 & 密钥 ====================
 .env
@@ -88,7 +74,7 @@ backend/.env.example
 !frontend/.env.production
 
 # ==================== 部署脚本 ====================
-restart.sh
+# restart.sh 是开发脚本、无密钥，2026-07-09 起纳入版本控制
 
 # ==================== 日志 ====================
 logs/

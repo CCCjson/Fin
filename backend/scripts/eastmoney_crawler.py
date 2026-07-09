@@ -285,7 +285,8 @@ class EastMoneyCrawler:
                 data = response.json()
                 if data.get("code") in [-1, -2, 403]:
                     return True
-            except:
+            except ValueError:
+                # 非 JSON 响应（限流时东财常返回 HTML）——不是限流的判据，忽略
                 pass
 
         return False

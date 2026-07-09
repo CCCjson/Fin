@@ -1,0 +1,155 @@
+{
+  "domain": "capitaliq.com",
+  "page_url": "https://www.capitaliq.com/",
+  "endpoints": [
+    {
+      "name": "en",
+      "url": "https://cdn.cookielaw.org/consent/78c55ba0-b374-42fa-9ec2-995ab5080989/019ac54b-ac95-7380-b7c8-7db776bfa997/en.json",
+      "url_base": "https://cdn.cookielaw.org/consent/78c55ba0-b374-42fa-9ec2-995ab5080989/019ac54b-ac95-7380-b7c8-7db776bfa997/en.json",
+      "default_params": {},
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://www.capitaliq.com/",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    },
+    {
+      "name": "otFlat",
+      "url": "https://cdn.cookielaw.org/scripttemplates/202606.1.0/assets/otFlat.json",
+      "url_base": "https://cdn.cookielaw.org/scripttemplates/202606.1.0/assets/otFlat.json",
+      "default_params": {},
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://www.capitaliq.com/",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    },
+    {
+      "name": "78c55ba0-b374-42fa-9ec2-995ab5080989",
+      "url": "https://cdn.cookielaw.org/consent/78c55ba0-b374-42fa-9ec2-995ab5080989/78c55ba0-b374-42fa-9ec2-995ab5080989.json",
+      "url_base": "https://cdn.cookielaw.org/consent/78c55ba0-b374-42fa-9ec2-995ab5080989/78c55ba0-b374-42fa-9ec2-995ab5080989.json",
+      "default_params": {},
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://www.capitaliq.com/",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    },
+    {
+      "name": "location",
+      "url": "https://geolocation.onetrust.com/cookieconsentpub/v1/geo/location",
+      "url_base": "https://geolocation.onetrust.com/cookieconsentpub/v1/geo/location",
+      "default_params": {},
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://www.capitaliq.com/",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    },
+    {
+      "name": "openid-configuration",
+      "url": "https://secure.signin.spglobal.com/oauth2/spglobal/.well-known/openid-configuration",
+      "url_base": "https://secure.signin.spglobal.com/oauth2/spglobal/.well-known/openid-configuration",
+      "default_params": {},
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://www.capitaliq.com/",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-okta-user-agent-extended": "okta-auth-js/6.5.1 okta-signin-widget-6.5.0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "issuer",
+        "authorization_endpoint",
+        "token_endpoint",
+        "userinfo_endpoint",
+        "registration_endpoint",
+        "jwks_uri",
+        "response_types_supported",
+        "response_modes_supported",
+        "grant_types_supported",
+        "subject_types_supported",
+        "id_token_signing_alg_values_supported",
+        "id_token_encryption_alg_values_supported",
+        "id_token_encryption_enc_values_supported",
+        "scopes_supported",
+        "token_endpoint_auth_methods_supported",
+        "claims_supported",
+        "code_challenge_methods_supported",
+        "introspection_endpoint",
+        "introspection_endpoint_auth_methods_supported",
+        "revocation_endpoint",
+        "revocation_endpoint_auth_methods_supported",
+        "end_session_endpoint",
+        "request_parameter_supported",
+        "request_object_signing_alg_values_supported",
+        "device_authorization_endpoint"
+      ],
+      "sample": "{\"issuer\": \"https://secure.signin.spglobal.com/oauth2/spglobal\", \"authorization_endpoint\": \"https://secure.signin.spglobal.com/oauth2/spglobal/v1/authorize\", \"token_endpoint\": \"https://secure.signin.spglobal.com/oauth2/spglobal/v1/token\", \"userinfo_endpoint\": \"https://secure.signin.spglobal.com/oauth2/spglobal/v1/userinfo\", \"registration_endpoint\": \"https://secure.signin.spglobal.com/oauth2/v1/clients\", \"jwks_uri\": \"https://secure.signin.spglobal.com/oauth2/spglobal/v1/keys\", \"response_types_supported\": [\"code\", \"id_token\", \"code id_token\", \"code token\", \"id_token token\", \"code id_token token\""
+    },
+    {
+      "name": "interact",
+      "url": "https://secure.signin.spglobal.com/oauth2/spglobal/v1/interact",
+      "url_base": "https://secure.signin.spglobal.com/oauth2/spglobal/v1/interact",
+      "default_params": {},
+      "method": "POST",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://www.capitaliq.com/",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-okta-user-agent-extended": "okta-auth-js/6.5.1 okta-signin-widget-6.5.0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    },
+    {
+      "name": "introspect",
+      "url": "https://secure.signin.spglobal.com/idp/idx/introspect",
+      "url_base": "https://secure.signin.spglobal.com/idp/idx/introspect",
+      "default_params": {},
+      "method": "POST",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://www.capitaliq.com/",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-okta-user-agent-extended": "okta-auth-js/6.5.1 okta-signin-widget-6.5.0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    }
+  ],
+  "discovered_at": "2026-07-03T15:34:47"
+}

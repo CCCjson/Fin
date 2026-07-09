@@ -7,9 +7,18 @@ per-file-ignores 里的条目。人靠自觉守不住，所以把上限钉在这
 import pathlib
 import re
 
-# 13.0 生成基线时的规模。**只许调小，不许调大。**
-BASELINE_FILE_COUNT = 267
-BASELINE_CODE_COUNT = 809
+# 基线规模。**只许调小，不许调大。**
+#
+# 变更历史（每次调大都必须在这里写明理由，否则就是在偷偷放水）：
+#   267 / 809  — 13.0 首次生成
+#   315 / 990  — 2026-07-09 源码全部纳入版本控制。ruff 默认尊重 .gitignore，
+#                所以此前 report_engine/ (6796 行)、scripts/、daily_updater.py、
+#                signal_tracker.py 这些被当「核心机密」排除的文件**从未被 lint 扫过**。
+#                纳入版控后它们首次进入 ruff 视野，豁免表相应扩大。
+#                （同时暴露并当场修掉 3 个真 bug：signal_tracker 的 2 个 F811、
+#                 eastmoney_crawler 的 1 个裸 except）
+BASELINE_FILE_COUNT = 315
+BASELINE_CODE_COUNT = 990
 
 # mypy 强检名单的初始成员数。**只许调大，不许调小。**
 BASELINE_STRICT_MODULE_COUNT = 1

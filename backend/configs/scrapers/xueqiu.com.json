@@ -1,0 +1,628 @@
+{
+  "domain": "xueqiu.com",
+  "page_url": "https://xueqiu.com/S/SH600519",
+  "endpoints": [
+    {
+      "name": "content",
+      "url": "https://open.xueqiu.com/mpaas/config/content?keys=stock_detail_AI_switch&uid=&appkey=92f09797f899bdba4fbf01a2829a16d2",
+      "url_base": "https://open.xueqiu.com/mpaas/config/content",
+      "default_params": {
+        "keys": "stock_detail_AI_switch",
+        "appkey": "92f09797f899bdba4fbf01a2829a16d2"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"stock_detail_AI_switch\": {\"content\": {\"value\": false, \"pc\": false, \"h5\": false}, \"timestamp\": \"1768879501000\", \"update_type\": 1, \"cid\": 14475}}, \"error_code\": 0, \"error_description\": \"\"}"
+    },
+    {
+      "name": "trade",
+      "url": "https://stock.xueqiu.com/v5/stock/history/trade.json?symbol=SH600519&count=10",
+      "url_base": "https://stock.xueqiu.com/v5/stock/history/trade.json",
+      "default_params": {
+        "symbol": "SH600519",
+        "count": "10"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"symbol\": \"SH600519\", \"items\": [{\"symbol\": \"SH600519\", \"timestamp\": 1782975395200, \"current\": 1204.06, \"chg\": 11.05, \"percent\": 0.93, \"trade_volume\": 100, \"side\": 1, \"level\": 1, \"trade_session\": null, \"trade_type\": null, \"trade_unique_id\": \"5016751\", \"bid_appl_seq_num\": null, \"offer_appl_seq_num\": null, \"trade_type_v2\": null}, {\"symbol\": \"SH600519\", \"timestamp\": 1782975399060, \"current\": 1204.63, \"chg\": 11.62, \"percent\": 0.97, \"trade_volume\": 1300, \"side\": 1, \"level\": 1, \"trade_session\": null, \"trade_type\": null, \"trade_unique_id\": \"5018051\", \"bid_appl_seq_num\": null, \"offer_appl_seq"
+    },
+    {
+      "name": "list",
+      "url": "https://xueqiu.com/statuses/ai_disclose/list.json?md5__1038=214d4f07715-yZ29jTST_CXhHfuDWsTNgeXVT0P8hTImLs8HsGAXCL%2FfvYwJqTynJI_exkTCMn72TUT62XIcTiqeTX9iFT%2F2Pg9TioXLTuZTpTyoTnTvQ%2FTAL9PtTt9ikvfjZT0TvoJTffChTifjhlv5aoTMTYyL1Yf1CfhqTDyOXThZCPq5XTTwQ07Z%2FikZ%2FlTT",
+      "url_base": "https://xueqiu.com/statuses/ai_disclose/list.json",
+      "default_params": {
+        "md5__1038": "214d4f07715-yZ29jTST_CXhHfuDWsTNgeXVT0P8hTImLs8HsGAXCL/fvYwJqTynJI_exkTCMn72TUT62XIcTiqeTX9iFT/2Pg9TioXLTuZTpTyoTnTvQ/TAL9PtTt9ikvfjZT0TvoJTffChTifjhlv5aoTMTYyL1Yf1CfhqTDyOXThZCPq5XTTwQ07Z/ikZ/lTT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-requested-with": "XMLHttpRequest"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "display"
+      ],
+      "sample": "{\"display\": false}"
+    },
+    {
+      "name": "zj_card",
+      "url": "https://xueqiu.com/recommend-proxy/card/zj_card.json?feed_id=1008&count=1&md5__1038=214d4f07715-i9Z9xfSTAfRTjyuXeclZXdXyZo9Wf6W9f%2FwHK57wP6OX%2F0K13qfXSk0snsM2ThabmTPOTpTj69Tv%3DZTjTuGTwT1ofT_f%2FhTQfPcTIfXhTJhkxdT7fqhT8FvXVTq9i1GfvvXnTTGXRwkN4gT_Yy_1DhSmf9LXXyIyTqqu9vm%2FX7qTX88iA7OjXkO1lTT",
+      "url_base": "https://xueqiu.com/recommend-proxy/card/zj_card.json",
+      "default_params": {
+        "feed_id": "1008",
+        "count": "1",
+        "md5__1038": "214d4f07715-i9Z9xfSTAfRTjyuXeclZXdXyZo9Wf6W9f/wHK57wP6OX/0K13qfXSk0snsM2ThabmTPOTpTj69Tv=ZTjTuGTwT1ofT_f/hTQfPcTIfXhTJhkxdT7fqhT8FvXVTq9i1GfvvXnTTGXRwkN4gT_Yy_1DhSmf9LXXyIyTqqu9vm/X7qTX88iA7OjXkO1lTT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-requested-with": "XMLHttpRequest"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "code",
+        "data"
+      ],
+      "sample": "{\"code\": 201, \"data\": null}"
+    },
+    {
+      "name": "myandanalyst",
+      "url": "https://stock.xueqiu.com/v5/stock/myandanalyst.json?symbol=SH600519",
+      "url_base": "https://stock.xueqiu.com/v5/stock/myandanalyst.json",
+      "default_params": {
+        "symbol": "SH600519"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {}, \"error_code\": 0, \"error_description\": \"\"}"
+    },
+    {
+      "name": "entry",
+      "url": "https://stock.xueqiu.com/v5/stock/event/entry.json?symbol=SH600519",
+      "url_base": "https://stock.xueqiu.com/v5/stock/event/entry.json",
+      "default_params": {
+        "symbol": "SH600519"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"items\": [{\"type\": 1, \"title\": \"2026-08-15\", \"content\": \"发布《2026年中报》\", \"begin\": 1786755600000, \"cal_title\": \"贵州茅台 财报发布\"}]}, \"error_code\": 0, \"error_description\": \"\"}"
+    },
+    {
+      "name": "search",
+      "url": "https://xueqiu.com/statuses/interview/search.json?symbol=SH600519&count=3&md5__1038=214d4f07715-yZCxCZToqyqoi6FfseTbkT80X8TnmT1D9InBCFjxawqiy8kKxW1TPXp1Bj8fXw73oT%2FoXFT1nXGTv0ZTjTuGTwT1RTT_f%2FhTQfPcTIfXhTJJbxdT7fqhT8FvXVTq9i1GfvvXnTTGXRCkvdUTCo8CSw1tqYi6S2awxTdePwvqXYG1lfTyp9atqxHtqDfT",
+      "url_base": "https://xueqiu.com/statuses/interview/search.json",
+      "default_params": {
+        "symbol": "SH600519",
+        "count": "3",
+        "md5__1038": "214d4f07715-yZCxCZToqyqoi6FfseTbkT80X8TnmT1D9InBCFjxawqiy8kKxW1TPXp1Bj8fXw73oT/oXFT1nXGTv0ZTjTuGTwT1RTT_f/hTQfPcTIfXhTJJbxdT7fqhT8FvXVTq9i1GfvvXnTTGXRCkvdUTCo8CSw1tqYi6S2awxTdePwvqXYG1lfTyp9atqxHtqDfT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-requested-with": "XMLHttpRequest"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "count",
+        "page",
+        "maxPage",
+        "interviews"
+      ],
+      "sample": "{\"count\": 3, \"page\": 1, \"maxPage\": 20, \"interviews\": []}"
+    },
+    {
+      "name": "recommend_user",
+      "url": "https://xueqiu.com/recommend-proxy/recommend_user.json?symbol=SH600519&category=1001&md5__1038=214d4f07715-vZ%3DfYfjTITRTAsqYt%3DfjVhTnTAxT0xifWpYPct9iZvZOF7OwGT%2F6W%3DEj6TiYYBTTUT62XIyyTXi_TToX%3DTPvXUyTXOTpfCyTkf%2FOT6fqcsOjf%2FWTlfqpxT19T8TAVqXXT_ZTCTNw_xnl9idsyY2ni9O%3DPTh3vYyTiYZ3i92O%3DPT1NfTwlA21itkqmlTT",
+      "url_base": "https://xueqiu.com/recommend-proxy/recommend_user.json",
+      "default_params": {
+        "symbol": "SH600519",
+        "category": "1001",
+        "md5__1038": "214d4f07715-vZ=fYfjTITRTAsqYt=fjVhTnTAxT0xifWpYPct9iZvZOF7OwGT/6W=Ej6TiYYBTTUT62XIyyTXi_TToX=TPvXUyTXOTpfCyTkf/OT6fqcsOjf/WTlfqpxT19T8TAVqXXT_ZTCTNw_xnl9idsyY2ni9O=PTh3vYyTiYZ3i92O=PT1NfTwlA21itkqmlTT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-requested-with": "XMLHttpRequest"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "message",
+        "code"
+      ],
+      "sample": "{\"data\": {\"category\": 1001, \"items\": []}, \"message\": \"bad request, wrong parameters\", \"code\": 400}"
+    },
+    {
+      "name": "pofriends",
+      "url": "https://xueqiu.com/recommend/pofriends.json?type=1&code=SH600519&start=0&count=14&md5__1038=214d4f07715-vZ0fAfRX92LNQ_2PoTovSFVX8NR6w%3DWTViTmxYXTx12qZmcOT%2F6GpW1fiUg5fXgTkfP8TZVTTxCfTOTFfXWTR8vTgTk9i8T62P1T%2F9iuAh69PtTt9ik2fjZT0TvBiTffChTifjhl2HDoX4XJweKlADiXZ2XWZTCxv2ClAZS%2FXaqTTItSQc%3DqpcPuT",
+      "url_base": "https://xueqiu.com/recommend/pofriends.json",
+      "default_params": {
+        "type": "1",
+        "code": "SH600519",
+        "start": "0",
+        "count": "14",
+        "md5__1038": "214d4f07715-vZ0fAfRX92LNQ_2PoTovSFVX8NR6w=WTViTmxYXTx12qZmcOT/6GpW1fiUg5fXgTkfP8TZVTTxCfTOTFfXWTR8vTgTk9i8T62P1T/9iuAh69PtTt9ik2fjZT0TvBiTffChTifjhl2HDoX4XJweKlADiXZ2XWZTCxv2ClAZS/XaqTTItSQc=qpcPuT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-requested-with": "XMLHttpRequest"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "totalcount",
+        "friends"
+      ],
+      "sample": "{\"totalcount\": 3670221, \"friends\": [{\"subscribeable\": false, \"common_count\": 0, \"remark\": null, \"recommend_reason\": null, \"verified_infos\": [], \"province\": \"\", \"city\": \"\", \"gender\": \"n\", \"blog_description\": null, \"friends_count\": 12, \"last_status_id\": 394724607, \"status_count\": 513, \"step\": \"null\", \"verified_description\": null, \"recommend\": null, \"st_color\": \"1\", \"intro\": null, \"stock_status_count\": null, \"follow_me\": false, \"allow_all_stock\": false, \"stocks_count\": 46, \"verified_type\": 0, \"donate_count\": 0, \"domain\": null, \"blocking\": false, \"description\": \"\", \"id\": 1187747712, \"type\": \"1\", \""
+    },
+    {
+      "name": "relevant",
+      "url": "https://stock.xueqiu.com/v5/stock/quote/relevant.json?symbol=SH600519",
+      "url_base": "https://stock.xueqiu.com/v5/stock/quote/relevant.json",
+      "default_params": {
+        "symbol": "SH600519"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"cubes\": [{\"name\": \"达哥一号\", \"percent\": 90.22, \"desc\": \"近期涨幅较多\", \"symbol\": \"ZH3297595\", \"cube_id\": 3331651}, {\"name\": \"重仓必死\", \"percent\": 787.81, \"desc\": \"近期调仓\", \"symbol\": \"ZH1158791\", \"cube_id\": 1181444}], \"items\": [{\"symbol\": \"SZ000858\", \"name\": \"五粮液\", \"current\": 73.5, \"percent\": -1.37, \"tick_size\": 0.01, \"type\": 11, \"has_follow\": false, \"list\": []}, {\"symbol\": \"SZ000568\", \"name\": \"泸州老窖\", \"current\": 77.17, \"percent\": -1.04, \"tick_size\": 0.01, \"type\": 11, \"has_follow\": false, \"list\": []}, {\"symbol\": \"SH600809\", \"name\": \"山西汾酒\", \"current\": 109.17, \"percent\": -1.52, \"tick_size\": 0.01, \"ty"
+    },
+    {
+      "name": "related_fund",
+      "url": "https://xueqiu.com/query/v1/search/related_fund.json?symbol=SH600519&q=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0&count=5&page=1&md5__1038=214d4f07715-qZ68jZ%2Fyq62wfmDfsTNff_TfL6TjmfvIJZRaLsZfXy4oxpFY4OTP15JokUufXkq3VT%2FoXFT1Z9T2F9T1T%3D2TDTK7fTzT6ZX0T%2FGXSTPZXCZdPoXQTmZX6c2PhTmfqKAT22iVTX2PVD745OTzJw9CSwe08Q9%3Df28Zf92XCZdPPxG2f2TyVGo2s9d_0YyGT",
+      "url_base": "https://xueqiu.com/query/v1/search/related_fund.json",
+      "default_params": {
+        "symbol": "SH600519",
+        "q": "贵州茅台",
+        "count": "5",
+        "page": "1",
+        "md5__1038": "214d4f07715-qZ68jZ/yq62wfmDfsTNff_TfL6TjmfvIJZRaLsZfXy4oxpFY4OTP15JokUufXkq3VT/oXFT1Z9T2F9T1T=2TDTK7fTzT6ZX0T/GXSTPZXCZdPoXQTmZX6c2PhTmfqKAT22iVTX2PVD745OTzJw9CSwe08Q9=f28Zf92XCZdPPxG2f2TyVGo2s9d_0YyGT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "x-requested-with": "XMLHttpRequest"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "code",
+        "data",
+        "message",
+        "meta",
+        "success"
+      ],
+      "sample": "{\"code\": 200, \"data\": {\"list\": [{\"ai_result\": [], \"change_period\": \"近1年\", \"code\": \"F012110\", \"default_profit_period\": \"ty\", \"full_name\": \"融通稳健添瑞灵活配置混合型证券投资基金\", \"fund_change\": 1.26885075, \"fund_change_period_desc\": \"日涨跌\", \"fund_type\": \"混合型-灵活配置\", \"fund_type_code\": \"3\", \"hasexist\": \"false\", \"label\": \"23\", \"money_fund\": 0, \"name\": \"融通稳健添瑞灵活配置混合C\", \"pension_fund_flag\": false, \"profit_desc\": \"年化收益（近3年）\", \"profit_periods\": [{\"code\": \"ty\", \"desc\": \"今年以来\"}, {\"code\": \"1m\", \"desc\": \"近1月\"}, {\"code\": \"3m\", \"desc\": \"近3月\"}, {\"code\": \"1y\", \"desc\": \"近1年\"}], \"recall_type\": \"STOCK_TO_FUND\", \"recommended_reason\""
+    },
+    {
+      "name": "quote",
+      "url": "https://stock.xueqiu.com/v5/stock/quote.json?symbol=SH600519&extend=detail",
+      "url_base": "https://stock.xueqiu.com/v5/stock/quote.json",
+      "default_params": {
+        "symbol": "SH600519",
+        "extend": "detail"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"market\": {\"status_id\": 7, \"region\": \"CN\", \"status\": \"已收盘\", \"time_zone\": \"Asia/Shanghai\", \"time_zone_desc\": null, \"delay_tag\": 0, \"downgrade_night_session\": false, \"daylight_savings\": true}, \"quote\": {\"current_ext\": null, \"symbol\": \"SH600519\", \"volume_ext\": null, \"high52w\": 1531.7472, \"delayed\": 0, \"type\": 11, \"tick_size\": 0.01, \"float_shares\": 1250081601, \"limit_down\": 1073.71, \"no_profit\": null, \"high\": 1215.52, \"float_market_capital\": 1503848166003, \"timestamp_ext\": null, \"lot_size\": 100, \"lock_set\": 0, \"weighted_voting_rights\": null, \"chg\": 9.99, \"eps\": 66.17, \"last_close\": 1193."
+    },
+    {
+      "name": "stockList",
+      "url": "https://xueqiu.com/stock/industry/stockList.json?code=SH600519&type=1&size=100&md5__1038=214d4f07715-1IThv2UO77XdihJXyDTOkVGD3YqTVCKZTAsI1j2%2FZT%2FXYeJ83TiI_O2POXFTO9P%2FqTqm7TPfCcTyfjKXTC9PeTc9XFTw9TVTA%3D7Ts6f%2FWTlfqp4T19T8TApoXXT_ZTCTNkI40x9CBo%3DefZamxAf1fX1bDQ22SiaKCTkiPm9fPyc%2Fsm7KX%3D7%3DuT",
+      "url_base": "https://xueqiu.com/stock/industry/stockList.json",
+      "default_params": {
+        "code": "SH600519",
+        "type": "1",
+        "size": "100",
+        "md5__1038": "214d4f07715-1IThv2UO77XdihJXyDTOkVGD3YqTVCKZTAsI1j2/ZT/XYeJ83TiI_O2POXFTO9P/qTqm7TPfCcTyfjKXTC9PeTc9XFTw9TVTA=7Ts6f/WTlfqp4T19T8TApoXXT_ZTCTNkI40x9CBo=efZamxAf1fX1bDQ22SiaKCTkiPm9fPyc/sm7KX=7=uT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "stockname",
+        "platename",
+        "industrystocks",
+        "exchange",
+        "code",
+        "industryname"
+      ],
+      "sample": "{\"stockname\": \"\", \"platename\": \"食品饮料\", \"industrystocks\": [{\"symbol\": \"SH600872\", \"code\": \"600872\", \"name\": \"中炬高新\", \"exchange\": \"SH\", \"current\": \"18.91\", \"percentage\": \"7.08\", \"change\": \"1.25\", \"volume\": \"46245544\", \"pe_ttm\": \"23.66\", \"marketCapital\": \"1.4641890879E10\"}, {\"symbol\": \"SZ000639\", \"code\": \"000639\", \"name\": \"ST西王\", \"exchange\": \"SZ\", \"current\": \"1.22\", \"percentage\": \"5.17\", \"change\": \"0.06\", \"volume\": \"26556369\", \"pe_ttm\": \"\", \"marketCapital\": \"1.316902276E9\"}, {\"symbol\": \"SH603517\", \"code\": \"603517\", \"name\": \"ST绝味\", \"exchange\": \"SH\", \"current\": \"10.4\", \"percentage\": \"5.05\", \"change\""
+    },
+    {
+      "name": "stock_question",
+      "url": "https://xueqiu.com/rainbow/ai/question/generate/stock_question.json?symbol=SH600519&md5__1038=214d4f07715-196fAfITYfxf_j%2Fwt%3Dfj9uY9m9qZZTOT0q2KlSGehXJuAfz%2FLhTATTDOytBjXGT_zTv9TUT62XIeTiCVTX9iFT%2F2PgcTioXLTuZTpTyoTnTvF89Tf6vX_TmLJTKfXyTsgviiTe9TuT4pzJSgoTMyDhjCIq91IZIiY9v6shsXT9g6fTwW2dXT2aXXlTT",
+      "url_base": "https://xueqiu.com/rainbow/ai/question/generate/stock_question.json",
+      "default_params": {
+        "symbol": "SH600519",
+        "md5__1038": "214d4f07715-196fAfITYfxf_j/wt=fj9uY9m9qZZTOT0q2KlSGehXJuAfz/LhTATTDOytBjXGT_zTv9TUT62XIeTiCVTX9iFT/2PgcTioXLTuZTpTyoTnTvF89Tf6vX_TmLJTKfXyTsgviiTe9TuT4pzJSgoTMyDhjCIq91IZIiY9v6shsXT9g6fTwW2dXT2aXXlTT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "code",
+        "data",
+        "msg"
+      ],
+      "sample": "{\"code\": 403, \"data\": null, \"msg\": \"未登录\"}"
+    },
+    {
+      "name": "bind_query",
+      "url": "https://xueqiu.com/uc_passport/enterprise/symbol/bind_query.json?symbol=SH600519&md5__1038=214d4f07715-19wfnTST_TAfYhTLyclZX5qqZLTq92i%2FJvJVgXaZ3cTPCL%3D1lhTX9JV4_HZxnGT__Ty2TUT62XI1v2XiHTToX%3DTPvXU1TXOTpfCyTkf%2FOT6fqcIyT2%2FWTlfqpYT19T8TAUqXXT_ZTCTNwFolo4T_IynXYOLjsTHXPy_Ci2HuY2vvAZqTX84jDhL_FhecT",
+      "url_base": "https://xueqiu.com/uc_passport/enterprise/symbol/bind_query.json",
+      "default_params": {
+        "symbol": "SH600519",
+        "md5__1038": "214d4f07715-19wfnTST_TAfYhTLyclZX5qqZLTq92i/JvJVgXaZ3cTPCL=1lhTX9JV4_HZxnGT__Ty2TUT62XI1v2XiHTToX=TPvXU1TXOTpfCyTkf/OT6fqcIyT2/WTlfqpYT19T8TAUqXXT_ZTCTNwFolo4T_IynXYOLjsTHXPy_Ci2HuY2vvAZqTX84jDhL_FhecT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "message",
+        "data",
+        "result_code"
+      ],
+      "sample": "{\"message\": \"success\", \"data\": {}, \"result_code\": 0}"
+    },
+    {
+      "name": "bind_query_2",
+      "url": "https://xueqiu.com/uc_passport/enterprise/symbol/bind_query.json?symbol=SH600519&md5__1038=214d4f07715-19wfnTST_TAfYhTLyclZX5qqZLTq92i%2FJvJVgXatZ4TjyCSglh_tTTD4mHZx0GT__Ty2TUT62XI1v2XiRTToX%3DTPvXU1TXOTpfCyTkf%2FOT6fqcIyT2%2FWTlfqpYT19T8TAUqXXT_ZTCTNwFolo4T_IyLXYOHjsTRXPy_Ci2R_A2vvAZqTX84iXZH_taHClTT",
+      "url_base": "https://xueqiu.com/uc_passport/enterprise/symbol/bind_query.json",
+      "default_params": {
+        "symbol": "SH600519",
+        "md5__1038": "214d4f07715-19wfnTST_TAfYhTLyclZX5qqZLTq92i/JvJVgXatZ4TjyCSglh_tTTD4mHZx0GT__Ty2TUT62XI1v2XiRTToX=TPvXU1TXOTpfCyTkf/OT6fqcIyT2/WTlfqpYT19T8TAUqXXT_ZTCTNwFolo4T_IyLXYOHjsTRXPy_Ci2R_A2vvAZqTX84iXZH_taHClTT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "message",
+        "data",
+        "result_code"
+      ],
+      "sample": "{\"message\": \"success\", \"data\": {}, \"result_code\": 0}"
+    },
+    {
+      "name": "bind_query_3",
+      "url": "https://xueqiu.com/uc_passport/enterprise/symbol/bind_query.json?symbol=SH600519&md5__1038=214d4f07715-19wfnTST_TAfYhTLyclZX5qqZLTq92i%2FJvJVgXaZ3vqq9Zae9TjiTTD4mHZsPGT__Ty2TUT62XI1v2XiRTToX%3DTPvXU1TXOTpfCyTkf%2FOT6fqcIyT2%2FWTlfqpYT19T8TAUqXXT_ZTCTNwFolo4T_YyLXYO_jsTRXXyICi2RiY2vvAZqTX84iXZ_iDa_ClTT",
+      "url_base": "https://xueqiu.com/uc_passport/enterprise/symbol/bind_query.json",
+      "default_params": {
+        "symbol": "SH600519",
+        "md5__1038": "214d4f07715-19wfnTST_TAfYhTLyclZX5qqZLTq92i/JvJVgXaZ3vqq9Zae9TjiTTD4mHZsPGT__Ty2TUT62XI1v2XiRTToX=TPvXU1TXOTpfCyTkf/OT6fqcIyT2/WTlfqpYT19T8TAUqXXT_ZTCTNwFolo4T_YyLXYO_jsTRXXyICi2RiY2vvAZqTX84iXZ_iDa_ClTT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "message",
+        "data",
+        "result_code"
+      ],
+      "sample": "{\"message\": \"success\", \"data\": {}, \"result_code\": 0}"
+    },
+    {
+      "name": "content_2",
+      "url": "https://open.xueqiu.com/mpaas/config/content?keys=web_jianlian_v3_qrcode_login,web_login_modal_config&appkey=92f09797f899bdba4fbf01a2829a16d2",
+      "url_base": "https://open.xueqiu.com/mpaas/config/content",
+      "default_params": {
+        "keys": "web_jianlian_v3_qrcode_login,web_login_modal_config",
+        "appkey": "92f09797f899bdba4fbf01a2829a16d2"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"web_jianlian_v3_qrcode_login\": {\"content\": {\"login_old_user\": \"https://xqimg.imedao.com/1902a5c68b91c64b3fd8c602.png\", \"login_new_user\": \"https://xqimg.imedao.com/191126ac9df7a1ea3fad4397.png\", \"login_stock_user\": \"https://xqimg.imedao.com/1931f5a0b9c83ff13fcd364a.png\", \"login_anonymous_user\": \"https://xqimg.imedao.com/195a3b0207f5b2783fe227c9.png\", \"login_modal_banner\": \"https://xqimg.imedao.com/191127fe7d6575053fda52cc.png\", \"login_modal_tips_buddle\": \"\", \"article_stock_user\": \"https://xqimg.imedao.com/191550d7f4f1a473fdc82f3e.png\", \"article_fund_user\": \"https://xqimg.imedao.com/1"
+    },
+    {
+      "name": "content_3",
+      "url": "https://open.xueqiu.com/mpaas/config/content?keys=footer&appkey=92f09797f899bdba4fbf01a2829a16d2&last_update=1755681684000",
+      "url_base": "https://open.xueqiu.com/mpaas/config/content",
+      "default_params": {
+        "keys": "footer",
+        "appkey": "92f09797f899bdba4fbf01a2829a16d2",
+        "last_update": "1755681684000"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"footer\": {\"content\": null, \"update_type\": 0}}, \"error_code\": 0, \"error_description\": \"\"}"
+    },
+    {
+      "name": "content_4",
+      "url": "https://open.xueqiu.com/mpaas/config/content?keys=seekball_pc_entry&uid=&appkey=92f09797f899bdba4fbf01a2829a16d2",
+      "url_base": "https://open.xueqiu.com/mpaas/config/content",
+      "default_params": {
+        "keys": "seekball_pc_entry",
+        "appkey": "92f09797f899bdba4fbf01a2829a16d2"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"seekball_pc_entry\": {\"content\": {\"list\": []}, \"timestamp\": \"1760326174000\", \"update_type\": 1, \"cid\": 13984}}, \"error_code\": 0, \"error_description\": \"\"}"
+    },
+    {
+      "name": "content_5",
+      "url": "https://open.xueqiu.com/mpaas/config/content?keys=web_unsign_download&appkey=92f09797f899bdba4fbf01a2829a16d2&last_update=1744791262000",
+      "url_base": "https://open.xueqiu.com/mpaas/config/content",
+      "default_params": {
+        "keys": "web_unsign_download",
+        "appkey": "92f09797f899bdba4fbf01a2829a16d2",
+        "last_update": "1744791262000"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"web_unsign_download\": {\"content\": null, \"update_type\": 0}}, \"error_code\": 0, \"error_description\": \"\"}"
+    },
+    {
+      "name": "content_6",
+      "url": "https://open.xueqiu.com/mpaas/config/content?keys=trade_home_tabs&appkey=92f09797f899bdba4fbf01a2829a16d2&last_update=1744791262000",
+      "url_base": "https://open.xueqiu.com/mpaas/config/content",
+      "default_params": {
+        "keys": "trade_home_tabs",
+        "appkey": "92f09797f899bdba4fbf01a2829a16d2",
+        "last_update": "1744791262000"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"trade_home_tabs\": {\"content\": null, \"update_type\": 0}}, \"error_code\": 0, \"error_description\": \"\"}"
+    },
+    {
+      "name": "content_7",
+      "url": "https://open.xueqiu.com/mpaas/config/content?keys=ai_search_enter&appkey=92f09797f899bdba4fbf01a2829a16d2",
+      "url_base": "https://open.xueqiu.com/mpaas/config/content",
+      "default_params": {
+        "keys": "ai_search_enter",
+        "appkey": "92f09797f899bdba4fbf01a2829a16d2"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"ai_search_enter\": {\"content\": {\"display\": true, \"text\": \"AI搜索\", \"is_show_ai_stock_result\": true, \"is_show_ai_recommend\": true, \"is_show_ai_recommend_in_search\": true, \"is_show_stock_detail_range_reason\": true, \"search_seekball_statement\": \"1.雪球AI服务由雪球公司提供，内容由DeepSeek开源模型生成；2.AI生成内容仅供参考，不构成投资建议，也不代表雪球官方观点；3.在使用AI服务时，请勿输入个人信息及隐私，以减少信息泄露风险；4.投资有风险，决策需谨慎，请详细阅读<a href='https://xueqiu.com/law/xueqiu-ai/deepseek'>《雪球AI服务声明》</a>。\"}, \"timestamp\": \"1769074933000\", \"update_type\": 1, \"cid\": 14489}}, \"error_code\": 0, \"error_description\": \"\"}"
+    },
+    {
+      "name": "query",
+      "url": "https://xueqiu.com/snowpard/launch_strategy/query.json?channel=3&page=11&model=9&md5__1038=214d4f07715-19CfAJi%2FTOP%2FXhlafsTNf%3Dfq9qoMcA%2Fx%2FI9_etYTTZX%2FkW6eokTw8GoIKQCn2THkEPTPOTpTj6ZWTq_cTPfCcTyfjKZTC9PeTc9XFTw9TVTA%3D6x3Tk2ieT00qTRTiZXjy2qqTHfTcT5FLCNK9X4mxwV08fhZ%2FGOm8Z24XYFZlwvex9TyDYee8xGjexyGT",
+      "url_base": "https://xueqiu.com/snowpard/launch_strategy/query.json",
+      "default_params": {
+        "channel": "3",
+        "page": "11",
+        "model": "9",
+        "md5__1038": "214d4f07715-19CfAJi/TOP/XhlafsTNf=fq9qoMcA/x/I9_etYTTZX/kW6eokTw8GoIKQCn2THkEPTPOTpTj6ZWTq_cTPfCcTyfjKZTC9PeTc9XFTw9TVTA=6x3Tk2ieT00qTRTiZXjy2qqTHfTcT5FLCNK9X4mxwV08fhZ/GOm8Z24XYFZlwvex9TyDYee8xGjexyGT"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "result_code",
+        "message",
+        "detail"
+      ],
+      "sample": "{\"data\": [], \"result_code\": 0, \"message\": null, \"detail\": null}"
+    },
+    {
+      "name": "minute",
+      "url": "https://stock.xueqiu.com/v5/stock/chart/minute.json?symbol=SH600519&period=1d",
+      "url_base": "https://stock.xueqiu.com/v5/stock/chart/minute.json",
+      "default_params": {
+        "symbol": "SH600519",
+        "period": "1d"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "sec-ch-ua-platform": "\"macOS\"",
+        "referer": "https://xueqiu.com/S/SH600519",
+        "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "data",
+        "error_code",
+        "error_description"
+      ],
+      "sample": "{\"data\": {\"last_close\": 1193.01, \"after\": [], \"items\": [{\"current\": 1199.6, \"volume\": 169384, \"avg_price\": 1194.601, \"chg\": 6.59, \"percent\": 0.55, \"timestamp\": 1782955800000, \"amount\": 202346287, \"high\": 1199.6, \"low\": 1193.01, \"amount_total\": 202346287, \"volume_total\": 169384, \"macd\": null, \"kdj\": null, \"ratio\": null, \"capital\": {\"small\": -16.66, \"medium\": 18.1, \"large\": 1.49, \"xlarge\": -2.93}, \"volume_compare\": {\"volume_sum\": 169384, \"volume_sum_last\": 74753}}, {\"current\": 1205.22, \"volume\": 134405, \"avg_price\": 1198.517, \"chg\": 12.21, \"percent\": 1.02, \"timestamp\": 1782955860000, \"amount\": 1"
+    }
+  ],
+  "discovered_at": "2026-07-02T21:56:31"
+}
