@@ -5,7 +5,8 @@
 否则会改变所有测试的运行环境。
 """
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 def script_stream_chat(script: list) -> Callable[..., Any]:
