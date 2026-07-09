@@ -1,0 +1,4567 @@
+{
+ "report_type": "weekly",
+ "period_start": "2026-06-26",
+ "period_end": "2026-07-03",
+ "is_weekend": false,
+ "market_overview": {
+  "snapshot": {
+   "latest_time": "2026-07-09 (DailyQuote回退)",
+   "total": 4214,
+   "up": 1426,
+   "down": 2697,
+   "flat": 91,
+   "limit_up": 81,
+   "limit_down": 23,
+   "distribution": {
+    "gt5": 267,
+    "3to5": 236,
+    "1to3": 495,
+    "0to1": 428,
+    "flat": 91,
+    "neg1to0": 854,
+    "neg3to1": 1531,
+    "neg5to3": 213,
+    "lt_neg5": 99
+   },
+   "total_amount": 0,
+   "top_amount": [],
+   "top_turnover": [],
+   "limit_up_list": [],
+   "limit_down_list": []
+  },
+  "period": {
+   "avg_change_pct": null,
+   "stocks_with_data": 20092
+  },
+  "web_search": {
+   "indices": [],
+   "index_klines": [],
+   "sectors": [],
+   "concepts": [],
+   "money_flow": [],
+   "northbound": {
+    "hk_to_sh": 0,
+    "hk_to_sz": 0,
+    "northbound_total": 0,
+    "southbound_total": 8400000.0,
+    "date": "2026-07-09",
+    "sh_remain": 0.0,
+    "sz_remain": 0.0,
+    "sh_threshold": 5200000.0,
+    "sz_threshold": 5200000.0,
+    "history": [
+     {
+      "date": "2026-06-25",
+      "hk_to_sh": 0.0,
+      "hk_to_sz": 0.0,
+      "northbound_total": 0.0,
+      "cumulative_total": 525188835.75
+     },
+     {
+      "date": "2026-06-26",
+      "hk_to_sh": 0.0,
+      "hk_to_sz": 0.0,
+      "northbound_total": 0.0,
+      "cumulative_total": 525188835.75
+     },
+     {
+      "date": "2026-06-29",
+      "hk_to_sh": 0.0,
+      "hk_to_sz": 0.0,
+      "northbound_total": 0.0,
+      "cumulative_total": 525188835.75
+     },
+     {
+      "date": "2026-06-30",
+      "hk_to_sh": 0.0,
+      "hk_to_sz": 0.0,
+      "northbound_total": 0.0,
+      "cumulative_total": 525188835.75
+     },
+     {
+      "date": "2026-07-02",
+      "hk_to_sh": 0.0,
+      "hk_to_sz": 0.0,
+      "northbound_total": 0.0,
+      "cumulative_total": 525188835.75
+     },
+     {
+      "date": "2026-07-03",
+      "hk_to_sh": 0.0,
+      "hk_to_sz": 0.0,
+      "northbound_total": 0.0,
+      "cumulative_total": 525188835.75
+     },
+     {
+      "date": "2026-07-06",
+      "hk_to_sh": 0.0,
+      "hk_to_sz": 0.0,
+      "northbound_total": 0.0,
+      "cumulative_total": 525188835.75
+     },
+     {
+      "date": "2026-07-07",
+      "hk_to_sh": 0.0,
+      "hk_to_sz": 0.0,
+      "northbound_total": 0.0,
+      "cumulative_total": 525188835.75
+     },
+     {
+      "date": "2026-07-08",
+      "hk_to_sh": 0.0,
+      "hk_to_sz": 0.0,
+      "northbound_total": 0.0,
+      "cumulative_total": 525188835.75
+     },
+     {
+      "date": "2026-07-09",
+      "hk_to_sh": 0.0,
+      "hk_to_sz": 0.0,
+      "northbound_total": 0.0,
+      "cumulative_total": 525188835.75
+     }
+    ],
+    "top_stocks": [
+     {
+      "name": "宁德时代",
+      "code": "300750",
+      "secucode": "300750.SZ",
+      "close": 393.01,
+      "change_pct": 0.165664185952,
+      "hold_shares": 894158187,
+      "hold_market_cap": 351413109072.87,
+      "a_shares_ratio": 20.28,
+      "free_shares_ratio": 21.0042,
+      "total_shares_ratio": 19.3263,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "中际旭创",
+      "code": "300308",
+      "secucode": "300308.SZ",
+      "close": 1270,
+      "change_pct": 4.098360655738,
+      "hold_shares": 73326563,
+      "hold_market_cap": 93124735010,
+      "a_shares_ratio": 6.57,
+      "free_shares_ratio": 6.6064,
+      "total_shares_ratio": 6.575,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "北方华创",
+      "code": "002371",
+      "secucode": "002371.SZ",
+      "close": 884.56,
+      "change_pct": 2.833095013892,
+      "hold_shares": 94340308,
+      "hold_market_cap": 83449662844.48,
+      "a_shares_ratio": 13,
+      "free_shares_ratio": 13.0105,
+      "total_shares_ratio": 13.0001,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "美的集团",
+      "code": "000333",
+      "secucode": "000333.SZ",
+      "close": 75.53,
+      "change_pct": -2.251844182736,
+      "hold_shares": 893478198,
+      "hold_market_cap": 67484408294.94,
+      "a_shares_ratio": 12.83,
+      "free_shares_ratio": 13.0202,
+      "total_shares_ratio": 11.7355,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "贵州茅台",
+      "code": "600519",
+      "secucode": "600519.SH",
+      "close": 1185.49,
+      "change_pct": -0.792495146281,
+      "hold_shares": 53711656,
+      "hold_market_cap": 63674631071.44,
+      "a_shares_ratio": 4.3,
+      "free_shares_ratio": 4.2967,
+      "total_shares_ratio": 4.2967,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "中微公司",
+      "code": "688012",
+      "secucode": "688012.SH",
+      "close": 468.5,
+      "change_pct": 2.585999255512,
+      "hold_shares": 126046718,
+      "hold_market_cap": 59052887383,
+      "a_shares_ratio": 13.23,
+      "free_shares_ratio": 13.378,
+      "total_shares_ratio": 13.2307,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "澜起科技",
+      "code": "688008",
+      "secucode": "688008.SH",
+      "close": 309.9,
+      "change_pct": 4.674728095656,
+      "hold_shares": 145796756,
+      "hold_market_cap": 45182414684.4,
+      "a_shares_ratio": 12.72,
+      "free_shares_ratio": 12.7175,
+      "total_shares_ratio": 11.929,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "立讯精密",
+      "code": "002475",
+      "secucode": "002475.SZ",
+      "close": 70.4,
+      "change_pct": 7.81010719755,
+      "hold_shares": 578377455,
+      "hold_market_cap": 40717772832,
+      "a_shares_ratio": 7.9,
+      "free_shares_ratio": 7.9204,
+      "total_shares_ratio": 7.9023,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "招商银行",
+      "code": "600036",
+      "secucode": "600036.SH",
+      "close": 35.5,
+      "change_pct": -2.526084568918,
+      "hold_shares": 1097374398,
+      "hold_market_cap": 38956791129,
+      "a_shares_ratio": 5.32,
+      "free_shares_ratio": 5.3196,
+      "total_shares_ratio": 4.3512,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "汇川技术",
+      "code": "300124",
+      "secucode": "300124.SZ",
+      "close": 66.33,
+      "change_pct": 1.686340640809,
+      "hold_shares": 530083919,
+      "hold_market_cap": 35160466347.27,
+      "a_shares_ratio": 19.58,
+      "free_shares_ratio": 21.9923,
+      "total_shares_ratio": 19.5776,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "寒武纪",
+      "code": "688256",
+      "secucode": "688256.SH",
+      "close": 1595.55,
+      "change_pct": 7.661943319838,
+      "hold_shares": 22018028,
+      "hold_market_cap": 35130864575.4,
+      "a_shares_ratio": 3.5,
+      "free_shares_ratio": 3.5044,
+      "total_shares_ratio": 3.5044,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "新易盛",
+      "code": "300502",
+      "secucode": "300502.SZ",
+      "close": 607,
+      "change_pct": 8.984487216317,
+      "hold_shares": 80809547,
+      "hold_market_cap": 35036710735,
+      "a_shares_ratio": 5.8,
+      "free_shares_ratio": 6.4429,
+      "total_shares_ratio": 5.7959,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "紫金矿业",
+      "code": "601899",
+      "secucode": "601899.SH",
+      "close": 25.14,
+      "change_pct": -2.520356727414,
+      "hold_shares": 1313255994,
+      "hold_market_cap": 33015255689.16,
+      "a_shares_ratio": 6.37,
+      "free_shares_ratio": 6.3745,
+      "total_shares_ratio": 4.9388,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "药明康德",
+      "code": "603259",
+      "secucode": "603259.SH",
+      "close": 124.51,
+      "change_pct": -1.315685186653,
+      "hold_shares": 261564313,
+      "hold_market_cap": 32567372611.63,
+      "a_shares_ratio": 10.58,
+      "free_shares_ratio": 10.5756,
+      "total_shares_ratio": 8.7663,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "潍柴动力",
+      "code": "000338",
+      "secucode": "000338.SZ",
+      "close": 27.25,
+      "change_pct": 4.047346315388,
+      "hold_shares": 1193652714,
+      "hold_market_cap": 32527036456.5,
+      "a_shares_ratio": 17.77,
+      "free_shares_ratio": 24.0985,
+      "total_shares_ratio": 13.7801,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "兆易创新",
+      "code": "603986",
+      "secucode": "603986.SH",
+      "close": 815,
+      "change_pct": -2.97619047619,
+      "hold_shares": 38161725,
+      "hold_market_cap": 31101805875,
+      "a_shares_ratio": 5.71,
+      "free_shares_ratio": 5.7086,
+      "total_shares_ratio": 5.4381,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "长江电力",
+      "code": "600900",
+      "secucode": "600900.SH",
+      "close": 26.47,
+      "change_pct": -1.378539493294,
+      "hold_shares": 1128697709,
+      "hold_market_cap": 29876628357.23,
+      "a_shares_ratio": 4.61,
+      "free_shares_ratio": 4.6129,
+      "total_shares_ratio": 4.6129,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "思源电气",
+      "code": "002028",
+      "secucode": "002028.SZ",
+      "close": 173,
+      "change_pct": -0.511817815861,
+      "hold_shares": 155421691,
+      "hold_market_cap": 26887952543,
+      "a_shares_ratio": 19.86,
+      "free_shares_ratio": 25.4454,
+      "total_shares_ratio": 19.8603,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "阳光电源",
+      "code": "300274",
+      "secucode": "300274.SZ",
+      "close": 159.02,
+      "change_pct": 2.171678231817,
+      "hold_shares": 167567881,
+      "hold_market_cap": 26646644436.62,
+      "a_shares_ratio": 8.08,
+      "free_shares_ratio": 10.5553,
+      "total_shares_ratio": 8.0825,
+      "trade_date": "2026-06-30"
+     },
+     {
+      "name": "沪电股份",
+      "code": "002463",
+      "secucode": "002463.SZ",
+      "close": 152.8,
+      "change_pct": 8.322699560471,
+      "hold_shares": 172333043,
+      "hold_market_cap": 26332488970.4,
+      "a_shares_ratio": 8.96,
+      "free_shares_ratio": 8.9626,
+      "total_shares_ratio": 8.9553,
+      "trade_date": "2026-06-30"
+     }
+    ]
+   },
+   "news": [
+    {
+     "title": "防御台风“巴威” 福建提升防台风应急响应为Ⅲ级",
+     "body": "【防御台风“巴威” 福建提升防台风应急响应为Ⅲ级】据福建省防汛抗旱指挥部，今年第9号台风“巴威”9日14时中心位于台湾基隆市东南方向约1030公里的洋面上，中心附近最大风力16级（52米/秒，超强台风级）。福建省气象台9日17时将“台风预警”提升为Ⅲ级，根据《福建省防汛抗旱防台风应急预案》《福建省人民政府防汛抗旱指挥部应急响应工作规程》有关规定，福建省防指于9日17时提升防台风应急响应为Ⅲ级。",
+     "source": "界面新闻",
+     "time": "2026-07-09 17:30:51",
+     "category": "domestic",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1350,202607093800123015.html",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "“十五五”碳达峰行动方案：加快再生材料推广应用 大力发展再制造产业",
+     "body": "【“十五五”碳达峰行动方案：加快再生材料推广应用 大力发展再制造产业】国务院印发《“十五五”碳达峰行动方案》。其中提到，发挥循环经济助力降碳作用。加快完善废旧物资回收网络，推广“互联网+”回收模式，畅通“换新+回收”渠道。加强废弃电器电子产品、废旧动力电池、退役风电光伏设备、报废汽车、报废农机等再生资源规范化回收和精细化利用，拓宽粉煤灰、煤矸石、农作物秸秆、畜禽粪污等大宗固体废弃物综合利用渠道，加",
+     "source": "界面新闻",
+     "time": "2026-07-09 17:20:03",
+     "category": "domestic",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1350,202607093800112030.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "“十五五”碳达峰行动方案：积极发展全国温室气体自愿减排交易市场",
+     "body": "【“十五五”碳达峰行动方案：积极发展全国温室气体自愿减排交易市场】国务院印发《“十五五”碳达峰行动方案》。其中提到，健全市场化机制。发挥碳市场支撑作用，加强全国碳排放权交易市场建设，逐步覆盖石化、化工等行业，对碳排放总量相对稳定的行业优先实施配额总量控制，加强碳排放配额总量与碳排放双控目标衔接，稳妥推行免费和有偿相结合的碳排放配额分配方式。积极发展全国温室气体自愿减排交易市场，推动核证自愿减排量应",
+     "source": "界面新闻",
+     "time": "2026-07-09 17:18:03",
+     "category": "domestic",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1350,202607093800109792.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "国务院：加快发展绿色能源、绿色制造、绿色服务等绿色低碳产业 持续增强新能源、新能源汽车、动力电池等产业竞争优势",
+     "body": "【国务院：加快发展绿色能源、绿色制造、绿色服务等绿色低碳产业 持续增强新能源、新能源汽车、动力电池等产业竞争优势】国务院印发《“十五五”碳达峰行动方案》。其中提出，推动产业结构绿色低碳转型。加快发展绿色能源、绿色制造、绿色服务等绿色低碳产业，持续增强新能源、新能源汽车、动力电池等产业竞争优势，培育氢能、绿色燃料等产业。支持碳管理服务业发展，推广合同能源管理等第三方治理模式，推进数智技术赋能绿色低碳",
+     "source": "第一财经",
+     "time": "2026-07-09 17:17:44",
+     "category": "domestic",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1350,202607093800110269.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "“十五五”碳达峰行动方案：有序建立发电侧可靠容量补偿机制",
+     "body": "【“十五五”碳达峰行动方案：有序建立发电侧可靠容量补偿机制】国务院印发《“十五五”碳达峰行动方案》。其中提到，深化各类电源上网电价市场化改革，落实新能源可持续发展价格结算机制和新能源就近消纳价格机制。完善发电侧容量电价机制，有序建立发电侧可靠容量补偿机制。完善体现分时价值差异的零售市场价格机制，探索建立反映调节能力的需求响应价格机制，充分激发用户侧调节潜力。",
+     "source": "界面新闻",
+     "time": "2026-07-09 17:16:03",
+     "category": "domestic",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1350,202607093800108740.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "“十五五”碳达峰行动方案：到2030年风电和太阳能发电总装机容量达到28亿千瓦以上 常规水电装机容量达到4.1亿千瓦左右",
+     "body": "【“十五五”碳达峰行动方案：到2030年风电和太阳能发电总装机容量达到28亿千瓦以上 常规水电装机容量达到4.1亿千瓦左右】7月9日，国务院印发《“十五五”碳达峰行动方案》，行动方案提出，大力推进非化石能源开发。到2030年，风电和太阳能发电总装机容量达到28亿千瓦以上，常规水电装机容量达到4.1亿千瓦左右，核电运行装机容量达到1.1亿千瓦左右。",
+     "source": "每日经济新闻",
+     "time": "2026-07-09 17:15:12",
+     "category": "domestic",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1350,202607093800109156.html",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "“十五五”碳达峰行动方案：设立国家低碳转型基金",
+     "body": "【“十五五”碳达峰行动方案：设立国家低碳转型基金】国务院印发《“十五五”碳达峰行动方案》。其中提到，加强资金支持。积极促进碳达峰碳中和领域投资，统筹用好各类资金渠道支持符合条件的重点项目建设并强化跟踪调度，引导社会资本积极参与碳达峰碳中和相关项目投资、建设、运营。设立国家低碳转型基金。",
+     "source": "界面新闻",
+     "time": "2026-07-09 17:14:02",
+     "category": "domestic",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1350,202607093800108874.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "“十五五”碳达峰行动方案：到2030年新型储能装机容量力争达到3亿千瓦 虚拟电厂最大调节能力达到5000万千瓦以上",
+     "body": "【“十五五”碳达峰行动方案：到2030年新型储能装机容量力争达到3亿千瓦 虚拟电厂最大调节能力达到5000万千瓦以上】国务院印发《“十五五”碳达峰行动方案》，行动方案提出，到2030年，抽水蓄能装机容量达到1.6亿千瓦左右，新型储能装机容量力争达到3亿千瓦，全国虚拟电厂最大调节能力达到5000万千瓦以上，电力需求响应能力达到最大用电负荷的5%以上。",
+     "source": "财联社",
+     "time": "2026-07-09 17:11:28",
+     "category": "domestic",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1350,202607093800102053.html",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "“十五五”碳达峰行动方案：加快建设绿色算力设施 鼓励建设零碳算力设施",
+     "body": "【“十五五”碳达峰行动方案：加快建设绿色算力设施 鼓励建设零碳算力设施】国务院印发《“十五五”碳达峰行动方案》，行动方案提出，推进算力设施绿色低碳转型。强化算力设施与可再生能源协同布局，支持开展绿电直供，合理配置储能、备用电源等配套设施，推动新建算力设施主要使用非化石能源电力。完善算力设施节能降碳标准，推动未达标算力设施开展节能降碳改造，有序淘汰落后低效技术和设备，提升算力设施能效水平。加快建设绿",
+     "source": "财联社",
+     "time": "2026-07-09 17:10:08",
+     "category": "domestic",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1350,202607093800103749.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "“十五五”碳达峰行动方案：积极推进绿色氢氨醇、生物柴油、可持续航空燃料等绿色燃料应用",
+     "body": "【“十五五”碳达峰行动方案：积极推进绿色氢氨醇、生物柴油、可持续航空燃料等绿色燃料应用】国务院印发《“十五五”碳达峰行动方案》，行动方案提出，持续优化油气消费结构。积极推进绿色氢氨醇、生物柴油、可持续航空燃料等绿色燃料应用。",
+     "source": "财联社",
+     "time": "2026-07-09 17:08:21",
+     "category": "domestic",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1350,202607093800103385.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "约6000多万桶伊朗原油滞留海上 美国制裁或导致买家放弃交易",
+     "body": "【约6000多万桶伊朗原油滞留海上 美国制裁或导致买家放弃交易】本周，霍尔木兹海峡风云突变。周二，三艘商船在该海峡遭袭之后，美国对伊朗多个目标发动了袭击，并取消了8月21日到期的对伊朗石油销售的豁免。",
+     "source": "财联社",
+     "time": "2026-07-09 10:15:41",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://futures.eastmoney.com/news/1765,202607093799625461.html",
+     "sentiment": "negative"
+    },
+    {
+     "title": "谨慎看待石油过剩 顶级机构警告仍难想象美伊达成持久和平协议！",
+     "body": "随着船只恢复进入和驶出霍尔木兹海峡，市场对原油供应短缺的担忧逐渐消弭，并转向供应过剩的预期中。一些分析师预计，未来几个月霍尔木兹海峡的航运将恢复正常，导致明年将出现巨大的供应过剩，这将压低油价。其中，花旗集团预测，今年年底布伦特原油价格可能会暴跌至每桶60美元。摩根士丹利也大幅下调了未来18个月的油价预期，因为霍尔木兹海峡的重新开放将加速新的供应过剩。",
+     "source": "财联社",
+     "time": "2026-07-07 11:19:44",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607073796456336.html",
+     "sentiment": "negative"
+    },
+    {
+     "title": "全球市场最荒诞的脱节：油价已重回战前 其他资产却在“装看不见”？",
+     "body": "【全球市场最荒诞的脱节：油价已重回战前 其他资产却在“装看不见”？】随着波斯湾石油供应供给冲击接近尾声，国际油价目前已大幅跌回战前水平，但全球市场上的一些跨资产领域却出人意料地执着于美联储的“加息叙事”。",
+     "source": "财联社",
+     "time": "2026-07-07 08:57:00",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607073795880713.html",
+     "sentiment": "negative"
+    },
+    {
+     "title": "乌克兰加大袭击俄能源基础设施力度 俄罗斯面临成品油危机",
+     "body": "【乌克兰加大袭击俄能源基础设施力度 俄罗斯面临成品油危机】僵持的俄乌冲突正进入新阶段，乌克兰近期加大了对俄罗斯能源基础设施领域的破坏。数据显示，今年以来，俄罗斯炼油厂至少遭受了194次袭击，比上年同期增加了11倍。波兰分析机构Rochan Consulting的数据指出，5月份乌克兰对俄罗斯炼油厂的成功袭击次数达到历史最高单月纪录16次。乌克兰这一前所未有的袭击速度，正在引发俄罗斯严重的成品油危机",
+     "source": "财联社",
+     "time": "2026-07-06 14:13:19",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://global.eastmoney.com/news/11798,202607063794976767.html",
+     "sentiment": "negative"
+    },
+    {
+     "title": "中东“停战红利”体现：海湾石油出口重回千万桶时代",
+     "body": "虽然美国与伊朗的和平谈判仍在继续，但双方敌对情绪已有所缓和，所谓的“停战红利”开始显现，海湾石油出口量有了明显回升。数据显示，海湾地区6月份日均石油出口量较5月份增加逾300万桶，突破1000万桶/日，尽管出口量仍比冲突前水平低40%。",
+     "source": "财联社",
+     "time": "2026-07-06 12:50:11",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1348,202607063794961748.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "油市供应过剩恐加剧？霍尔木兹航运逐步恢复 OPEC+批准进一步增产",
+     "body": "石油输出国组织及其盟友（OPEC+）周日发表声明称，该组织已同意自8月起进一步上调产量目标。此举将进一步增加全球石油供应，而眼下随着经由霍尔木兹海峡的石油出口逐步恢复、油价正持续回落。该产油国组织在一次线上会议中同意，从8月份起将产量配额增加18.8万桶/日。这将是该组织连续第三个月提高石油产量目标，并逐步取消自2023年起实施的减产措施。",
+     "source": "财联社",
+     "time": "2026-07-06 08:33:37",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1344,202607063794383965.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "中东突发！以军：已全面控制！以总理称“正与美国并肩作战”  ！黄金、白银突变！",
+     "body": "以色列，在周末再度发动袭击。周一早间，现货黄金、白银波动加剧，双双集体高开后回落，截至发稿，现货黄金一度翻绿，现货白银涨超0.4%，此前一度涨逾1.2%。原油则出现低开走势。5日，以色列国防军总参谋长扎米尔前往黎巴嫩南部的博福特岭。扎米尔说，在攻占博福特岭后，目前以军已全面控制了这一地区的地面部分及地下隧道网络。他还表示，以军将继续采取行动消除来自黎巴嫩的威胁。",
+     "source": "证券时报",
+     "time": "2026-07-06 08:12:53",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1344,202607063794379893.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "押注霍尔木兹航运恢复 机构预测布油年底最低或跌至60美元",
+     "body": "随着全球石油市场有望重新转向供过于求，一些华尔街策略师开始认为布油价格到今年年底可能跌至每桶60美元，这一水平相当于较中东战事期间的峰值腰斩。花旗集团分析师在周五的一份报告中表示，尽管局势可能出现短暂波动，但美伊双方都有充分理由维持6月中旬签署的谅解备忘录，石油供应增加将在今年下半年对油价形成下行压力。",
+     "source": "财联社",
+     "time": "2026-07-04 02:36:44",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607043793952698.html",
+     "sentiment": "negative"
+    },
+    {
+     "title": "美伊最新消息！特朗普发声！黄金、白银拉升！美股突变 存储概念大跌",
+     "body": "美伊传来大消息，特朗普7月1日表示，美国同伊朗在卡塔尔举行的最新一轮会谈进展顺利。7月2日国际原油期货开盘后跳水。截至发稿，WTI原油跌近0.8%。黄金、白银小幅拉升，截至发稿，现货黄金、现货白银均小幅上涨。消息面上，据消息人士透露，美国和伊朗7月1日在卡塔尔首都多哈举行间接会谈，卡塔尔和巴基斯坦担任斡旋方，美伊代表团“没有面对面会晤”。",
+     "source": "证券时报",
+     "time": "2026-07-02 07:50:16",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1344,202607023790840129.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "波斯湾原油出口反弹至本轮冲突前水平的75%",
+     "body": "波斯湾原油出口反弹至本轮冲突前水平的75%。",
+     "source": "财联社",
+     "time": "2026-06-26 00:07:54",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202606263783469177.html",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "美银全球研究上调欧洲矿业板块评级",
+     "body": "【美银全球研究上调欧洲矿业板块评级】美银全球研究将欧洲矿业板块的评级从“低配”上调至“中性”。",
+     "source": "财联社",
+     "time": "2026-07-09 17:28:26",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607093800123730.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "报告显示阿联酋2025年吸引外资居阿拉伯国家首位",
+     "body": "【报告显示阿联酋2025年吸引外资居阿拉伯国家首位】阿拉伯投资和出口信贷担保公司7月8日发布报告显示，阿拉伯联合酋长国2025年吸引外国直接投资482亿美元，占阿拉伯地区外国直接投资总额的40.4%，居阿拉伯国家首位。",
+     "source": "新华社",
+     "time": "2026-07-09 16:49:02",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607093800073074.html",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "美联储主席沃什将于15日出席美参议院银行委员会听证会",
+     "body": "【美联储主席沃什将于15日出席美参议院银行委员会听证会】美国参议院银行委员会当地时间7月8日发布消息称，美联储主席凯文·沃什将于美东时间7月15日上午10时出席该委员会听证会。此次听证会将聚焦美联储提交国会的半年度货币政策报告。",
+     "source": "界面新闻",
+     "time": "2026-07-09 16:43:00",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607093800066580.html",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "霍尔木兹航运“接近停滞”！高盛警告：中东石油供应复苏面临变数",
+     "body": "高盛集团表示，若紧张局势升级导致霍尔木兹海峡航运受阻，中东原油供应的复苏进程或将被拖慢。据高盛估算，6月波斯湾的原油日产量仍较战前水平低约1050万桶。包括YuliaZhetkovaGrigsby在内的高盛分析师在7月8日的研报中表示：“尽管过去一个月中东产油国已开始重启关停的油井，但霍尔木兹海峡航运中断可能会令原油产量复苏步伐放缓。",
+     "source": "财联社",
+     "time": "2026-07-09 16:33:41",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607093800060387.html",
+     "sentiment": "negative"
+    },
+    {
+     "title": "瑞银上调2026年底欧洲斯托克600指数目标价",
+     "body": "【瑞银上调2026年底欧洲斯托克600指数目标价】瑞银将2026年底欧洲斯托克600指数目标价从630点上调至690点。",
+     "source": "财联社",
+     "time": "2026-07-09 16:31:17",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607093800059714.html",
+     "sentiment": "positive"
+    },
+    {
+     "title": "巴克莱分析师：政策风险整体偏向加息",
+     "body": "【巴克莱分析师：政策风险整体偏向加息】巴克莱分析师表示，美联储或维持当前利率至2027年底，但政策风险整体偏向加息。",
+     "source": "财联社",
+     "time": "2026-07-09 16:28:55",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607093800052421.html",
+     "sentiment": "negative"
+    },
+    {
+     "title": "经济热点问答丨太平洋水温异常如何牵动全球经济",
+     "body": "新华社北京7月9日电经济热点问答｜太平洋水温异常如何牵动全球经济巴西咖啡减产、英国电网报警、巴拿马运河下调通行船舶吃水深度……这些看似毫无关联的事件，背后却可能有着同样的原因，即太平洋部分海域水温异常引发的厄尔尼诺现象。近年来，随着全球极端天气频发，经济学家、国际机构和金融市场开始越来越关注这一气象术语。",
+     "source": "中国证券报·中证网",
+     "time": "2026-07-09 16:20:00",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1346,202607093800078713.html",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "【环球财经】日本10年期国债收益率一度升至2.90%",
+     "body": "新华财经东京7月9日电（记者李诗萌蓝建中）日本国债市场9日继续走弱，作为长期利率指标的新发10年期日本国债收益率一度升至2.90%，连续第五个交易日刷新约30年来新高。尽管当天举行的5年期国债拍卖结果符合市场预期，但中东局势以及日本财政、货币政策前景仍存在较大不确定性，市场避险情绪未见缓解，投资者整体保持谨慎。市场人士普遍认为，10年期国债收益率或进一步逼近3%这一整数关口。",
+     "source": "新华财经",
+     "time": "2026-07-09 16:15:04",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://bond.eastmoney.com/news/1325,202607093800063611.html",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "Visa报告：欧洲银行业普遍认为AI将塑造“未来银行”的形态",
+     "body": "Visa发布的研究报告指出，欧洲银行业普遍认为，AI将塑造“未来银行”的形态。",
+     "source": "财联社",
+     "time": "2026-07-09 16:11:19",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607093800036776.html",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "英国10年期国债收益率下跌5个基点至4.92%",
+     "body": "英国10年期国债收益率下跌5个基点至4.92%",
+     "source": "每日经济新闻",
+     "time": "2026-07-09 15:55:33",
+     "category": "global",
+     "lang": "zh",
+     "url": "http://finance.eastmoney.com/news/1351,202607093800023077.html",
+     "sentiment": "negative"
+    },
+    {
+     "title": "Iran to bury slain Supreme Leader in culmination of mass funeral - Reuters",
+     "body": "Iran to bury slain Supreme Leader in culmination of mass funeral  Reuters",
+     "source": "Reuters",
+     "time": "2026-07-09 16:54",
+     "category": "finnhub",
+     "lang": "en",
+     "url": "https://news.google.com/rss/articles/CBMirgFBVV95cUxNTHpfT3hyLXNRcDVsVDNZdk9uSDJsbU1KQXBqdWlaMVhXdGdHay0wN2k3bEthNlpHaHlVX2dKTEpIWHdncE5Ka0lIOGVsR04zLXNUVzB2M2VSNWJxVjVxRlRHYlUtcHUxUFJvVEZGTHUzMnJXeE1JanhjUHpDMGgzOWFZNUh0RHUxT2ViMHlyOWJ6d3YzdVBiT1cxeVRKbF9MbGRrQ0F0M3pJLUN5QXc?oc=5",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "Bank of Japan sees growing inflation pressures from Iran war - Reuters",
+     "body": "Bank of Japan sees growing inflation pressures from Iran war  Reuters",
+     "source": "Reuters",
+     "time": "2026-07-09 13:14",
+     "category": "finnhub",
+     "lang": "en",
+     "url": "https://news.google.com/rss/articles/CBMivgFBVV95cUxOSjhGY1RXd3JYMmRZN1hsYW45YlpIeVZEZTl2ekQtdlUzWU9XVmliUC1LVG9hY1NYZk92YjlwOThzam9XdGN1MjRlbDFMTV9fcTk1Q1psVVUyT04yUWRxcVN5S05XLTYwLXN0ZnBxSkZwMXl1NGtHLWlQYzNnZzFTVlVucGZ3NFJveUNOVzdUSzVPdlZvaEUyS1BGX2RLTjJMUXJFelZpd0I5TDUwNG1naDM0UFJIeWJ3NUpmUnhn?oc=5",
+     "sentiment": "negative"
+    },
+    {
+     "title": "Morning Bid: Chip euphoria vies with war weariness - Reuters",
+     "body": "Morning Bid: Chip euphoria vies with war weariness  Reuters",
+     "source": "Reuters",
+     "time": "2026-07-09 12:32",
+     "category": "finnhub",
+     "lang": "en",
+     "url": "https://news.google.com/rss/articles/CBMif0FVX3lxTE51OTFhbF9Sc2hjZ0lSNEg3elhONXp6YVdGdlE1RVowSHlXcVJsWW1IYzZDbW5FeXVZR1lCRXNoS1lfUDlwLTVXYVBINzFDeGU5T1FMY0xTSmp5dWtMOXRRcUtXOGhVQVd3VXVsNGRZYWJzeGI0ZGMtdlNGaDgxalU?oc=5",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "Gulf companies are set to reveal the unequal toll of Iran war - Reuters",
+     "body": "Gulf companies are set to reveal the unequal toll of Iran war  Reuters",
+     "source": "Reuters",
+     "time": "2026-07-09 12:06",
+     "category": "finnhub",
+     "lang": "en",
+     "url": "https://news.google.com/rss/articles/CBMiqAFBVV95cUxNeUlETmVrbERuN1NFblIwZmpYZmYzaUtwN0o3Y3huQ0pqNmNncHhqb1RPbUJqb1dtUDhWQ2JFemNYYjczQWVlak0zT0VqM3k3MC1qdWxoYVE1U3Q1QWJZVFBsa0NUNWdCNThGNVExVGFQbHlLSy1haGMzTnp1YTM3cGF0UTl4ems3UUthY29tUmF0UUNhY2RvZi1FU0lIdGVUMUs2M2hSSEs?oc=5",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "Gold rises from one-week low as softer dollar lends support - Reuters",
+     "body": "Gold rises from one-week low as softer dollar lends support  Reuters",
+     "source": "Reuters",
+     "time": "2026-07-09 09:32",
+     "category": "finnhub",
+     "lang": "en",
+     "url": "https://news.google.com/rss/articles/CBMipgFBVV95cUxQX196NlhHT096R1N6VDR0SmJaSUhvb0tnWDFoTmEydEFHTl9QRHNPSVBTejM2eFhfLXFRa1ZHcWhnLWlVdVd1SGdmMHhTZ0FCTUpocm5WOW1NRVBHMWo0MzFIVkE2eXZJd2xvWGxGUTB1RFRIUFh2dWRlbFhtV3J1SklFOGUyYkk1RnlWSUJSQTlrX2N2dUZYV3pjTk1URlZMWmF4Y2lB?oc=5",
+     "sentiment": "positive"
+    },
+    {
+     "title": "Dollar stands tall as new Gulf attacks fuel oil price surge, Fed hike bets - Reuters",
+     "body": "Dollar stands tall as new Gulf attacks fuel oil price surge, Fed hike bets  Reuters",
+     "source": "Reuters",
+     "time": "2026-07-09 09:21",
+     "category": "finnhub",
+     "lang": "en",
+     "url": "https://news.google.com/rss/articles/CBMivwFBVV95cUxPcEtZMUh4bWpMRVNDRm42NVlyN2dsWExFZGsyNnlFa3FRelRxT1RlcVJGRkRYODBsa3JfbkxoTWhoUHVpWWxHUWx4dW1ERDlwMlc1b0pzSE9rS3J4OU9yeUx1cHNIUm9kcW9xNjhFTl9oaXdJSFVqWHpWVkpOM3VHTnphOHo1WXBmNXFodHZ5TVVhXzE4ZFFsN2JKQmNGbE93ejhjY2VRM0JwNkNaOE1oUkdtYXZZYUZ4M3JUMFpRdw?oc=5",
+     "sentiment": "positive"
+    },
+    {
+     "title": "Oil prices fall as markets weigh impact of US strikes on Iran - Reuters",
+     "body": "Oil prices fall as markets weigh impact of US strikes on Iran  Reuters",
+     "source": "Reuters",
+     "time": "2026-07-09 09:04",
+     "category": "finnhub",
+     "lang": "en",
+     "url": "https://news.google.com/rss/articles/CBMiqgFBVV95cUxOdklGcG9tdzh1UWdoWldFbWpRaXJELXpXclBKYzlJbzBpaXNJMWJBTnRYUFh1WndvTmNVN2x3ZHBlQm94ZVI0M24zdnVHSVZtR0dNVDMxdmM0SmJUTGZLUWZTWGdwcWlQM0JfcHlBVVB6V2lZOEo1bzFHMUZ1ZkM4b2ZCdnFWOGhOZmVkSXVIODdhUWxDYU9mNlMxdnRoRkZBUV9iNEVMakdpZw?oc=5",
+     "sentiment": "negative"
+    },
+    {
+     "title": "Trump orders halt to US trade with Spain over NATO spending, Iran - Reuters",
+     "body": "Trump orders halt to US trade with Spain over NATO spending, Iran  Reuters",
+     "source": "Reuters",
+     "time": "2026-07-09 07:22",
+     "category": "finnhub",
+     "lang": "en",
+     "url": "https://news.google.com/rss/articles/CBMinAFBVV95cUxPUHpycW05eTVleW81UVFsUkdsdzhiaDJuSTl1dDhFNy10bHpyYkVoeWFpWmtvSnFEa2MyRW4wdjExcGpMUVNRNlVveERCZXpPM0lmWkpnNVFBUzhENGdHQmVSRGw3WDN6bXQ4YkdaZGRveWVkWjlkdDFWU0lFSVF3UGFxMzREQkEyYkR0Yy1PbEl2Ul80WGJUMHp6VEE?oc=5",
+     "sentiment": "negative"
+    },
+    {
+     "title": "Giuliani defends White house handling of Iran at World Cup - Reuters",
+     "body": "Giuliani defends White house handling of Iran at World Cup  Reuters",
+     "source": "Reuters",
+     "time": "2026-07-09 07:22",
+     "category": "finnhub",
+     "lang": "en",
+     "url": "https://news.google.com/rss/articles/CBMipAFBVV95cUxPaEhTT1RLcEhFWGhjaW9CQU9RVlNOcWpON3I4QWpXTlBXU1ZUOUx4S3lHYjUtbzRwMjRzWW02YUZBR0pIbGpkbFliRkxDemxTNlZWN2d6a2RSNjc3OHo1ZTE2NVhHaHFzM0NLUmlpVjNjRWdNZzBhQTI1ZXBPZ0htcTJsdVd0M2o5RmVTaC1xUVJtbC1QbUpvRVl2em9NdkZMeHdlcg?oc=5",
+     "sentiment": "neutral"
+    },
+    {
+     "title": "S&P 500 ends down after Trump says Iran deal is 'over' - Reuters",
+     "body": "S&P 500 ends down after Trump says Iran deal is 'over'  Reuters",
+     "source": "Reuters",
+     "time": "2026-07-09 07:20",
+     "category": "finnhub",
+     "lang": "en",
+     "url": "https://news.google.com/rss/articles/CBMirAFBVV95cUxOcTlvb203c2gzM1N5b1NUS2FVd1NXMl9ONUhXaFN6bmJ2c29WSGtDbFB3cnd4SmRkY1NJX095NEg5TWxVcVh4WG1WRmdYWW92WUVZcTZBNlFnQlo3dHN4N1B2cWxZcG9QZ3FuOFBaRFFDUUxGNXU2MlpDYWFUX2JVTlAxZ0pwQnYzS1ppQ1pkcU8yT2VNNERkbTZ2aUxWdHJSZEFNeVA0QzJjbzcz?oc=5",
+     "sentiment": "negative"
+    }
+   ],
+   "source": "web_search"
+  },
+  "data_source": "db + web_search"
+ },
+ "portfolio": {
+  "positions": [],
+  "stats": {
+   "total_positions": 0,
+   "total_market_value": 0,
+   "total_cost": 0,
+   "total_unrealized_pnl": 0,
+   "total_unrealized_pnl_pct": 0,
+   "total_realized_pnl": 0,
+   "total_invested": 0,
+   "total_capital": 100000.0,
+   "position_ratio": 0.0
+  },
+  "budget": {
+   "total_capital": 100000.0,
+   "current_position_pct": 0.0,
+   "max_total_pct": 80.0,
+   "remaining_budget": 80000.0,
+   "remaining_budget_pct": 80.0,
+   "max_single_pct": 20.0,
+   "max_single_amount": 20000.0,
+   "can_buy_new": true,
+   "max_new_positions": 4
+  },
+  "risk_analysis": {}
+ },
+ "previous_report": {
+  "has_previous": true,
+  "report_id": "(fixture)",
+  "report_date": "(fixture)",
+  "report_title": "(fixture)",
+  "recommendations": [],
+  "summary": {
+   "total": 0,
+   "valid": 0,
+   "winning": 0,
+   "losing": 0,
+   "no_data": 0,
+   "flat": 0,
+   "win_rate": 0,
+   "avg_return_pct": 0
+  }
+ },
+ "signals": {
+  "total": 14021,
+  "buy": 10220,
+  "sell": 3801,
+  "avg_strength": 0.51,
+  "by_strategy": {
+   "MA_CROSS": {
+    "buy": 398,
+    "sell": 553,
+    "total": 951,
+    "avg_strength": 0.6367
+   },
+   "MACD": {
+    "buy": 6252,
+    "sell": 1979,
+    "total": 8231,
+    "avg_strength": 0.4829
+   },
+   "RSI": {
+    "buy": 1833,
+    "sell": 502,
+    "total": 2335,
+    "avg_strength": 0.4649
+   },
+   "KDJ": {
+    "buy": 1737,
+    "sell": 767,
+    "total": 2504,
+    "avg_strength": 0.5933
+   }
+  },
+  "top_buy_signals": [
+   {
+    "symbol": "600619.SH",
+    "name": "海立股份",
+    "date": "2026-06-26",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "RSI",
+    "price": 15.4,
+    "stop_loss": 14.47,
+    "take_profit": 16.94,
+    "reasons": [
+     "RSI从超卖区回升（RSI=49.82）",
+     "市场可能超跌反弹",
+     "趋势中性",
+     "量比: 2.16（显著放量）",
+     "ATR动态止损（ATR=0.62, 止损1.5倍ATR, 止盈2.5倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "600060.SH",
+    "name": "海信视像",
+    "date": "2026-06-30",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 27.87,
+    "stop_loss": 24.8,
+    "take_profit": 32.47,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥27.87",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 1.54（温和放量）",
+     "ATR动态止损（ATR=1.53, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "688563.SH",
+    "name": "航材股份",
+    "date": "2026-06-30",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "RSI",
+    "price": 51.23,
+    "stop_loss": 48.28,
+    "take_profit": 56.15,
+    "reasons": [
+     "RSI从超卖区回升（RSI=48.56）",
+     "市场可能超跌反弹",
+     "趋势中性",
+     "量比: 1.87（温和放量）",
+     "ATR动态止损（ATR=1.97, 止损1.5倍ATR, 止盈2.5倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "002693.SZ",
+    "name": "*ST双成",
+    "date": "2026-07-01",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 9.7,
+    "stop_loss": 8.78,
+    "take_profit": 11.08,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥9.70",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 1.71（温和放量）",
+     "ATR动态止损（ATR=0.46, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "002567.SZ",
+    "name": "唐人神",
+    "date": "2026-07-02",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 3.56,
+    "stop_loss": 3.25,
+    "take_profit": 4.03,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥3.56",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 1.58（温和放量）",
+     "ATR动态止损（ATR=0.15, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "002915.SZ",
+    "name": "中欣氟材",
+    "date": "2026-07-02",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 23.54,
+    "stop_loss": 20.6,
+    "take_profit": 27.95,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥23.54",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 2.02（显著放量）",
+     "ATR动态止损（ATR=1.47, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "300022.SZ",
+    "name": "吉峰科技",
+    "date": "2026-07-02",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 8.44,
+    "stop_loss": 7.81,
+    "take_profit": 9.38,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥8.44",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 1.84（温和放量）",
+     "ATR动态止损（ATR=0.31, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "300840.SZ",
+    "name": "酷特智能",
+    "date": "2026-07-02",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 23.16,
+    "stop_loss": 20.94,
+    "take_profit": 26.49,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥23.16",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 1.71（温和放量）",
+     "ATR动态止损（ATR=1.11, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "600289.SH",
+    "name": "ST信通",
+    "date": "2026-07-02",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 6.08,
+    "stop_loss": 5.53,
+    "take_profit": 6.91,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥6.08",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 1.75（温和放量）",
+     "ATR动态止损（ATR=0.28, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "600316.SH",
+    "name": "洪都航空",
+    "date": "2026-07-02",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 29.19,
+    "stop_loss": 26.59,
+    "take_profit": 33.09,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥29.19",
+     "均线多头排列（MA5>MA10>MA20），趋势向上",
+     "量比: 1.73（温和放量）",
+     "ATR动态止损（ATR=1.30, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "688371.SH",
+    "name": "菲沃泰",
+    "date": "2026-07-02",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 41.29,
+    "stop_loss": 31.98,
+    "take_profit": 55.26,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥41.29",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 140.57（显著放量）",
+     "ATR动态止损（ATR=4.66, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "GFGF",
+    "name": "Guru Favorite Stocks ETF",
+    "date": "2026-07-02",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 36.145999908447266,
+    "stop_loss": 35.5,
+    "take_profit": 37.12,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥36.15",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 4.00（显著放量）",
+     "ATR动态止损（ATR=0.33, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "IEAGU",
+    "name": "Infinite Eagle Acquisition Corp",
+    "date": "2026-07-02",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 10.395000457763672,
+    "stop_loss": 10.35,
+    "take_profit": 10.46,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥10.40",
+     "近期低点持续抬升，趋势偏多",
+     "量比: inf（显著放量）",
+     "ATR动态止损（ATR=0.02, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "01615.HK",
+    "name": "奥邦建筑",
+    "date": "2026-07-03",
+    "type": "BUY",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 0.39500001072883606,
+    "stop_loss": 0.37,
+    "take_profit": 0.44,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥0.40",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 1.53（温和放量）",
+     "ATR动态止损（ATR=0.01, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "002293.SZ",
+    "name": "罗莱生活",
+    "date": "2026-07-01",
+    "type": "BUY",
+    "strength": 0.8846153846153847,
+    "strategy": "MA_CROSS",
+    "price": 10.66,
+    "stop_loss": 9.81,
+    "take_profit": 11.93,
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥10.66",
+     "均线多头排列（MA5>MA10>MA20），趋势向上",
+     "量比: 3.01（显著放量）",
+     "ATR动态止损（ATR=0.42, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "industry": null,
+    "sector": null
+   }
+  ],
+  "top_sell_signals": [
+   {
+    "symbol": "000426.SZ",
+    "name": "兴业银锡",
+    "date": "2026-06-26",
+    "type": "SELL",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 34.27,
+    "stop_loss": null,
+    "take_profit": null,
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥34.27",
+     "近期高点持续降低，趋势偏空",
+     "量比: 0.22（缩量）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "000550.SZ",
+    "name": "江铃汽车",
+    "date": "2026-06-26",
+    "type": "SELL",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 16.2,
+    "stop_loss": null,
+    "take_profit": null,
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥16.20",
+     "近期高点持续降低，趋势偏空",
+     "量比: 0.36（缩量）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "000695.SZ",
+    "name": "滨海能源",
+    "date": "2026-06-26",
+    "type": "SELL",
+    "strength": 1.0,
+    "strategy": "MACD",
+    "price": 12.83,
+    "stop_loss": null,
+    "take_profit": null,
+    "reasons": [
+     "MACD死叉（DIF下穿DEA）",
+     "当前价格: ¥12.83",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 0.19（缩量）",
+     "MACD顶背离（价格新高但DIF未新高，见顶信号）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "000762.SZ",
+    "name": "西藏矿业",
+    "date": "2026-06-26",
+    "type": "SELL",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 27.45,
+    "stop_loss": null,
+    "take_profit": null,
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥27.45",
+     "近期高点持续降低，趋势偏空",
+     "量比: 0.28（缩量）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "000839.SZ",
+    "name": "国安股份",
+    "date": "2026-06-26",
+    "type": "SELL",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 2.67,
+    "stop_loss": null,
+    "take_profit": null,
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥2.67",
+     "近期高点持续降低，趋势偏空",
+     "量比: 0.26（缩量）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "000882.SZ",
+    "name": "华联股份",
+    "date": "2026-06-26",
+    "type": "SELL",
+    "strength": 1.0,
+    "strategy": "MACD",
+    "price": 1.34,
+    "stop_loss": null,
+    "take_profit": null,
+    "reasons": [
+     "MACD死叉（DIF下穿DEA）",
+     "当前价格: ¥1.34",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 0.28（缩量）",
+     "MACD顶背离（价格新高但DIF未新高，见顶信号）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "000903.SZ",
+    "name": "ST云动",
+    "date": "2026-06-26",
+    "type": "SELL",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 1.81,
+    "stop_loss": null,
+    "take_profit": null,
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥1.81",
+     "近期高点持续降低，趋势偏空",
+     "量比: 0.30（缩量）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "001326.SZ",
+    "name": "联域股份",
+    "date": "2026-06-26",
+    "type": "SELL",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 64.5,
+    "stop_loss": null,
+    "take_profit": null,
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥64.50",
+     "近期高点持续降低，趋势偏空",
+     "量比: 0.16（缩量）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "001369.SZ",
+    "name": "双欣材料",
+    "date": "2026-06-26",
+    "type": "SELL",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 13.8,
+    "stop_loss": null,
+    "take_profit": null,
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥13.80",
+     "近期高点持续降低，趋势偏空",
+     "量比: 0.23（缩量）"
+    ],
+    "industry": null,
+    "sector": null
+   },
+   {
+    "symbol": "002095.SZ",
+    "name": "生 意 宝",
+    "date": "2026-06-26",
+    "type": "SELL",
+    "strength": 1.0,
+    "strategy": "MA_CROSS",
+    "price": 12.72,
+    "stop_loss": null,
+    "take_profit": null,
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥12.72",
+     "近期高点持续降低，趋势偏空",
+     "量比: 0.56（缩量）"
+    ],
+    "industry": null,
+    "sector": null
+   }
+  ],
+  "held_stock_signals": []
+ },
+ "backtest": {
+  "strategies": [
+   {
+    "strategy": "CPP_MA_CROSS",
+    "total_return_pct": 0.0,
+    "annual_return": 0.0,
+    "sharpe_ratio": 0.0,
+    "max_drawdown_pct": 0.0,
+    "win_rate": 0.0,
+    "total_trades": 0,
+    "profit_factor": 0.0
+   },
+   {
+    "strategy": "MA_CROSS",
+    "total_return_pct": 12.54,
+    "annual_return": 8.32,
+    "sharpe_ratio": 1.45,
+    "max_drawdown_pct": 8.5,
+    "win_rate": 62.22,
+    "total_trades": 45,
+    "profit_factor": 1.85
+   }
+  ]
+ },
+ "top_stocks": {
+  "buy_recommendations": [
+   {
+    "symbol": "RDAC",
+    "name": "龙腾收购",
+    "signal_type": "BUY",
+    "strength": 0.6521739130434783,
+    "price": 5.539999961853027,
+    "stop_loss": 4.55,
+    "take_profit": 7.19,
+    "strategy": "RSI",
+    "reasons": [
+     "RSI从超卖区回升（RSI=34.15）",
+     "市场可能超跌反弹",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 11.21（显著放量）",
+     "ATR动态止损（ATR=0.66, 止损1.5倍ATR, 止盈2.5倍ATR）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-02",
+      "open": 4.840000152587891,
+      "high": 5.539999961853027,
+      "low": 4.800000190734863,
+      "close": 5.539999961853027,
+      "volume": 21300.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-07-01",
+      "open": 5.010000228881836,
+      "high": 5.349999904632568,
+      "low": 5.010000228881836,
+      "close": 5.28000020980835,
+      "volume": 3100.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-30",
+      "open": 5.849999904632568,
+      "high": 5.849999904632568,
+      "low": 5.400000095367432,
+      "close": 5.400000095367432,
+      "volume": 2200.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-29",
+      "open": 5.409999847412109,
+      "high": 5.409999847412109,
+      "low": 5.409999847412109,
+      "close": 5.409999847412109,
+      "volume": 0.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-26",
+      "open": 5.699999809265137,
+      "high": 5.699999809265137,
+      "low": 5.400000095367432,
+      "close": 5.409999847412109,
+      "volume": 3200.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-25",
+      "open": 5.599999904632568,
+      "high": 5.599999904632568,
+      "low": 5.599999904632568,
+      "close": 5.599999904632568,
+      "volume": 1000.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-24",
+      "open": 5.630000114440918,
+      "high": 6.489999771118164,
+      "low": 5.539999961853027,
+      "close": 5.599999904632568,
+      "volume": 7800.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-23",
+      "open": 5.300000190734863,
+      "high": 6.829999923706055,
+      "low": 5.300000190734863,
+      "close": 5.449999809265137,
+      "volume": 10300.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-22",
+      "open": 5.849999904632568,
+      "high": 5.849999904632568,
+      "low": 5.800000190734863,
+      "close": 5.800000190734863,
+      "volume": 1900.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-18",
+      "open": 6.0,
+      "high": 6.199999809265137,
+      "low": 5.5,
+      "close": 5.699999809265137,
+      "volume": 3000.0,
+      "turnover": null
+     }
+    ],
+    "price_stats": {
+     "high_20d": 8.399999618530273,
+     "low_20d": 4.800000190734863,
+     "avg_20d": 6.17,
+     "latest_close": 5.539999961853027
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 5.41,
+     "ma10": 5.52,
+     "ma20": 6.17,
+     "ma_status": "空头排列",
+     "macd_dif": -0.51,
+     "macd_dea": -0.48,
+     "macd_bar": -0.07,
+     "macd_position": "零轴下方",
+     "rsi": 33.32,
+     "rsi_zone": "偏弱区",
+     "kdj_k": 19.76,
+     "kdj_d": 15.82,
+     "kdj_j": 27.65,
+     "boll_upper": 7.83,
+     "boll_middle": 6.17,
+     "boll_lower": 4.51,
+     "boll_position": "中轨下方",
+     "volume_ratio": 11.21,
+     "volume_ratio_desc": "显著放量",
+     "atr": 0.66
+    },
+    "news": [],
+    "manipulation_risk": {
+     "risk_score": 0,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "换手率数据缺失，跳过",
+      "volume_anomaly": "量价正常: 1/19天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": true,
+     "breakout_detail": "放量3.7倍启动，涨4.9%"
+    },
+    "dynamic_levels": {
+     "atr_value": 0.66,
+     "atr_stop_loss": 4.22,
+     "trailing_stop": 4.55,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 6.2,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 6.86,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 7.52,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 0,
+     "fake_breakout_count": 0,
+     "volume_price_alignment": 41.2,
+     "volume_price_desc": "量价背离明显",
+     "details": {
+      "stop_hunts": [],
+      "fake_breakouts": []
+     }
+    },
+    "composite_score": 76.2,
+    "score_breakdown": {
+     "resonance": {
+      "score": 80,
+      "detail": "3个策略共振: RSI, MACD, KDJ"
+     },
+     "risk_reward": {
+      "score": 60,
+      "detail": "盈亏比 1.6 (最佳 1.7)"
+     },
+     "quality": {
+      "score": 57,
+      "detail": "加权强度 0.57"
+     },
+     "volume": {
+      "score": 100,
+      "detail": "显著放量 (量比11.2)"
+     },
+     "timeliness": {
+      "score": 100,
+      "detail": "1天前"
+     },
+     "strategy_backtest": {
+      "score": 50,
+      "detail": "无匹配策略"
+     },
+     "stock_quality": {
+      "score": 100,
+      "detail": "标的质量良好(风险分0)"
+     }
+    },
+    "resonance_strategies": [
+     "RSI",
+     "MACD",
+     "KDJ"
+    ],
+    "resonance_count": 3,
+    "risk_tier": {
+     "tier": "satellite",
+     "label": "卫星仓",
+     "max_position_pct": 0.08,
+     "score": 3,
+     "reasons": [
+      "3策略共振",
+      "量能充足"
+     ]
+    }
+   },
+   {
+    "symbol": "002726.SZ",
+    "name": "龙大美食",
+    "signal_type": "BUY",
+    "strength": 0.6521739130434783,
+    "price": 1.28,
+    "stop_loss": 1.14,
+    "take_profit": 1.51,
+    "strategy": "RSI",
+    "reasons": [
+     "RSI从超卖区回升（RSI=31.54）",
+     "市场可能超跌反弹",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 2.00（显著放量）",
+     "ATR动态止损（ATR=0.09, 止损1.5倍ATR, 止盈2.5倍ATR）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 1.28,
+      "high": 1.34,
+      "low": 1.26,
+      "close": 1.34,
+      "volume": 787745.0,
+      "turnover": 6.79
+     },
+     {
+      "date": "2026-07-02",
+      "open": 1.21,
+      "high": 1.28,
+      "low": 1.2,
+      "close": 1.28,
+      "volume": 724430.0,
+      "turnover": 6.24
+     },
+     {
+      "date": "2026-07-01",
+      "open": 1.15,
+      "high": 1.24,
+      "low": 1.13,
+      "close": 1.22,
+      "volume": 808624.0,
+      "turnover": 7.07
+     },
+     {
+      "date": "2026-06-30",
+      "open": 1.18,
+      "high": 1.22,
+      "low": 1.18,
+      "close": 1.18,
+      "volume": 675434.0,
+      "turnover": 5.91
+     },
+     {
+      "date": "2026-06-29",
+      "open": 1.24,
+      "high": 1.24,
+      "low": 1.24,
+      "close": 1.24,
+      "volume": 58832.0,
+      "turnover": 0.51
+     },
+     {
+      "date": "2026-06-26",
+      "open": 1.3,
+      "high": 1.3,
+      "low": 1.3,
+      "close": 1.3,
+      "volume": 27279.0,
+      "turnover": 0.25
+     },
+     {
+      "date": "2026-06-25",
+      "open": 1.41,
+      "high": 1.42,
+      "low": 1.37,
+      "close": 1.37,
+      "volume": 236548.0,
+      "turnover": 2.19
+     },
+     {
+      "date": "2026-06-24",
+      "open": 1.53,
+      "high": 1.55,
+      "low": 1.44,
+      "close": 1.44,
+      "volume": 294290.0,
+      "turnover": 2.73
+     },
+     {
+      "date": "2026-06-23",
+      "open": 1.43,
+      "high": 1.52,
+      "low": 1.43,
+      "close": 1.52,
+      "volume": 282091.0,
+      "turnover": 2.62
+     },
+     {
+      "date": "2026-06-22",
+      "open": 1.48,
+      "high": 1.5,
+      "low": 1.43,
+      "close": 1.45,
+      "volume": 308752.0,
+      "turnover": 2.86
+     }
+    ],
+    "price_stats": {
+     "high_20d": 1.7,
+     "low_20d": 1.13,
+     "avg_20d": 1.43,
+     "latest_close": 1.34
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 1.25,
+     "ma10": 1.33,
+     "ma20": 1.43,
+     "ma_status": "空头排列",
+     "macd_dif": -0.09,
+     "macd_dea": -0.08,
+     "macd_bar": -0.03,
+     "macd_position": "零轴下方",
+     "rsi": 40.39,
+     "rsi_zone": "偏弱区",
+     "kdj_k": 30.51,
+     "kdj_d": 23.1,
+     "kdj_j": 45.32,
+     "boll_upper": 1.69,
+     "boll_middle": 1.43,
+     "boll_lower": 1.16,
+     "boll_position": "中轨下方",
+     "volume_ratio": 1.72,
+     "volume_ratio_desc": "温和放量",
+     "atr": 0.09
+    },
+    "news": [
+     {
+      "title": "ST龙大002726龙虎榜数据07-08)",
+      "content": "交易所2026年7月8日公布的交易公开信息显示，ST龙大因成为日振幅值达到15%的前5只证券上榜。ST龙大当日收报1.46元，涨跌幅0.00%，偏离值19.08%，换手率10.33%，成交额1.69亿。 免责声明：本文基于AI生产，仅供参考，不构成任何投资建议，据此操作风险自担。东方财富发布此内容旨在传播更多信息",
+      "source": "东方财富Choice数据",
+      "published_at": "2026-07-08 16:26:40",
+      "sentiment": "neutral"
+     },
+     {
+      "title": "ST龙大002726龙虎榜数据07-03)",
+      "content": "交易所2026年7月3日公布的交易公开信息显示，ST龙大因成为连续三个交易日内，涨幅偏离值累计达到12%的ST证券、*ST证券和未完成股改证券上榜。ST龙大当日收报1.34元，涨跌幅4.69%，换手率6.79%，成交额1.03亿。异常期间7月1日至7月3日，期间涨幅13.56%，累计偏离值",
+      "source": "东方财富Choice数据",
+      "published_at": "2026-07-03 16:27:31",
+      "sentiment": "neutral"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 0,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "日均换手率 3.40%，流动性正常",
+      "volume_anomaly": "量价正常: 1/20天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 0.09,
+     "atr_stop_loss": 1.1,
+     "trailing_stop": 1.21,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 1.37,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 1.46,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 1.55,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 2,
+     "fake_breakout_count": 0,
+     "volume_price_alignment": 57.9,
+     "volume_price_desc": "量价配合度一般",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-12",
+        "detail": "长下影线 下影0.07 实体0.02"
+       },
+       {
+        "date": "2026-06-18",
+        "detail": "长下影线 下影0.07 实体0.01"
+       }
+      ],
+      "fake_breakouts": []
+     }
+    },
+    "composite_score": 76.1,
+    "score_breakdown": {
+     "resonance": {
+      "score": 80,
+      "detail": "3个策略共振: RSI, MACD, KDJ"
+     },
+     "risk_reward": {
+      "score": 60,
+      "detail": "盈亏比 1.6 (最佳 1.6)"
+     },
+     "quality": {
+      "score": 56,
+      "detail": "加权强度 0.56"
+     },
+     "volume": {
+      "score": 100,
+      "detail": "显著放量 (量比2.0)"
+     },
+     "timeliness": {
+      "score": 100,
+      "detail": "1天前"
+     },
+     "strategy_backtest": {
+      "score": 50,
+      "detail": "无匹配策略"
+     },
+     "stock_quality": {
+      "score": 100,
+      "detail": "标的质量良好(风险分0)"
+     }
+    },
+    "resonance_strategies": [
+     "RSI",
+     "MACD",
+     "KDJ"
+    ],
+    "resonance_count": 3,
+    "risk_tier": {
+     "tier": "satellite",
+     "label": "卫星仓",
+     "max_position_pct": 0.08,
+     "score": 3,
+     "reasons": [
+      "3策略共振",
+      "量能充足"
+     ]
+    }
+   },
+   {
+    "symbol": "301158.SZ",
+    "name": "德石股份",
+    "signal_type": "BUY",
+    "strength": 0.728813559322034,
+    "price": 14.03,
+    "stop_loss": 12.69,
+    "take_profit": 16.04,
+    "strategy": "MACD",
+    "reasons": [
+     "MACD金叉（DIF上穿DEA）",
+     "当前价格: ¥14.03",
+     "MACD柱: 0.0923",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 2.21（显著放量）",
+     "MACD柱由绿转红",
+     "MACD底背离（价格新低但DIF未新低，反转信号）",
+     "ATR动态止损（ATR=0.67, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 14.23,
+      "high": 14.99,
+      "low": 14.05,
+      "close": 14.75,
+      "volume": 62775.0,
+      "turnover": 3.3
+     },
+     {
+      "date": "2026-07-02",
+      "open": 14.0,
+      "high": 14.33,
+      "low": 13.82,
+      "close": 14.17,
+      "volume": 39857.0,
+      "turnover": 2.1
+     },
+     {
+      "date": "2026-07-01",
+      "open": 13.4,
+      "high": 14.49,
+      "low": 13.2,
+      "close": 14.03,
+      "volume": 76813.0,
+      "turnover": 4.04
+     },
+     {
+      "date": "2026-06-30",
+      "open": 13.06,
+      "high": 13.38,
+      "low": 12.98,
+      "close": 13.19,
+      "volume": 32659.0,
+      "turnover": 1.72
+     },
+     {
+      "date": "2026-06-29",
+      "open": 13.22,
+      "high": 13.48,
+      "low": 12.95,
+      "close": 13.18,
+      "volume": 40121.0,
+      "turnover": 2.11
+     },
+     {
+      "date": "2026-06-26",
+      "open": 13.77,
+      "high": 13.87,
+      "low": 13.3,
+      "close": 13.61,
+      "volume": 17285.0,
+      "turnover": 0.91
+     },
+     {
+      "date": "2026-06-25",
+      "open": 14.24,
+      "high": 14.27,
+      "low": 13.7,
+      "close": 13.78,
+      "volume": 43094.0,
+      "turnover": 2.27
+     },
+     {
+      "date": "2026-06-24",
+      "open": 14.64,
+      "high": 14.67,
+      "low": 14.11,
+      "close": 14.23,
+      "volume": 40481.0,
+      "turnover": 2.13
+     },
+     {
+      "date": "2026-06-23",
+      "open": 14.72,
+      "high": 15.03,
+      "low": 14.68,
+      "close": 14.7,
+      "volume": 34193.0,
+      "turnover": 1.8
+     },
+     {
+      "date": "2026-06-22",
+      "open": 14.92,
+      "high": 15.18,
+      "low": 14.54,
+      "close": 14.93,
+      "volume": 44863.0,
+      "turnover": 2.36
+     }
+    ],
+    "price_stats": {
+     "high_20d": 16.02,
+     "low_20d": 12.95,
+     "avg_20d": 14.46,
+     "latest_close": 14.75
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 13.86,
+     "ma10": 14.06,
+     "ma20": 14.46,
+     "ma_status": "空头排列",
+     "macd_dif": -0.31,
+     "macd_dea": -0.32,
+     "macd_bar": 0.02,
+     "macd_position": "零轴下方",
+     "rsi": 53.26,
+     "rsi_zone": "中性区",
+     "kdj_k": 52.6,
+     "kdj_d": 36.36,
+     "kdj_j": 85.09,
+     "boll_upper": 15.73,
+     "boll_middle": 14.46,
+     "boll_lower": 13.2,
+     "boll_position": "中轨上方",
+     "volume_ratio": 1.52,
+     "volume_ratio_desc": "温和放量",
+     "atr": 0.66
+    },
+    "news": [
+     {
+      "title": "可燃冰概念下跌1.49%，主力资金净流出12股",
+      "content": "8.51 7.36 -895.66 600282 南钢股份 -1.65 0.61 -806.80 300157 新锦动力 -3.39 5.77 -725.21 002278 神开股份 -3.64 3.93 -598.36 000852 石化机械 -1.06 1.07 -423.08 301158",
+      "source": "证券时报网",
+      "published_at": "2026-06-09 16:36:00",
+      "sentiment": "negative"
+     },
+     {
+      "title": "页岩气概念下跌1.12%，主力资金净流出36股",
+      "content": "0.30 0.48 -547.13 300332 天壕能源 -3.53 2.60 -538.54 000852 石化机械 -1.06 1.07 -423.08 002629 仁智股份 -1.57 5.51 -308.14 300072 海新能科 -0.27 1.12 -259.58 301158",
+      "source": "证券时报网",
+      "published_at": "2026-06-09 16:36:00",
+      "sentiment": "negative"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 0,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "日均换手率 2.50%，流动性正常",
+      "volume_anomaly": "量价正常: 0/20天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 0.66,
+     "atr_stop_loss": 12.71,
+     "trailing_stop": 13.76,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 14.69,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 15.35,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 16.01,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 2,
+     "fake_breakout_count": 0,
+     "volume_price_alignment": 52.6,
+     "volume_price_desc": "量价配合度一般",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-05",
+        "detail": "长下影线 下影0.39 实体0.03"
+       },
+       {
+        "date": "2026-06-22",
+        "detail": "长下影线 下影0.38 实体0.01"
+       }
+      ],
+      "fake_breakouts": []
+     }
+    },
+    "composite_score": 75.3,
+    "score_breakdown": {
+     "resonance": {
+      "score": 80,
+      "detail": "3个策略共振: RSI, MACD, KDJ"
+     },
+     "risk_reward": {
+      "score": 60,
+      "detail": "盈亏比 1.6 (最佳 1.7)"
+     },
+     "quality": {
+      "score": 66,
+      "detail": "加权强度 0.66"
+     },
+     "volume": {
+      "score": 100,
+      "detail": "显著放量 (量比2.2)"
+     },
+     "timeliness": {
+      "score": 80,
+      "detail": "2天前"
+     },
+     "strategy_backtest": {
+      "score": 50,
+      "detail": "无匹配策略"
+     },
+     "stock_quality": {
+      "score": 100,
+      "detail": "标的质量良好(风险分0)"
+     }
+    },
+    "resonance_strategies": [
+     "RSI",
+     "MACD",
+     "KDJ"
+    ],
+    "resonance_count": 3,
+    "risk_tier": {
+     "tier": "satellite",
+     "label": "卫星仓",
+     "max_position_pct": 0.08,
+     "score": 3,
+     "reasons": [
+      "3策略共振",
+      "量能充足"
+     ]
+    }
+   },
+   {
+    "symbol": "300694.SZ",
+    "name": "蠡湖股份",
+    "signal_type": "BUY",
+    "strength": 0.6521739130434783,
+    "price": 9.6,
+    "stop_loss": 8.89,
+    "take_profit": 10.79,
+    "strategy": "RSI",
+    "reasons": [
+     "RSI从超卖区回升（RSI=38.44）",
+     "市场可能超跌反弹",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 2.21（显著放量）",
+     "ATR动态止损（ATR=0.48, 止损1.5倍ATR, 止盈2.5倍ATR）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 11.87,
+      "high": 12.38,
+      "low": 11.6,
+      "close": 11.9,
+      "volume": 179865.0,
+      "turnover": 8.3
+     },
+     {
+      "date": "2026-07-02",
+      "open": 10.81,
+      "high": 12.02,
+      "low": 10.68,
+      "close": 11.83,
+      "volume": 229753.0,
+      "turnover": 10.6
+     },
+     {
+      "date": "2026-07-01",
+      "open": 9.6,
+      "high": 10.88,
+      "low": 9.53,
+      "close": 10.77,
+      "volume": 152537.0,
+      "turnover": 7.04
+     },
+     {
+      "date": "2026-06-30",
+      "open": 9.04,
+      "high": 9.73,
+      "low": 8.9,
+      "close": 9.6,
+      "volume": 95808.0,
+      "turnover": 4.42
+     },
+     {
+      "date": "2026-06-29",
+      "open": 9.05,
+      "high": 9.13,
+      "low": 8.69,
+      "close": 8.98,
+      "volume": 52431.0,
+      "turnover": 2.42
+     },
+     {
+      "date": "2026-06-26",
+      "open": 9.26,
+      "high": 9.26,
+      "low": 8.96,
+      "close": 9.23,
+      "volume": 18694.0,
+      "turnover": 0.86
+     },
+     {
+      "date": "2026-06-25",
+      "open": 9.55,
+      "high": 9.59,
+      "low": 9.29,
+      "close": 9.31,
+      "volume": 46691.0,
+      "turnover": 2.15
+     },
+     {
+      "date": "2026-06-24",
+      "open": 9.94,
+      "high": 10.03,
+      "low": 9.49,
+      "close": 9.6,
+      "volume": 53439.0,
+      "turnover": 2.47
+     },
+     {
+      "date": "2026-06-23",
+      "open": 9.85,
+      "high": 10.12,
+      "low": 9.8,
+      "close": 9.94,
+      "volume": 45877.0,
+      "turnover": 2.12
+     },
+     {
+      "date": "2026-06-22",
+      "open": 9.87,
+      "high": 9.97,
+      "low": 9.46,
+      "close": 9.94,
+      "volume": 58421.0,
+      "turnover": 2.69
+     }
+    ],
+    "price_stats": {
+     "high_20d": 12.38,
+     "low_20d": 8.69,
+     "avg_20d": 10.14,
+     "latest_close": 11.9
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 10.62,
+     "ma10": 10.11,
+     "ma20": 10.14,
+     "ma_status": "交叉排列",
+     "macd_dif": 0.14,
+     "macd_dea": -0.09,
+     "macd_bar": 0.46,
+     "macd_position": "零轴附近",
+     "rsi": 72.09,
+     "rsi_zone": "超买区",
+     "kdj_k": 71.97,
+     "kdj_d": 52.6,
+     "kdj_j": 110.69,
+     "boll_upper": 11.61,
+     "boll_middle": 10.14,
+     "boll_lower": 8.67,
+     "boll_position": "上轨附近",
+     "volume_ratio": 1.64,
+     "volume_ratio_desc": "温和放量",
+     "atr": 0.64
+    },
+    "news": [
+     {
+      "title": "蠡湖股份300694龙虎榜数据07-02)",
+      "content": "交易所2026年7月2日公布的交易公开信息显示，蠡湖股份因成为连续三个交易日内，涨幅偏离值累计达到30%的证券上榜。蠡湖股份当日收报11.83元，涨跌幅9.84%，换手率10.60%，成交额2.65亿。异常期间6月30日至7月2日，期间涨幅31.74%，累计偏离值33.24%，区间成交额",
+      "source": "东方财富Choice数据",
+      "published_at": "2026-07-02 16:27:38",
+      "sentiment": "neutral"
+     },
+     {
+      "title": "【盘中播报】53只个股突破年线",
+      "content": "5.13 6.62 25.37 26.21 3.32 600201 生物股份 3.17 3.58 12.35 12.70 2.85 002055 ST得润 3.85 3.96 6.83 7.02 2.71 603345 安井食品 3.03 1.82 81.56 83.66 2.57 300694",
+      "source": "证券时报网",
+      "published_at": "2026-07-06 14:41:00",
+      "sentiment": "neutral"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 0,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "日均换手率 3.48%，流动性正常",
+      "volume_anomaly": "量价正常: 0/20天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 0.64,
+     "atr_stop_loss": 8.32,
+     "trailing_stop": 10.94,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 10.24,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 10.88,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 11.52,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 6,
+     "fake_breakout_count": 1,
+     "volume_price_alignment": 68.4,
+     "volume_price_desc": "量价配合度一般",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-22",
+        "detail": "长下影线 下影0.41 实体0.07"
+       },
+       {
+        "date": "2026-06-26",
+        "detail": "长下影线 下影0.27 实体0.03"
+       },
+       {
+        "date": "2026-06-29",
+        "detail": "长下影线 下影0.29 实体0.07"
+       }
+      ],
+      "fake_breakouts": [
+       {
+        "date": "2026-06-16",
+        "detail": "突破10.42后次日跌回10.15"
+       }
+      ]
+     }
+    },
+    "composite_score": 74.2,
+    "score_breakdown": {
+     "resonance": {
+      "score": 80,
+      "detail": "3个策略共振: RSI, MACD, KDJ"
+     },
+     "risk_reward": {
+      "score": 60,
+      "detail": "盈亏比 1.6 (最佳 1.7)"
+     },
+     "quality": {
+      "score": 57,
+      "detail": "加权强度 0.57"
+     },
+     "volume": {
+      "score": 100,
+      "detail": "显著放量 (量比2.2)"
+     },
+     "timeliness": {
+      "score": 80,
+      "detail": "3天前"
+     },
+     "strategy_backtest": {
+      "score": 50,
+      "detail": "无匹配策略"
+     },
+     "stock_quality": {
+      "score": 100,
+      "detail": "标的质量良好(风险分0)"
+     }
+    },
+    "resonance_strategies": [
+     "RSI",
+     "MACD",
+     "KDJ"
+    ],
+    "resonance_count": 3,
+    "risk_tier": {
+     "tier": "satellite",
+     "label": "卫星仓",
+     "max_position_pct": 0.08,
+     "score": 3,
+     "reasons": [
+      "3策略共振",
+      "量能充足"
+     ]
+    }
+   },
+   {
+    "symbol": "000735.SZ",
+    "name": "罗 牛 山",
+    "signal_type": "BUY",
+    "strength": 0.6521739130434783,
+    "price": 4.98,
+    "stop_loss": 4.69,
+    "take_profit": 5.46,
+    "strategy": "RSI",
+    "reasons": [
+     "RSI从超卖区回升（RSI=38.91）",
+     "市场可能超跌反弹",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 2.28（显著放量）",
+     "ATR动态止损（ATR=0.19, 止损1.5倍ATR, 止盈2.5倍ATR）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 5.06,
+      "high": 5.14,
+      "low": 4.96,
+      "close": 5.04,
+      "volume": 260750.0,
+      "turnover": 2.27
+     },
+     {
+      "date": "2026-07-02",
+      "open": 5.05,
+      "high": 5.2,
+      "low": 5.0,
+      "close": 5.08,
+      "volume": 368194.0,
+      "turnover": 3.2
+     },
+     {
+      "date": "2026-07-01",
+      "open": 4.75,
+      "high": 5.13,
+      "low": 4.75,
+      "close": 4.98,
+      "volume": 388344.0,
+      "turnover": 3.37
+     },
+     {
+      "date": "2026-06-30",
+      "open": 4.81,
+      "high": 4.84,
+      "low": 4.71,
+      "close": 4.75,
+      "volume": 195963.0,
+      "turnover": 1.7
+     },
+     {
+      "date": "2026-06-29",
+      "open": 4.77,
+      "high": 4.97,
+      "low": 4.71,
+      "close": 4.83,
+      "volume": 260409.0,
+      "turnover": 2.26
+     },
+     {
+      "date": "2026-06-26",
+      "open": 4.84,
+      "high": 4.91,
+      "low": 4.75,
+      "close": 4.76,
+      "volume": 55516.0,
+      "turnover": 0.48
+     },
+     {
+      "date": "2026-06-25",
+      "open": 4.87,
+      "high": 4.92,
+      "low": 4.81,
+      "close": 4.86,
+      "volume": 146892.0,
+      "turnover": 1.28
+     },
+     {
+      "date": "2026-06-24",
+      "open": 5.07,
+      "high": 5.07,
+      "low": 4.86,
+      "close": 4.89,
+      "volume": 193528.0,
+      "turnover": 1.68
+     },
+     {
+      "date": "2026-06-23",
+      "open": 5.03,
+      "high": 5.21,
+      "low": 5.01,
+      "close": 5.06,
+      "volume": 245742.0,
+      "turnover": 2.14
+     },
+     {
+      "date": "2026-06-22",
+      "open": 4.98,
+      "high": 5.02,
+      "low": 4.86,
+      "close": 5.01,
+      "volume": 204393.0,
+      "turnover": 1.78
+     }
+    ],
+    "price_stats": {
+     "high_20d": 5.32,
+     "low_20d": 4.71,
+     "avg_20d": 5.03,
+     "latest_close": 5.04
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 4.94,
+     "ma10": 4.93,
+     "ma20": 5.03,
+     "ma_status": "交叉排列",
+     "macd_dif": -0.06,
+     "macd_dea": -0.07,
+     "macd_bar": 0.01,
+     "macd_position": "零轴下方",
+     "rsi": 49.85,
+     "rsi_zone": "中性区",
+     "kdj_k": 50.4,
+     "kdj_d": 35.88,
+     "kdj_j": 79.45,
+     "boll_upper": 5.33,
+     "boll_middle": 5.03,
+     "boll_lower": 4.73,
+     "boll_position": "中轨上方",
+     "volume_ratio": 1.03,
+     "volume_ratio_desc": "平量",
+     "atr": 0.19
+    },
+    "news": [
+     {
+      "title": "动物疫苗概念下跌1.08%，主力资金净流出15股",
+      "content": "1.42 1.83 -1243.79 600201 生物股份 -3.10 2.05 -979.84 688136 科兴制药 0.10 2.63 -845.20 300841 康华生物 -1.88 2.39 -841.05 300119 瑞普生物 -2.97 1.28 -357.61 000735",
+      "source": "证券时报网",
+      "published_at": "2026-07-09 16:26:00",
+      "sentiment": "negative"
+     },
+     {
+      "title": "动物疫苗概念涨1.40%，主力资金净流入这些股",
+      "content": "002141 贤丰控股 9.92 17.37 13306.69 13.27 600267 海正药业 3.99 3.25 2850.22 6.90 688136 科兴制药 1.63 5.68 2783.54 10.74 600201 生物股份 3.49 4.49 1602.91 2.53 000735",
+      "source": "证券时报网",
+      "published_at": "2026-07-06 16:46:00",
+      "sentiment": "positive"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 0,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "日均换手率 1.99%，流动性正常",
+      "volume_anomaly": "量价正常: 0/20天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 0.19,
+     "atr_stop_loss": 4.6,
+     "trailing_stop": 4.75,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 5.17,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 5.36,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 5.55,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 4,
+     "fake_breakout_count": 0,
+     "volume_price_alignment": 73.7,
+     "volume_price_desc": "量价高度配合",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-15",
+        "detail": "长下影线 下影0.08 实体0.02"
+       },
+       {
+        "date": "2026-06-16",
+        "detail": "长下影线 下影0.13 实体0.05"
+       },
+       {
+        "date": "2026-06-22",
+        "detail": "长下影线 下影0.12 实体0.03"
+       }
+      ],
+      "fake_breakouts": []
+     }
+    },
+    "composite_score": 74.2,
+    "score_breakdown": {
+     "resonance": {
+      "score": 80,
+      "detail": "3个策略共振: RSI, MACD, KDJ"
+     },
+     "risk_reward": {
+      "score": 60,
+      "detail": "盈亏比 1.6 (最佳 1.7)"
+     },
+     "quality": {
+      "score": 57,
+      "detail": "加权强度 0.57"
+     },
+     "volume": {
+      "score": 100,
+      "detail": "显著放量 (量比2.3)"
+     },
+     "timeliness": {
+      "score": 80,
+      "detail": "2天前"
+     },
+     "strategy_backtest": {
+      "score": 50,
+      "detail": "无匹配策略"
+     },
+     "stock_quality": {
+      "score": 100,
+      "detail": "标的质量良好(风险分0)"
+     }
+    },
+    "resonance_strategies": [
+     "RSI",
+     "MACD",
+     "KDJ"
+    ],
+    "resonance_count": 3,
+    "risk_tier": {
+     "tier": "satellite",
+     "label": "卫星仓",
+     "max_position_pct": 0.08,
+     "score": 3,
+     "reasons": [
+      "3策略共振",
+      "量能充足"
+     ]
+    }
+   },
+   {
+    "symbol": "300423.SZ",
+    "name": "昇辉科技",
+    "signal_type": "BUY",
+    "strength": 0.6521739130434783,
+    "price": 5.81,
+    "stop_loss": 5.37,
+    "take_profit": 6.54,
+    "strategy": "RSI",
+    "reasons": [
+     "RSI从超卖区回升（RSI=38.87）",
+     "市场可能超跌反弹",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 2.01（显著放量）",
+     "ATR动态止损（ATR=0.29, 止损1.5倍ATR, 止盈2.5倍ATR）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 5.67,
+      "high": 5.97,
+      "low": 5.62,
+      "close": 5.89,
+      "volume": 151388.0,
+      "turnover": 4.54
+     },
+     {
+      "date": "2026-07-02",
+      "open": 5.87,
+      "high": 6.03,
+      "low": 5.6,
+      "close": 5.62,
+      "volume": 157441.0,
+      "turnover": 4.73
+     },
+     {
+      "date": "2026-07-01",
+      "open": 5.48,
+      "high": 5.96,
+      "low": 5.41,
+      "close": 5.81,
+      "volume": 190598.0,
+      "turnover": 5.72
+     },
+     {
+      "date": "2026-06-30",
+      "open": 5.48,
+      "high": 5.59,
+      "low": 5.39,
+      "close": 5.51,
+      "volume": 83928.0,
+      "turnover": 2.52
+     },
+     {
+      "date": "2026-06-29",
+      "open": 5.46,
+      "high": 5.56,
+      "low": 5.31,
+      "close": 5.51,
+      "volume": 105929.0,
+      "turnover": 3.18
+     },
+     {
+      "date": "2026-06-26",
+      "open": 5.65,
+      "high": 5.66,
+      "low": 5.44,
+      "close": 5.59,
+      "volume": 47111.0,
+      "turnover": 1.41
+     },
+     {
+      "date": "2026-06-25",
+      "open": 5.78,
+      "high": 5.78,
+      "low": 5.59,
+      "close": 5.65,
+      "volume": 91567.0,
+      "turnover": 2.75
+     },
+     {
+      "date": "2026-06-24",
+      "open": 6.06,
+      "high": 6.06,
+      "low": 5.66,
+      "close": 5.79,
+      "volume": 144947.0,
+      "turnover": 4.35
+     },
+     {
+      "date": "2026-06-23",
+      "open": 5.82,
+      "high": 6.38,
+      "low": 5.82,
+      "close": 6.01,
+      "volume": 184762.0,
+      "turnover": 5.55
+     },
+     {
+      "date": "2026-06-22",
+      "open": 5.81,
+      "high": 5.91,
+      "low": 5.58,
+      "close": 5.9,
+      "volume": 104414.0,
+      "turnover": 3.13
+     }
+    ],
+    "price_stats": {
+     "high_20d": 6.45,
+     "low_20d": 5.31,
+     "avg_20d": 5.86,
+     "latest_close": 5.89
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 5.67,
+     "ma10": 5.73,
+     "ma20": 5.86,
+     "ma_status": "空头排列",
+     "macd_dif": -0.14,
+     "macd_dea": -0.14,
+     "macd_bar": 0.01,
+     "macd_position": "零轴下方",
+     "rsi": 48.91,
+     "rsi_zone": "中性区",
+     "kdj_k": 37.63,
+     "kdj_d": 31.1,
+     "kdj_j": 50.69,
+     "boll_upper": 6.29,
+     "boll_middle": 5.86,
+     "boll_lower": 5.43,
+     "boll_position": "中轨上方",
+     "volume_ratio": 1.29,
+     "volume_ratio_desc": "平量",
+     "atr": 0.32
+    },
+    "news": [
+     {
+      "title": "昇辉科技300423.SZ)2026年一季报净利润为-2364.28万元，同比亏损放大",
+      "content": "2026年4月28日，昇辉科技300423.SZ)发布2026年一季报。 公司营业总收入为1.07亿元，在已披露的同业公司中排名第70，较去年同报告期营业总收入减少6017.28万元，同比较去年同期下降35.92%。",
+      "source": "界面新闻",
+      "published_at": "2026-04-28 17:36:39",
+      "sentiment": "negative"
+     },
+     {
+      "title": "昇辉科技300423.SZ)2025年净利润为-1.67亿元，同比亏损放大",
+      "content": "2026年4月28日，昇辉科技300423.SZ)发布2025年年报。 公司营业总收入为7.60亿元，在已披露的同业公司中排名第94，较去年同报告期营业总收入减少6.95亿元，同比较去年同期下降47.76%。",
+      "source": "界面新闻",
+      "published_at": "2026-04-28 09:29:38",
+      "sentiment": "negative"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 0,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "日均换手率 3.32%，流动性正常",
+      "volume_anomaly": "量价正常: 0/20天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 0.32,
+     "atr_stop_loss": 5.17,
+     "trailing_stop": 5.41,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 6.13,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 6.45,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 6.77,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 4,
+     "fake_breakout_count": 0,
+     "volume_price_alignment": 68.4,
+     "volume_price_desc": "量价配合度一般",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-22",
+        "detail": "长下影线 下影0.23 实体0.09"
+       },
+       {
+        "date": "2026-06-26",
+        "detail": "长下影线 下影0.15 实体0.06"
+       },
+       {
+        "date": "2026-06-29",
+        "detail": "长下影线 下影0.15 实体0.05"
+       }
+      ],
+      "fake_breakouts": []
+     }
+    },
+    "composite_score": 74.2,
+    "score_breakdown": {
+     "resonance": {
+      "score": 80,
+      "detail": "3个策略共振: RSI, MACD, KDJ"
+     },
+     "risk_reward": {
+      "score": 60,
+      "detail": "盈亏比 1.6 (最佳 1.7)"
+     },
+     "quality": {
+      "score": 57,
+      "detail": "加权强度 0.57"
+     },
+     "volume": {
+      "score": 100,
+      "detail": "显著放量 (量比2.0)"
+     },
+     "timeliness": {
+      "score": 80,
+      "detail": "2天前"
+     },
+     "strategy_backtest": {
+      "score": 50,
+      "detail": "无匹配策略"
+     },
+     "stock_quality": {
+      "score": 100,
+      "detail": "标的质量良好(风险分0)"
+     }
+    },
+    "resonance_strategies": [
+     "RSI",
+     "MACD",
+     "KDJ"
+    ],
+    "resonance_count": 3,
+    "risk_tier": {
+     "tier": "satellite",
+     "label": "卫星仓",
+     "max_position_pct": 0.08,
+     "score": 3,
+     "reasons": [
+      "3策略共振",
+      "量能充足"
+     ]
+    }
+   },
+   {
+    "symbol": "300788.SZ",
+    "name": "中信出版",
+    "signal_type": "BUY",
+    "strength": 0.6521739130434783,
+    "price": 23.75,
+    "stop_loss": 22.27,
+    "take_profit": 26.21,
+    "strategy": "RSI",
+    "reasons": [
+     "RSI从超卖区回升（RSI=35.27）",
+     "市场可能超跌反弹",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 2.22（显著放量）",
+     "ATR动态止损（ATR=0.98, 止损1.5倍ATR, 止盈2.5倍ATR）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 24.0,
+      "high": 24.26,
+      "low": 23.55,
+      "close": 24.03,
+      "volume": 24307.0,
+      "turnover": 1.28
+     },
+     {
+      "date": "2026-07-02",
+      "open": 23.7,
+      "high": 24.45,
+      "low": 23.62,
+      "close": 23.72,
+      "volume": 29305.0,
+      "turnover": 1.54
+     },
+     {
+      "date": "2026-07-01",
+      "open": 22.47,
+      "high": 24.62,
+      "low": 22.36,
+      "close": 23.75,
+      "volume": 49005.0,
+      "turnover": 2.58
+     },
+     {
+      "date": "2026-06-30",
+      "open": 22.79,
+      "high": 23.16,
+      "low": 22.47,
+      "close": 22.47,
+      "volume": 25821.0,
+      "turnover": 1.36
+     },
+     {
+      "date": "2026-06-29",
+      "open": 22.85,
+      "high": 23.35,
+      "low": 22.42,
+      "close": 22.95,
+      "volume": 22241.0,
+      "turnover": 1.17
+     },
+     {
+      "date": "2026-06-26",
+      "open": 23.66,
+      "high": 23.79,
+      "low": 22.92,
+      "close": 23.49,
+      "volume": 11296.0,
+      "turnover": 0.59
+     },
+     {
+      "date": "2026-06-25",
+      "open": 24.15,
+      "high": 24.3,
+      "low": 23.43,
+      "close": 23.66,
+      "volume": 21722.0,
+      "turnover": 1.14
+     },
+     {
+      "date": "2026-06-24",
+      "open": 24.9,
+      "high": 24.9,
+      "low": 23.65,
+      "close": 24.16,
+      "volume": 29305.0,
+      "turnover": 1.54
+     },
+     {
+      "date": "2026-06-23",
+      "open": 25.0,
+      "high": 25.62,
+      "low": 24.66,
+      "close": 24.83,
+      "volume": 34447.0,
+      "turnover": 1.81
+     },
+     {
+      "date": "2026-06-22",
+      "open": 24.65,
+      "high": 24.99,
+      "low": 23.82,
+      "close": 24.95,
+      "volume": 30056.0,
+      "turnover": 1.58
+     }
+    ],
+    "price_stats": {
+     "high_20d": 26.5,
+     "low_20d": 22.36,
+     "avg_20d": 24.45,
+     "latest_close": 24.03
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 23.38,
+     "ma10": 23.8,
+     "ma20": 24.45,
+     "ma_status": "空头排列",
+     "macd_dif": -0.6,
+     "macd_dea": -0.56,
+     "macd_bar": -0.09,
+     "macd_position": "零轴下方",
+     "rsi": 43.38,
+     "rsi_zone": "偏弱区",
+     "kdj_k": 37.45,
+     "kdj_d": 30.71,
+     "kdj_j": 50.94,
+     "boll_upper": 26.29,
+     "boll_middle": 24.45,
+     "boll_lower": 22.61,
+     "boll_position": "中轨下方",
+     "volume_ratio": 0.88,
+     "volume_ratio_desc": "平量",
+     "atr": 0.96
+    },
+    "news": [
+     {
+      "title": "传媒行业今日净流出资金29.50亿元，蓝色光标等7股净流出资金超亿元",
+      "content": "*ST华闻 2.72 0.85 570.74 002602 世纪华通 -1.39 1.30 536.47 002264 新华都 2.20 2.56 499.65 002343 慈文传媒 2.65 3.68 485.10 601801 皖新传媒 1.78 0.62 389.52 300788",
+      "source": "证券时报网",
+      "published_at": "2026-07-03 16:39:00",
+      "sentiment": "neutral"
+     },
+     {
+      "title": "中信出版300788.SZ)：2026年一季报净利润为4160.26万元、同比较去年同期下降23.33%",
+      "content": "2026年4月28日，中信出版300788.SZ)发布2026年一季报。 公司营业总收入为4.02亿元，较去年同报告期营业总收入减少1656.44万元，同比较去年同期下降3.96%。",
+      "source": "界面新闻",
+      "published_at": "2026-04-28 10:09:42",
+      "sentiment": "negative"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 0,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "日均换手率 1.37%，流动性正常",
+      "volume_anomaly": "量价正常: 0/20天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 0.96,
+     "atr_stop_loss": 21.83,
+     "trailing_stop": 22.59,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 24.71,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 25.67,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 26.63,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 5,
+     "fake_breakout_count": 0,
+     "volume_price_alignment": 42.1,
+     "volume_price_desc": "量价背离明显",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-22",
+        "detail": "长下影线 下影0.83 实体0.30"
+       },
+       {
+        "date": "2026-06-26",
+        "detail": "长下影线 下影0.57 实体0.17"
+       },
+       {
+        "date": "2026-07-03",
+        "detail": "长下影线 下影0.45 实体0.03"
+       }
+      ],
+      "fake_breakouts": []
+     }
+    },
+    "composite_score": 74.2,
+    "score_breakdown": {
+     "resonance": {
+      "score": 80,
+      "detail": "3个策略共振: RSI, MACD, KDJ"
+     },
+     "risk_reward": {
+      "score": 60,
+      "detail": "盈亏比 1.6 (最佳 1.7)"
+     },
+     "quality": {
+      "score": 57,
+      "detail": "加权强度 0.57"
+     },
+     "volume": {
+      "score": 100,
+      "detail": "显著放量 (量比2.2)"
+     },
+     "timeliness": {
+      "score": 80,
+      "detail": "2天前"
+     },
+     "strategy_backtest": {
+      "score": 50,
+      "detail": "无匹配策略"
+     },
+     "stock_quality": {
+      "score": 100,
+      "detail": "标的质量良好(风险分0)"
+     }
+    },
+    "resonance_strategies": [
+     "RSI",
+     "MACD",
+     "KDJ"
+    ],
+    "resonance_count": 3,
+    "risk_tier": {
+     "tier": "satellite",
+     "label": "卫星仓",
+     "max_position_pct": 0.08,
+     "score": 3,
+     "reasons": [
+      "3策略共振",
+      "量能充足"
+     ]
+    }
+   },
+   {
+    "symbol": "002481.SZ",
+    "name": "双塔食品",
+    "signal_type": "BUY",
+    "strength": 0.6521739130434783,
+    "price": 3.95,
+    "stop_loss": 3.7,
+    "take_profit": 4.37,
+    "strategy": "RSI",
+    "reasons": [
+     "RSI从超卖区回升（RSI=45.00）",
+     "市场可能超跌反弹",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 2.23（显著放量）",
+     "ATR动态止损（ATR=0.17, 止损1.5倍ATR, 止盈2.5倍ATR）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 4.03,
+      "high": 4.08,
+      "low": 3.94,
+      "close": 3.97,
+      "volume": 92402.0,
+      "turnover": 0.83
+     },
+     {
+      "date": "2026-07-02",
+      "open": 3.94,
+      "high": 4.11,
+      "low": 3.92,
+      "close": 4.05,
+      "volume": 187308.0,
+      "turnover": 1.68
+     },
+     {
+      "date": "2026-07-01",
+      "open": 3.85,
+      "high": 4.0,
+      "low": 3.82,
+      "close": 3.95,
+      "volume": 194927.0,
+      "turnover": 1.74
+     },
+     {
+      "date": "2026-06-30",
+      "open": 3.76,
+      "high": 3.83,
+      "low": 3.7,
+      "close": 3.79,
+      "volume": 117140.0,
+      "turnover": 1.05
+     },
+     {
+      "date": "2026-06-29",
+      "open": 3.75,
+      "high": 3.82,
+      "low": 3.7,
+      "close": 3.8,
+      "volume": 99027.0,
+      "turnover": 0.89
+     },
+     {
+      "date": "2026-06-26",
+      "open": 3.85,
+      "high": 3.87,
+      "low": 3.77,
+      "close": 3.79,
+      "volume": 36008.0,
+      "turnover": 0.32
+     },
+     {
+      "date": "2026-06-25",
+      "open": 3.86,
+      "high": 3.92,
+      "low": 3.83,
+      "close": 3.88,
+      "volume": 86875.0,
+      "turnover": 0.78
+     },
+     {
+      "date": "2026-06-24",
+      "open": 3.97,
+      "high": 4.0,
+      "low": 3.85,
+      "close": 3.88,
+      "volume": 98495.0,
+      "turnover": 0.88
+     },
+     {
+      "date": "2026-06-23",
+      "open": 3.93,
+      "high": 4.05,
+      "low": 3.92,
+      "close": 3.97,
+      "volume": 106464.0,
+      "turnover": 0.95
+     },
+     {
+      "date": "2026-06-22",
+      "open": 3.94,
+      "high": 4.01,
+      "low": 3.78,
+      "close": 3.96,
+      "volume": 163817.0,
+      "turnover": 1.47
+     }
+    ],
+    "price_stats": {
+     "high_20d": 4.24,
+     "low_20d": 3.7,
+     "avg_20d": 3.95,
+     "latest_close": 3.97
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 3.91,
+     "ma10": 3.9,
+     "ma20": 3.95,
+     "ma_status": "交叉排列",
+     "macd_dif": -0.03,
+     "macd_dea": -0.03,
+     "macd_bar": 0.02,
+     "macd_position": "零轴下方",
+     "rsi": 50.95,
+     "rsi_zone": "中性区",
+     "kdj_k": 53.37,
+     "kdj_d": 39.52,
+     "kdj_j": 81.07,
+     "boll_upper": 4.12,
+     "boll_middle": 3.95,
+     "boll_lower": 3.78,
+     "boll_position": "中轨上方",
+     "volume_ratio": 0.73,
+     "volume_ratio_desc": "缩量",
+     "atr": 0.17
+    },
+    "news": [
+     {
+      "title": "双塔食品：拟1.5亿元至2亿元回购股份",
+      "content": "双塔食品002481.SZ)公告称，公司拟使用不低于1.5亿元且不超过2亿元的自有资金及回购专项贷款，以集中竞价方式回购股份，回购价格上限为6.01元/股。公司已取得中国银行烟台分行出具的1.8亿元回购专项贷款承诺书，贷款期限36个月。回购股份将用于股权激励或员工持股计划。",
+      "source": "财联社",
+      "published_at": "2026-07-07 20:53:18",
+      "sentiment": "neutral"
+     },
+     {
+      "title": "【中证快报】7月7日中证投资资讯 | 模块化建筑方式走红 迎全球范围订单爆发",
+      "content": "○双塔食品（002481）拟1.5亿元至2亿元回购股份。上海莱士（002252）拟2.5亿元至5亿元回购股份。中恒集团（600252）拟1亿元至2亿元回购股份用于注销。 【资金观潮】 ○7月7日沪深两市主力资金净流出834.01亿元。",
+      "source": "中国证券报·中证金牛座",
+      "published_at": "2026-07-07 22:29:26",
+      "sentiment": "neutral"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 20,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "日均换手率偏低 0.99%，流动性一般",
+      "volume_anomaly": "量价正常: 0/20天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 0.17,
+     "atr_stop_loss": 3.61,
+     "trailing_stop": 3.72,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 4.12,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 4.29,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 4.46,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 4,
+     "fake_breakout_count": 1,
+     "volume_price_alignment": 63.2,
+     "volume_price_desc": "量价配合度一般",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-10",
+        "detail": "长下影线 下影0.07 实体0.00"
+       },
+       {
+        "date": "2026-06-16",
+        "detail": "长下影线 下影0.09 实体0.01"
+       },
+       {
+        "date": "2026-06-22",
+        "detail": "长下影线 下影0.16 实体0.02"
+       }
+      ],
+      "fake_breakouts": [
+       {
+        "date": "2026-07-02",
+        "detail": "突破4.00后次日跌回3.97"
+       }
+      ]
+     }
+    },
+    "composite_score": 74.1,
+    "score_breakdown": {
+     "resonance": {
+      "score": 80,
+      "detail": "3个策略共振: RSI, MACD, KDJ"
+     },
+     "risk_reward": {
+      "score": 60,
+      "detail": "盈亏比 1.6 (最佳 1.7)"
+     },
+     "quality": {
+      "score": 56,
+      "detail": "加权强度 0.56"
+     },
+     "volume": {
+      "score": 100,
+      "detail": "显著放量 (量比2.2)"
+     },
+     "timeliness": {
+      "score": 80,
+      "detail": "2天前"
+     },
+     "strategy_backtest": {
+      "score": 50,
+      "detail": "无匹配策略"
+     },
+     "stock_quality": {
+      "score": 100,
+      "detail": "标的质量良好(风险分20)"
+     }
+    },
+    "resonance_strategies": [
+     "RSI",
+     "MACD",
+     "KDJ"
+    ],
+    "resonance_count": 3,
+    "risk_tier": {
+     "tier": "satellite",
+     "label": "卫星仓",
+     "max_position_pct": 0.08,
+     "score": 3,
+     "reasons": [
+      "3策略共振",
+      "量能充足"
+     ]
+    }
+   },
+   {
+    "symbol": "603365.SH",
+    "name": "水星家纺",
+    "signal_type": "BUY",
+    "strength": 0.6521739130434783,
+    "price": 16.55,
+    "stop_loss": 15.53,
+    "take_profit": 18.25,
+    "strategy": "RSI",
+    "reasons": [
+     "RSI从超卖区回升（RSI=42.82）",
+     "市场可能超跌反弹",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 2.88（显著放量）",
+     "ATR动态止损（ATR=0.68, 止损1.5倍ATR, 止盈2.5倍ATR）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 16.62,
+      "high": 17.36,
+      "low": 16.51,
+      "close": 16.98,
+      "volume": 16098.0,
+      "turnover": 0.62
+     },
+     {
+      "date": "2026-07-02",
+      "open": 16.47,
+      "high": 16.85,
+      "low": 16.36,
+      "close": 16.61,
+      "volume": 15523.0,
+      "turnover": 0.59
+     },
+     {
+      "date": "2026-07-01",
+      "open": 15.5,
+      "high": 16.85,
+      "low": 15.5,
+      "close": 16.55,
+      "volume": 38731.0,
+      "turnover": 1.48
+     },
+     {
+      "date": "2026-06-30",
+      "open": 15.98,
+      "high": 16.05,
+      "low": 15.5,
+      "close": 15.57,
+      "volume": 12195.0,
+      "turnover": 0.47
+     },
+     {
+      "date": "2026-06-29",
+      "open": 16.15,
+      "high": 16.17,
+      "low": 15.51,
+      "close": 15.95,
+      "volume": 20584.0,
+      "turnover": 0.79
+     },
+     {
+      "date": "2026-06-26",
+      "open": 16.24,
+      "high": 16.39,
+      "low": 15.75,
+      "close": 15.84,
+      "volume": 8504.0,
+      "turnover": 0.33
+     },
+     {
+      "date": "2026-06-25",
+      "open": 16.2,
+      "high": 16.42,
+      "low": 16.06,
+      "close": 16.22,
+      "volume": 11706.0,
+      "turnover": 0.45
+     },
+     {
+      "date": "2026-06-24",
+      "open": 16.7,
+      "high": 17.07,
+      "low": 16.36,
+      "close": 16.38,
+      "volume": 14315.0,
+      "turnover": 0.55
+     },
+     {
+      "date": "2026-06-23",
+      "open": 16.27,
+      "high": 17.11,
+      "low": 16.25,
+      "close": 16.74,
+      "volume": 14707.0,
+      "turnover": 0.57
+     },
+     {
+      "date": "2026-06-22",
+      "open": 16.73,
+      "high": 16.73,
+      "low": 16.18,
+      "close": 16.43,
+      "volume": 36886.0,
+      "turnover": 1.42
+     }
+    ],
+    "price_stats": {
+     "high_20d": 18.01,
+     "low_20d": 15.5,
+     "avg_20d": 16.76,
+     "latest_close": 16.98
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 16.33,
+     "ma10": 16.33,
+     "ma20": 16.76,
+     "ma_status": "交叉排列",
+     "macd_dif": -0.28,
+     "macd_dea": -0.31,
+     "macd_bar": 0.06,
+     "macd_position": "零轴下方",
+     "rsi": 52.22,
+     "rsi_zone": "中性区",
+     "kdj_k": 55.13,
+     "kdj_d": 37.6,
+     "kdj_j": 90.19,
+     "boll_upper": 17.95,
+     "boll_middle": 16.76,
+     "boll_lower": 15.56,
+     "boll_position": "中轨上方",
+     "volume_ratio": 0.84,
+     "volume_ratio_desc": "平量",
+     "atr": 0.69
+    },
+    "news": [
+     {
+      "title": "短线防风险 59只个股短期均线现死叉",
+      "content": "2.37 1.69 29.62 29.76 -0.46 28.04 -5.77 002966 苏州银行 -2.25 0.80 8.05 8.09 -0.44 7.82 -3.34 002304 洋河股份 -1.76 0.18 42.46 42.64 -0.43 41.34 -3.06 603365",
+      "source": "证券时报网",
+      "published_at": "2026-06-18 12:01:00",
+      "sentiment": "negative"
+     },
+     {
+      "title": "短线防风险 55只个股短期均线现死叉",
+      "content": "3.73 1.10 17.58 17.65 -0.41 17.04 -3.45 002966 苏州银行 -1.88 0.57 8.06 8.09 -0.41 7.85 -3.00 605069 正和生态 4.64 6.88 10.87 10.91 -0.40 11.28 3.37 603365",
+      "source": "证券时报网",
+      "published_at": "2026-06-18 10:50:00",
+      "sentiment": "negative"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 20,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "日均换手率偏低 0.68%，流动性一般",
+      "volume_anomaly": "量价正常: 0/20天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 0.69,
+     "atr_stop_loss": 15.17,
+     "trailing_stop": 15.95,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 17.24,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 17.93,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 18.62,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 3,
+     "fake_breakout_count": 1,
+     "volume_price_alignment": 68.4,
+     "volume_price_desc": "量价配合度一般",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-17",
+        "detail": "长下影线 下影0.14 实体0.00"
+       },
+       {
+        "date": "2026-06-18",
+        "detail": "长下影线 下影0.45 实体0.08"
+       },
+       {
+        "date": "2026-06-29",
+        "detail": "长下影线 下影0.44 实体0.20"
+       }
+      ],
+      "fake_breakouts": [
+       {
+        "date": "2026-06-12",
+        "detail": "突破17.77后次日跌回17.64"
+       }
+      ]
+     }
+    },
+    "composite_score": 74.1,
+    "score_breakdown": {
+     "resonance": {
+      "score": 80,
+      "detail": "3个策略共振: RSI, MACD, KDJ"
+     },
+     "risk_reward": {
+      "score": 60,
+      "detail": "盈亏比 1.6 (最佳 1.7)"
+     },
+     "quality": {
+      "score": 56,
+      "detail": "加权强度 0.56"
+     },
+     "volume": {
+      "score": 100,
+      "detail": "显著放量 (量比2.9)"
+     },
+     "timeliness": {
+      "score": 80,
+      "detail": "2天前"
+     },
+     "strategy_backtest": {
+      "score": 50,
+      "detail": "无匹配策略"
+     },
+     "stock_quality": {
+      "score": 100,
+      "detail": "标的质量良好(风险分20)"
+     }
+    },
+    "resonance_strategies": [
+     "RSI",
+     "MACD",
+     "KDJ"
+    ],
+    "resonance_count": 3,
+    "risk_tier": {
+     "tier": "satellite",
+     "label": "卫星仓",
+     "max_position_pct": 0.08,
+     "score": 3,
+     "reasons": [
+      "3策略共振",
+      "量能充足"
+     ]
+    }
+   },
+   {
+    "symbol": "688371.SH",
+    "name": "菲沃泰",
+    "signal_type": "BUY",
+    "strength": 1.0,
+    "price": 41.29,
+    "stop_loss": 31.98,
+    "take_profit": 55.26,
+    "strategy": "MA_CROSS",
+    "reasons": [
+     "5日均线上穿20日均线（金叉）",
+     "当前价格: ¥41.29",
+     "近期低点持续抬升，趋势偏多",
+     "量比: 140.57（显著放量）",
+     "ATR动态止损（ATR=4.66, 止损2.0倍ATR, 止盈3.0倍ATR）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 40.88,
+      "high": 41.66,
+      "low": 38.14,
+      "close": 38.39,
+      "volume": 121120.0,
+      "turnover": 3.61
+     },
+     {
+      "date": "2026-07-02",
+      "open": 37.96,
+      "high": 45.4,
+      "low": 37.96,
+      "close": 41.29,
+      "volume": 19221970.0,
+      "turnover": 5.73
+     },
+     {
+      "date": "2026-07-01",
+      "open": 38.5,
+      "high": 40.3,
+      "low": 37.81,
+      "close": 39.7,
+      "volume": 119458.0,
+      "turnover": 3.56
+     },
+     {
+      "date": "2026-06-30",
+      "open": 35.8,
+      "high": 41.26,
+      "low": 35.2,
+      "close": 38.99,
+      "volume": 201199.0,
+      "turnover": 6.0
+     },
+     {
+      "date": "2026-06-29",
+      "open": 34.26,
+      "high": 38.26,
+      "low": 34.26,
+      "close": 35.8,
+      "volume": 175385.0,
+      "turnover": 5.23
+     },
+     {
+      "date": "2026-06-26",
+      "open": 35.08,
+      "high": 36.74,
+      "low": 33.66,
+      "close": 35.24,
+      "volume": 59195.0,
+      "turnover": 1.76
+     },
+     {
+      "date": "2026-06-25",
+      "open": 35.55,
+      "high": 37.18,
+      "low": 33.99,
+      "close": 34.75,
+      "volume": 128465.0,
+      "turnover": 3.83
+     },
+     {
+      "date": "2026-06-24",
+      "open": 33.22,
+      "high": 35.96,
+      "low": 31.86,
+      "close": 35.62,
+      "volume": 161866.0,
+      "turnover": 4.83
+     },
+     {
+      "date": "2026-06-23",
+      "open": 37.1,
+      "high": 39.85,
+      "low": 33.4,
+      "close": 33.86,
+      "volume": 195527.0,
+      "turnover": 5.83
+     },
+     {
+      "date": "2026-06-22",
+      "open": 38.0,
+      "high": 38.5,
+      "low": 35.5,
+      "close": 37.77,
+      "volume": 169507.0,
+      "turnover": 5.05
+     }
+    ],
+    "price_stats": {
+     "high_20d": 45.4,
+     "low_20d": 31.86,
+     "avg_20d": 37.75,
+     "latest_close": 38.39
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 38.83,
+     "ma10": 37.14,
+     "ma20": 37.75,
+     "ma_status": "交叉排列",
+     "macd_dif": 0.13,
+     "macd_dea": -0.18,
+     "macd_bar": 0.62,
+     "macd_position": "零轴附近",
+     "rsi": 51.18,
+     "rsi_zone": "中性区",
+     "kdj_k": 53.51,
+     "kdj_d": 48.13,
+     "kdj_j": 64.25,
+     "boll_upper": 42.25,
+     "boll_middle": 37.75,
+     "boll_lower": 33.24,
+     "boll_position": "中轨上方",
+     "volume_ratio": 0.03,
+     "volume_ratio_desc": "缩量",
+     "atr": 4.48
+    },
+    "news": [
+     {
+      "title": "菲沃泰688371.SH)：完成《公司章程》工商变更登记",
+      "content": "2026年6月11日，菲沃泰688371.SH)发布公告称，公司近日完成《公司章程》变更登记手续，并取得无锡市市场监督管理局下发的《登记通知书》。 公司分别于2026年4月16日及5月8日召开董事会及年度股东会，审议通过了关于修订《公司章程》并办理工商变更登记的议案。",
+      "source": "界面新闻",
+      "published_at": "2026-06-11 16:57:27",
+      "sentiment": "neutral"
+     },
+     {
+      "title": "599只股短线走稳 站上五日均线",
+      "content": "最新价（元） 乖离率（%） 688610 埃科光电 20.00 6.28 203.12 231.50 13.97 300236 上海新阳 18.76 8.87 115.25 131.32 13.95 300469 信息发展 20.00 7.59 52.89 59.64 12.77 688371",
+      "source": "证券时报网",
+      "published_at": "2026-07-09 15:46:00",
+      "sentiment": "neutral"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 10,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "日均换手率 4.64%，流动性正常",
+      "volume_anomaly": "量价异常度中等: 4/20天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 4.48,
+     "atr_stop_loss": 32.33,
+     "trailing_stop": 31.67,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 45.77,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 50.25,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 54.73,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 3,
+     "fake_breakout_count": 2,
+     "volume_price_alignment": 63.2,
+     "volume_price_desc": "量价配合度一般",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-12",
+        "detail": "长下影线 下影3.63 实体0.15"
+       },
+       {
+        "date": "2026-06-15",
+        "detail": "长下影线 下影2.00 实体0.21"
+       },
+       {
+        "date": "2026-06-22",
+        "detail": "长下影线 下影2.27 实体0.23"
+       }
+      ],
+      "fake_breakouts": [
+       {
+        "date": "2026-06-17",
+        "detail": "突破41.96后次日跌回38.00"
+       },
+       {
+        "date": "2026-07-02",
+        "detail": "突破41.26后次日跌回38.39"
+       }
+      ]
+     }
+    },
+    "composite_score": 73.8,
+    "score_breakdown": {
+     "resonance": {
+      "score": 50,
+      "detail": "2个策略共振: MA_CROSS, MACD"
+     },
+     "risk_reward": {
+      "score": 60,
+      "detail": "盈亏比 1.5 (最佳 1.5)"
+     },
+     "quality": {
+      "score": 86,
+      "detail": "加权强度 0.86"
+     },
+     "volume": {
+      "score": 100,
+      "detail": "显著放量 (量比140.6)"
+     },
+     "timeliness": {
+      "score": 100,
+      "detail": "1天前"
+     },
+     "strategy_backtest": {
+      "score": 100,
+      "detail": "MA_CROSS Sharpe=1.45, 胜率62%"
+     },
+     "stock_quality": {
+      "score": 100,
+      "detail": "标的质量良好(风险分10)"
+     }
+    },
+    "resonance_strategies": [
+     "MA_CROSS",
+     "MACD"
+    ],
+    "resonance_count": 2,
+    "risk_tier": {
+     "tier": "satellite",
+     "label": "卫星仓",
+     "max_position_pct": 0.08,
+     "score": 1,
+     "reasons": [
+      "量能充足"
+     ]
+    }
+   }
+  ],
+  "sell_warnings": [
+   {
+    "symbol": "01039.HK",
+    "name": "畅由国际集团",
+    "signal_type": "SELL",
+    "strength": 0.8125,
+    "price": 0.05000000074505806,
+    "stop_loss": null,
+    "take_profit": null,
+    "strategy": "MA_CROSS",
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥0.05",
+     "均线空头排列（MA5<MA10<MA20），趋势向下",
+     "量比: 0.00（缩量）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 0.05000000074505806,
+      "high": 0.05000000074505806,
+      "low": 0.05000000074505806,
+      "close": 0.05000000074505806,
+      "volume": 0.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-07-02",
+      "open": 0.05000000074505806,
+      "high": 0.05000000074505806,
+      "low": 0.05000000074505806,
+      "close": 0.05000000074505806,
+      "volume": 0.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-30",
+      "open": 0.04800000041723251,
+      "high": 0.04800000041723251,
+      "low": 0.04800000041723251,
+      "close": 0.04899999871850014,
+      "volume": 10000.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-29",
+      "open": 0.052000001072883606,
+      "high": 0.052000001072883606,
+      "low": 0.052000001072883606,
+      "close": 0.052000001072883606,
+      "volume": 0.0,
+      "turnover": null
+     },
+     {
+      "date": "2026-06-26",
+      "open": 0.052000001072883606,
+      "high": 0.052000001072883606,
+      "low": 0.052000001072883606,
+      "close": 0.052000001072883606,
+      "volume": 0.0,
+      "turnover": null
+     }
+    ],
+    "price_stats": {
+     "high_20d": 0.054999999701976776,
+     "low_20d": 0.04399999976158142,
+     "avg_20d": 0.05,
+     "latest_close": 0.05000000074505806
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 0.05,
+     "ma10": 0.05,
+     "ma20": 0.05,
+     "ma_status": "交叉排列",
+     "macd_dif": 0.0,
+     "macd_dea": 0.0,
+     "macd_bar": -0.0,
+     "macd_position": "零轴附近",
+     "rsi": 47.37,
+     "rsi_zone": "中性区",
+     "kdj_k": 77.93,
+     "kdj_d": 78.58,
+     "kdj_j": 76.63,
+     "boll_upper": 0.05,
+     "boll_middle": 0.05,
+     "boll_lower": 0.05,
+     "boll_position": "上轨附近",
+     "volume_ratio": 0.0,
+     "volume_ratio_desc": "缩量",
+     "atr": 0.0
+    },
+    "news": [
+     {
+      "title": "畅由国际集团：2025年亏损1608.4万元",
+      "content": "中证智能财讯畅由国际集团（01039）4月28日披露2025年度报告。",
+      "source": "中国证券报·中证网",
+      "published_at": "2026-04-29 15:59:49",
+      "sentiment": "neutral"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 10,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "换手率数据缺失，跳过",
+      "volume_anomaly": "量价异常度中等: 1/6天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 0.0,
+     "atr_stop_loss": 0.05,
+     "trailing_stop": 0.05,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 0.05,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 0.05,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 0.05,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 2,
+     "fake_breakout_count": 0,
+     "volume_price_alignment": 100.0,
+     "volume_price_desc": "量价高度配合",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-05",
+        "detail": "长下影线 下影0.00 实体0.00"
+       },
+       {
+        "date": "2026-06-10",
+        "detail": "长下影线 下影0.00 实体0.00"
+       }
+      ],
+      "fake_breakouts": []
+     }
+    },
+    "composite_score": 62.5,
+    "resonance_strategies": [
+     "MA_CROSS",
+     "KDJ"
+    ],
+    "resonance_count": 2
+   },
+   {
+    "symbol": "000550.SZ",
+    "name": "江铃汽车",
+    "signal_type": "SELL",
+    "strength": 1.0,
+    "price": 16.2,
+    "stop_loss": null,
+    "take_profit": null,
+    "strategy": "MA_CROSS",
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥16.20",
+     "近期高点持续降低，趋势偏空",
+     "量比: 0.36（缩量）"
+    ],
+    "recent_quotes": [
+     {
+      "date": "2026-07-03",
+      "open": 16.45,
+      "high": 16.85,
+      "low": 16.44,
+      "close": 16.62,
+      "volume": 37557.0,
+      "turnover": 0.72
+     },
+     {
+      "date": "2026-07-02",
+      "open": 16.27,
+      "high": 16.64,
+      "low": 16.22,
+      "close": 16.37,
+      "volume": 32530.0,
+      "turnover": 0.63
+     },
+     {
+      "date": "2026-07-01",
+      "open": 16.15,
+      "high": 16.32,
+      "low": 15.96,
+      "close": 16.29,
+      "volume": 38069.0,
+      "turnover": 0.73
+     },
+     {
+      "date": "2026-06-30",
+      "open": 16.25,
+      "high": 16.31,
+      "low": 15.99,
+      "close": 16.22,
+      "volume": 22309.0,
+      "turnover": 0.43
+     },
+     {
+      "date": "2026-06-29",
+      "open": 16.1,
+      "high": 16.45,
+      "low": 15.5,
+      "close": 16.32,
+      "volume": 32883.0,
+      "turnover": 0.63
+     }
+    ],
+    "price_stats": {
+     "high_20d": 18.24,
+     "low_20d": 15.5,
+     "avg_20d": 16.92,
+     "latest_close": 16.62
+    },
+    "industry": null,
+    "sector": null,
+    "indicators": {
+     "ma5": 16.36,
+     "ma10": 16.62,
+     "ma20": 16.92,
+     "ma_status": "空头排列",
+     "macd_dif": -0.2,
+     "macd_dea": -0.11,
+     "macd_bar": -0.17,
+     "macd_position": "零轴下方",
+     "rsi": 45.21,
+     "rsi_zone": "中性区",
+     "kdj_k": 42.0,
+     "kdj_d": 35.46,
+     "kdj_j": 55.07,
+     "boll_upper": 18.07,
+     "boll_middle": 16.92,
+     "boll_lower": 15.78,
+     "boll_position": "中轨下方",
+     "volume_ratio": 1.37,
+     "volume_ratio_desc": "平量",
+     "atr": 0.56
+    },
+    "news": [
+     {
+      "title": "江铃汽车：6月汽车销量35742辆 同比增长0.04%",
+      "content": "人民财讯7月2日电，江铃汽车0005507月2日公告，2026年6月汽车销量35742辆，同比增长0.04%。本年累计销量18.9万辆，同比增长9.46%。",
+      "source": "证券时报网",
+      "published_at": "2026-07-02 18:46:00",
+      "sentiment": "positive"
+     },
+     {
+      "title": "江铃汽车：6月产量同比降3.64%，销量微增0.04%",
+      "content": "7月2日，江铃汽车（000550/200550）发布公告，6月份的总产量为3.29万辆，同比下降3.64%；总销量为3.57万辆，同比增长0.04%。截至目前，公司2026年累计产量为19万辆，同比增长9.84%；累计销量为19万辆，同比增长9.46%。",
+      "source": "财中社",
+      "published_at": "2026-07-02 19:06:00",
+      "sentiment": "positive"
+     }
+    ],
+    "manipulation_risk": {
+     "risk_score": 20,
+     "risk_level": "low",
+     "details": {
+      "turnover_analysis": "日均换手率偏低 0.70%，流动性一般",
+      "volume_anomaly": "量价正常: 0/20天偏离",
+      "liquidity_grade": "C"
+     }
+    },
+    "small_cap_profile": {
+     "cap_category": "unknown",
+     "cap_label": "未知",
+     "sideways_days": 0,
+     "volume_breakout": false,
+     "breakout_detail": ""
+    },
+    "dynamic_levels": {
+     "atr_value": 0.56,
+     "atr_stop_loss": 17.32,
+     "trailing_stop": 17.46,
+     "take_profit_levels": [
+      {
+       "level": 1,
+       "price": 15.64,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 2,
+       "price": 15.08,
+       "action": "减仓1/3"
+      },
+      {
+       "level": 3,
+       "price": 14.52,
+       "action": "清仓"
+      }
+     ],
+     "risk_reward_ratio": 1.0
+    },
+    "market_behavior": {
+     "stop_hunt_count": 5,
+     "fake_breakout_count": 0,
+     "volume_price_alignment": 73.7,
+     "volume_price_desc": "量价高度配合",
+     "details": {
+      "stop_hunts": [
+       {
+        "date": "2026-06-22",
+        "detail": "长下影线 下影0.39 实体0.11"
+       },
+       {
+        "date": "2026-06-29",
+        "detail": "长下影线 下影0.60 实体0.22"
+       },
+       {
+        "date": "2026-06-30",
+        "detail": "长下影线 下影0.23 实体0.03"
+       }
+      ],
+      "fake_breakouts": []
+     }
+    },
+    "composite_score": 62.3,
+    "resonance_strategies": [
+     "MA_CROSS",
+     "MACD"
+    ],
+    "resonance_count": 2
+   },
+   {
+    "symbol": "159329.SZ",
+    "name": "沙特ETF南方",
+    "signal_type": "SELL",
+    "strength": 1.0,
+    "price": 0.903,
+    "stop_loss": null,
+    "take_profit": null,
+    "strategy": "MA_CROSS",
+    "reasons": [
+     "5日均线下穿20日均线（死叉）",
+     "当前价格: ¥0.90",
+     "近期高点持续降低，趋势偏空",
+     "量比: 0.86（平量）"
+    ],
+    "recent_quotes": [],
+    "price_stats": {},
+    "industry": null,
+    "sector": null,
+    "news": [
+     {
+      "title": "南方基金：沙特ETF南方6月30日起暂停申购",
+      "content": "南财智讯6月24日电，南方基金管理股份有限公司公告，南方基金南方东英沙特阿拉伯ETF（QDII）（场内简称：沙特ETF南方），基金代码159329，自2026年6月30日起暂停申购、赎回业务，于2026年7月2日起恢复日常申购、赎回业务；暂停原因为2026年6月30日（香港特别行政区成立纪念日前夕",
+      "source": "南方财经网",
+      "published_at": "2026-06-24 18:42:00",
+      "sentiment": "neutral"
+     },
+     {
+      "title": "ETF收盘：中韩半导体ETF涨10.00% 恒生创新药ETF跌1.61%",
+      "content": "ETF收盘涨跌不一，中韩半导体ETF(513310)领涨10.00%，信创ETF（560850）(159540)涨9.59%，信创ETF（560850）(159538)涨8.77%，恒生创新药ETF(520500)领跌1.61%，旅游ETF(159766)跌1.51%，沙特ETF159329",
+      "source": "上海证券报·中国证券网",
+      "published_at": "2026-05-06 15:41:00",
+      "sentiment": "neutral"
+     }
+    ],
+    "composite_score": 62.3,
+    "resonance_strategies": [
+     "MA_CROSS",
+     "MACD"
+    ],
+    "resonance_count": 2
+   }
+  ]
+ },
+ "trading": {
+  "orders": {
+   "total": 1,
+   "filled": 1,
+   "rejected": 0,
+   "fill_rate": 100.0
+  },
+  "trades": {
+   "total": 1,
+   "total_amount": 10000.0,
+   "total_commission": 2.5
+  }
+ },
+ "news_analysis": {
+  "market_sentiment": {
+   "positive": 15,
+   "negative": 12,
+   "neutral": 13,
+   "total": 40,
+   "tendency": "中性"
+  },
+  "critical_news": [
+   {
+    "title": "国务院：加快发展绿色能源、绿色制造、绿色服务等绿色低碳产业 持续增强新能源、新能源汽车、动力电池等产业竞争优势",
+    "category": "domestic",
+    "source": "第一财经",
+    "time": "2026-07-09 17:17:44",
+    "keywords": [
+     "国务院"
+    ],
+    "sentiment": "positive"
+   },
+   {
+    "title": "约6000多万桶伊朗原油滞留海上 美国制裁或导致买家放弃交易",
+    "category": "global",
+    "source": "财联社",
+    "time": "2026-07-09 10:15:41",
+    "keywords": [
+     "制裁"
+    ],
+    "sentiment": "negative"
+   },
+   {
+    "title": "波斯湾原油出口反弹至本轮冲突前水平的75%",
+    "category": "global",
+    "source": "财联社",
+    "time": "2026-06-26 00:07:54",
+    "keywords": [
+     "冲突"
+    ],
+    "sentiment": "neutral"
+   },
+   {
+    "title": "美联储主席沃什将于15日出席美参议院银行委员会听证会",
+    "category": "global",
+    "source": "界面新闻",
+    "time": "2026-07-09 16:43:00",
+    "keywords": [
+     "美联储"
+    ],
+    "sentiment": "neutral"
+   },
+   {
+    "title": "巴克莱分析师：政策风险整体偏向加息",
+    "category": "global",
+    "source": "财联社",
+    "time": "2026-07-09 16:28:55",
+    "keywords": [
+     "加息"
+    ],
+    "sentiment": "negative"
+   },
+   {
+    "title": "Dollar stands tall as new Gulf attacks fuel oil price surge, Fed hike bets - Reuters",
+    "category": "finnhub",
+    "source": "Reuters",
+    "time": "2026-07-09 09:21",
+    "keywords": [
+     "Fed"
+    ],
+    "sentiment": "positive"
+   }
+  ],
+  "stock_sentiments": {
+   "002726.SZ": {
+    "positive": 0,
+    "negative": 0,
+    "neutral": 2,
+    "tendency": "中性"
+   },
+   "301158.SZ": {
+    "positive": 0,
+    "negative": 2,
+    "neutral": 0,
+    "tendency": "偏负面"
+   },
+   "300694.SZ": {
+    "positive": 0,
+    "negative": 0,
+    "neutral": 2,
+    "tendency": "中性"
+   },
+   "000735.SZ": {
+    "positive": 1,
+    "negative": 1,
+    "neutral": 0,
+    "tendency": "中性"
+   },
+   "300423.SZ": {
+    "positive": 0,
+    "negative": 2,
+    "neutral": 0,
+    "tendency": "偏负面"
+   },
+   "300788.SZ": {
+    "positive": 0,
+    "negative": 1,
+    "neutral": 1,
+    "tendency": "偏负面"
+   },
+   "002481.SZ": {
+    "positive": 0,
+    "negative": 0,
+    "neutral": 2,
+    "tendency": "中性"
+   },
+   "603365.SH": {
+    "positive": 0,
+    "negative": 2,
+    "neutral": 0,
+    "tendency": "偏负面"
+   },
+   "688371.SH": {
+    "positive": 0,
+    "negative": 0,
+    "neutral": 2,
+    "tendency": "中性"
+   },
+   "01039.HK": {
+    "positive": 0,
+    "negative": 0,
+    "neutral": 1,
+    "tendency": "中性"
+   },
+   "000550.SZ": {
+    "positive": 2,
+    "negative": 0,
+    "neutral": 0,
+    "tendency": "偏正面"
+   },
+   "159329.SZ": {
+    "positive": 0,
+    "negative": 0,
+    "neutral": 2,
+    "tendency": "中性"
+   }
+  }
+ }
+}

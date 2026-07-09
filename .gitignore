@@ -74,6 +74,8 @@ backend/tests/*
 !backend/tests/common/
 !backend/tests/test_a_share_symbol_suffix.py
 !backend/tests/test_lint_baseline_guard.py
+!backend/tests/_fixtures.py
+!backend/tests/baseline/
 
 # ==================== 环境变量 & 密钥 ====================
 .env

@@ -1,0 +1,37 @@
+{
+ "request": {
+  "symbol": "TEST.SH",
+  "strategy": "MA_CROSS",
+  "params": {
+   "fast_period": 5,
+   "slow_period": 20,
+   "position_pct": 0.95
+  },
+  "initial_capital": 1000000.0,
+  "market": "a_share",
+  "start_date": "2024-01-02",
+  "end_date": "2024-09-27"
+ },
+ "metrics": {
+  "annualized_return": 0.6798971009257946,
+  "avg_loss": 0.0,
+  "avg_profit": 119049.63198375009,
+  "final_value": 1448492.3318395005,
+  "losing_trades": 0,
+  "max_dd_end_date": "2024-05-02",
+  "max_dd_start_date": "2024-04-18",
+  "max_drawdown": 0.09834731542362063,
+  "max_drawdown_amount": 119475.7256924999,
+  "profit_factor": 0.0,
+  "sharpe_ratio": 4.220052939417914,
+  "sortino_ratio": 9.329107862043003,
+  "total_commission": 3612.7501604999998,
+  "total_return": 0.44849233183950044,
+  "total_slippage": 5434.917999999622,
+  "total_trades": 2,
+  "volatility": 0.11827365833556998,
+  "win_rate": 1.0,
+  "winning_trades": 2
+ },
+ "trades_count": 5
+}
