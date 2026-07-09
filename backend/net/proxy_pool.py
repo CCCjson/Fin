@@ -220,6 +220,17 @@ class ProxyPool:
         if not proxy_connect or self.direct_mode or self._state == "dead":
             return
 
+        self._record_connect_failure()
+
+    def _record_connect_failure(self) -> None:
+        """记一次「连接层失败」进熔断计数，跨过阈值即判 dead。
+
+        两个来源共用：请求命中连接层错误（`report_failure(proxy_connect=True)`）、
+        或取新 IP 本身就失败（`_refresh_slot` 里 `fetch_one_proxy()` 返回 None）。
+        后者以前只是警告一下就把槽位置空，指望之后一次注定失败的直连请求才能
+        触发熔断计数——白白浪费一次直连探测，且东财偶尔没有立刻掐断时熔断会
+        迟迟收敛不了。取不到 IP 本身就足以说明快代理这一环有问题，直接计数。
+        """
         with self._mgr_lock:
             self._consec_proxy_failures += 1
             # 已成功抓到一大批后（快代理证明是通的），不再全局中止：此后个别
@@ -263,13 +274,14 @@ class ProxyPool:
             slot.rate_limiter.set_delays(self._proxy_min_delay, self._proxy_max_delay)
             slot.rate_limiter.reset()
         else:
-            # 取不到 IP（额度尽/网络问题）或已 dead → slot 无代理。不切直连
-            # 保守节奏（既然主路径不直连，就不特殊照顾直连）：这一槽下一次请求
-            # 若真直连一次并被掐，报错会被 is_proxy_connect_error 计入换 IP 计数，
-            # 连续到 _dead_after 即收敛到 dead 中止。
+            # 取不到 IP（额度尽/网络问题）或已 dead → slot 无代理。绝不降级
+            # 直连试探，取不到 IP 本身就直接计入熔断计数（而不是留给下一次
+            # 注定失败的直连请求去触发）。
             slot.proxy = None
             if self._state == "closed":
                 logger.warning(f"代理槽 {slot.slot_id} 未取到新 IP（额度尽/网络问题？）")
+                if not self.direct_mode:
+                    self._record_connect_failure()
 
     @property
     def breaker_state(self) -> str:

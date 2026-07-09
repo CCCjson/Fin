@@ -28,7 +28,7 @@ class AShareFetcher(BaseFetcher):
 
             logger.info(f"正在获取 {request.symbol} 的日线数据...")
 
-            # 获取数据（统一网络层：快代理轮换 + 直连兜底，Clash 无关）
+            # 获取数据（统一网络层：快代理轮换重试，绝不直连兜底，Clash 无关）
             df = domestic_akshare(
                 ak.stock_zh_a_hist,
                 symbol=symbol_code,

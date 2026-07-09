@@ -66,7 +66,7 @@ class NewsFetcher:
         logger.info(f"正在抓取{log_label}新闻: {raw_symbol}")
 
         try:
-            # 走统一网络层：快代理轮换 + 直连兜底，Clash 开没开都能抓
+            # 走统一网络层：快代理轮换重试，绝不直连兜底，Clash 开没开都能抓
             df = domestic_akshare(ak.stock_news_em, symbol=raw_symbol)
         except Exception as e:
             logger.error(f"AkShare 新闻抓取失败: {e}")
