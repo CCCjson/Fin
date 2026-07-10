@@ -43,22 +43,32 @@ class _FakeProxy:
 
 
 class _FakePM:
-    """模拟快代理：ips 为空 = 额度耗尽。"""
+    """模拟快代理：ips 为空 = 额度耗尽。
+
+    `get_proxy()` 复用当前 IP（真实 ProxyManager 的语义）；这里的 fake IP 永不过期，
+    所以「首轮 get_proxy → 失败 → switch_proxy」的换 IP 路径能被如实测出来。
+    """
 
     def __init__(self, ips=()):
         self.ips = list(ips)
         self.api_url = "https://dps.kdlapi.com/fake"
         self.handed_out = []
+        self.current_proxy = None
 
     def _next(self):
         if not self.ips:
+            self.current_proxy = None
             return None
         ip = self.ips.pop(0)
         self.handed_out.append(ip)
-        return _FakeProxy(ip)
+        self.current_proxy = _FakeProxy(ip)
+        return self.current_proxy
 
     fetch_one_proxy = _next
     switch_proxy = _next
+
+    def get_proxy(self):
+        return self.current_proxy or self._next()
 
 
 @pytest.fixture
@@ -133,9 +143,9 @@ def test_uses_proxy_and_rotates_ip_on_failure(monkeypatch):
     with pytest.raises(ProxyExhaustedError):
         dom.domestic_get("https://push2.eastmoney.com/x", max_rounds=3)
 
-    assert len(seen) == 3, "三轮都发了请求"
+    assert len(seen) == 3, "三轮都发了请求（每轮都有 IP 可用）"
     assert None not in seen, "没有任何一轮走直连"
-    assert pm.handed_out == ["1.1.1.1", "2.2.2.2", "3.3.3.3"], "每轮换新 IP"
+    assert pm.handed_out == ["1.1.1.1", "2.2.2.2", "3.3.3.3"], "失败一次换一个 IP"
 
 
 def test_partial_exhaustion_still_never_goes_direct(monkeypatch):
@@ -159,7 +169,8 @@ def test_partial_exhaustion_still_never_goes_direct(monkeypatch):
 
     with pytest.raises(ProxyExhaustedError):
         dom.domestic_get("https://push2.eastmoney.com/x", max_rounds=3)
-    assert seen == [pm and {"http": "http://1.1.1.1:8080", "https": "http://1.1.1.1:8080"}]
+    assert seen == [{"http": "http://1.1.1.1:8080", "https": "http://1.1.1.1:8080"}], \
+        "只有拿到 IP 的那一轮发了请求；后续取不到 IP 立即中止，绝不直连"
 
 
 # ── domestic_json 透传异常 ─────────────────────────────────────────────────

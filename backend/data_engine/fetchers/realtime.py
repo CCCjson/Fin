@@ -332,7 +332,9 @@ def fetch_a_share_realtime(
             return proxies
         if proxy_mgr:
             if _first_proxy[0]:
-                p = proxy_mgr.fetch_one_proxy()
+                # 复用进程内当前 IP（没过期就不扣额度）。直接 fetch_one_proxy()
+                # 会让每次轮询都买一个新 IP —— 两个 30s 轮询器一天就是上千个。
+                p = proxy_mgr.get_proxy()
                 _first_proxy[0] = False
             else:
                 p = proxy_mgr.switch_proxy()
@@ -548,11 +550,12 @@ def fetch_index_realtime(
         "_": str(int(time.time() * 1000)),
     }
 
-    # 如果没传代理，通过快代理获取（国内网站不走 Clash）
+    # 如果没传代理，通过快代理获取（国内网站不走 Clash）。
+    # get_proxy() 而非 fetch_one_proxy()：没过期就复用，别每次调用都买新 IP。
     if not proxies:
         proxy_mgr = _get_proxy_manager()
         if proxy_mgr:
-            p = proxy_mgr.fetch_one_proxy()
+            p = proxy_mgr.get_proxy()
             if p:
                 proxies = p.to_requests_proxies()
 
@@ -657,7 +660,7 @@ def fetch_quotes_by_symbols(symbols: List[str], max_rounds: int = 3) -> List[Dic
     for attempt in range(max_rounds):
         proxies = None
         if proxy_mgr:
-            p = proxy_mgr.fetch_one_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
+            p = proxy_mgr.get_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
             if p:
                 proxies = p.to_requests_proxies()
                 logger.info(f"实时行情使用快代理: {p.ip}:{p.port}（第 {attempt + 1} 轮）")

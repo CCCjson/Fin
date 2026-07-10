@@ -41,11 +41,17 @@ def _sort_quotes(quotes: list, sort_by: str, ascending: bool) -> list:
 
 
 def _get_proxy() -> Optional[dict]:
-    """尝试获取代理 IP（可选功能）"""
+    """尝试获取代理 IP（可选功能）。
+
+    走进程内单例 + `get_proxy()`：每个 HTTP 请求各自 new 一个 ProxyManager 并
+    `fetch_one_proxy()`，等于每次请求都买一个新 IP。
+    """
     try:
-        from net import ProxyManager
-        mgr = ProxyManager()
-        proxy = mgr.fetch_one_proxy()
+        from net import get_proxy_manager
+        mgr = get_proxy_manager()
+        if mgr is None:
+            return None
+        proxy = mgr.get_proxy()
         if proxy:
             logger.info(f"使用代理: {proxy.ip}:{proxy.port}")
             return proxy.to_requests_proxies()

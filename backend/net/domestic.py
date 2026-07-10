@@ -26,14 +26,36 @@ from net.session import make_domestic_session
 _AKSHARE_LOCK = threading.Lock()
 
 
+_PM_SINGLETON: Optional[ProxyManager] = None
+_PM_LOCK = threading.Lock()
+
+
 def get_proxy_manager() -> Optional[ProxyManager]:
-    """创建一个 ProxyManager（未配置快代理时返回 None）。"""
-    try:
-        pm = ProxyManager()
-        return pm if pm.api_url else None
-    except Exception as e:  # noqa: BLE001
-        logger.debug(f"无法创建 ProxyManager: {e}")
-        return None
+    """进程内共享的 ProxyManager（未配置快代理时返回 None）。
+
+    **必须是单例**：每次 `ProxyManager()` 新建实例，`current_proxy` 缓存就丢了，
+    于是每一次国内请求都去买一个新 IP。实测同一秒内 10 次 `domestic_json`
+    烧掉 10 个 IP，8394 的额度 8 天见底。
+    """
+    global _PM_SINGLETON
+    if _PM_SINGLETON is not None:
+        return _PM_SINGLETON
+    with _PM_LOCK:
+        if _PM_SINGLETON is None:
+            try:
+                pm = ProxyManager()
+                _PM_SINGLETON = pm if pm.api_url else None
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"无法创建 ProxyManager: {e}")
+                return None
+    return _PM_SINGLETON
+
+
+def reset_proxy_manager() -> None:
+    """丢弃单例（测试用；.env 换了快代理链接后也可以调）。"""
+    global _PM_SINGLETON
+    with _PM_LOCK:
+        _PM_SINGLETON = None
 
 
 class ProxyExhaustedError(RuntimeError):
@@ -61,13 +83,15 @@ def domestic_get(
     for attempt in range(total_rounds):
         proxies = None
         if pm:
-            # 首轮 fetch，后续 switch 换新 IP；每一轮都换 IP，没有"最后一轮直连"
-            p = pm.fetch_one_proxy() if attempt == 0 else pm.switch_proxy()
+            # 首轮复用当前 IP（没过期就不扣额度）；失败后才 switch 换新 IP。
+            # 直接 fetch_one_proxy() 等于每次请求都买一个新 IP。
+            p = pm.get_proxy() if attempt == 0 else pm.switch_proxy()
             if not p:
                 # 配了快代理却取不到 IP（额度耗尽 / API 挂）。**绝不用 proxies=None
                 # 发请求** —— 那就是降级直连，铁律禁止（commit 7158f37）。
-                logger.warning(f"domestic_get 第 {attempt + 1}/{total_rounds} 轮取不到快代理 IP，跳过（不直连）")
-                continue
+                # 也不再把剩余轮次打完：那只是白白轰炸提取 API。
+                raise ProxyExhaustedError(
+                    f"取不到快代理 IP（额度耗尽？），拒绝降级直连，放弃 GET {url}")
             proxies = p.to_requests_proxies()
             logger.debug(f"domestic_get 使用快代理: {p.ip}:{p.port}（第 {attempt + 1} 轮）")
         try:
@@ -131,11 +155,13 @@ def domestic_akshare(
         for attempt in range(total_rounds):
             proxy_url = None
             if pm:
-                p = pm.fetch_one_proxy() if attempt == 0 else pm.switch_proxy()
+                # 同 domestic_get：首轮复用，失败才换 IP。
+                p = pm.get_proxy() if attempt == 0 else pm.switch_proxy()
                 if not p:
-                    # 取不到 IP 时 proxy_env(None) 就是直连——跳过本轮，不许发请求。
-                    logger.warning(f"akshare 第 {attempt + 1}/{total_rounds} 轮取不到快代理 IP，跳过（不直连）")
-                    continue
+                    # 取不到 IP 时 proxy_env(None) 就是直连——不许发请求，也别把
+                    # 剩余轮次打完（白白轰炸提取 API）。
+                    raise ProxyExhaustedError(
+                        f"取不到快代理 IP（额度耗尽？），拒绝降级直连，放弃 {fn.__name__}")
                 proxy_url = p.to_env_url()
             with proxy_env(proxy_url):
                 try:

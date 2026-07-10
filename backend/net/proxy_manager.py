@@ -13,6 +13,7 @@
 
 import json
 import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -77,14 +78,23 @@ class ProxyManager:
         self.current_proxy: ProxyInfo | None = None
         self.fetch_count: int = 0  # 累计请求 API 次数
         self.fail_count: int = 0   # 累计失效 IP 次数
+        # 取 IP 的三个方法要串行：单例被多线程共用（domestic_get 并发、
+        # realtime 的 worker 池），否则会并发打提取 API 白烧额度。可重入：
+        # fetch_one_proxy 在切备用链接时会递归调自己。
+        self._lock = threading.RLock()
 
     def fetch_one_proxy(self) -> ProxyInfo | None:
         """
-        从快代理 API 获取 1 个代理 IP
+        从快代理 API 获取 1 个代理 IP。**每次调用都扣一次额度**——
+        想复用当前 IP 请调 `get_proxy()`。
 
         Returns:
             ProxyInfo 或 None（获取失败）
         """
+        with self._lock:
+            return self._fetch_one_proxy_locked()
+
+    def _fetch_one_proxy_locked(self) -> ProxyInfo | None:
         if not self.api_url:
             logger.error("未配置 kuaidaili_api，请检查 .env 文件")
             return None
@@ -108,7 +118,7 @@ class ProxyManager:
                 logger.warning(f"快代理 API 返回错误: {msg}")
                 # 尝试切换到备用链接
                 if self._switch_to_backup():
-                    return self.fetch_one_proxy()  # 用新链接重试
+                    return self._fetch_one_proxy_locked()  # 用新链接重试
                 return None
 
             # 解析
@@ -249,29 +259,25 @@ class ProxyManager:
         return self._default_expire_at()
 
     def get_proxy(self) -> ProxyInfo | None:
-        """
-        获取一个可用代理
+        """获取一个可用代理：当前 IP 没过期就**复用**（不扣额度），否则取新的。
 
-        如果当前代理可用则返回，否则请求新的。
+        国内出网的首选入口。直接调 `fetch_one_proxy()` 等于每次请求都买一个新 IP。
         """
-        # 当前代理仍可用
-        if self.current_proxy and not self.current_proxy.is_expired:
-            return self.current_proxy
-
-        # 请求新 IP
-        return self.fetch_one_proxy()
+        with self._lock:
+            if self.current_proxy and not self.current_proxy.is_expired:
+                return self.current_proxy
+            return self._fetch_one_proxy_locked()
 
     def switch_proxy(self) -> ProxyInfo | None:
-        """
-        立即切换到新代理（当前 IP 失效时调用）
-        """
-        if self.current_proxy:
-            self.fail_count += 1
-            logger.info(f"代理 {self.current_proxy.ip}:{self.current_proxy.port} 已失效 "
-                        f"(累计失效: {self.fail_count})")
+        """立即切换到新代理（当前 IP 被封/失效时才调，扣额度）。"""
+        with self._lock:
+            if self.current_proxy:
+                self.fail_count += 1
+                logger.info(f"代理 {self.current_proxy.ip}:{self.current_proxy.port} 已失效 "
+                            f"(累计失效: {self.fail_count})")
 
-        self.current_proxy = None
-        return self.fetch_one_proxy()
+            self.current_proxy = None
+            return self._fetch_one_proxy_locked()
 
     def _save_raw_response(self, data: Any) -> None:
         """保存 API 原始响应（默认关闭；PROXY_SAVE_RAW=1 时启用，

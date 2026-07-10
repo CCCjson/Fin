@@ -531,7 +531,8 @@ class ReviewService:
         for attempt in range(max_retries):
             proxies = None
             if proxy_mgr:
-                p = proxy_mgr.fetch_one_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
+                # 首轮复用当前 IP（没过期不扣额度）；失败才 switch 换新的
+                p = proxy_mgr.get_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
                 if p:
                     proxies = p.to_requests_proxies()
             sess = _make_session(proxies)
@@ -573,7 +574,8 @@ class ReviewService:
         for attempt in range(max_retries):
             proxies = None
             if proxy_mgr:
-                p = proxy_mgr.fetch_one_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
+                # 首轮复用当前 IP（没过期不扣额度）；失败才 switch 换新的
+                p = proxy_mgr.get_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
                 if p:
                     proxies = p.to_requests_proxies()
             sess = _make_session(proxies)
