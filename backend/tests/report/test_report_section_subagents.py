@@ -22,11 +22,30 @@ SECTION_NAMES = ["report_market", "report_news", "report_positions",
                  "report_strategy", "report_picks"]
 
 
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_decision_log(monkeypatch):
+    """report_picks 的 _after_collect 会调 record_picks 真写库。
+
+    这条曾经**真的把 6 行假推荐写进了生产 market.db**（`000001.SZ`，价格全 None）——
+    因为 `_after_collect` 是延迟 import，只 mock 采集器和成稿器拦不住它。
+    在 fixture 层无条件挡死，别指望每个用例记得自己 mock。
+    """
+    monkeypatch.setattr("report_engine.picks_log.record_picks",
+                        lambda recs, **kw: (_ for _ in ()).throw(
+                            AssertionError("测试不许写 DecisionLog；要断言留痕请用 fake_engine['recorded']")))
+
+
 @pytest.fixture
 def fake_engine(monkeypatch):
-    """替换掉 subagent.run 里那两个懒 import 的引擎入口。"""
+    """替换掉 subagent.run 里那几个懒 import 的引擎入口。"""
     state = {"collected": [], "section_args": [], "cancel_event": None,
-             "data": {"portfolio": {"positions": []}}}
+             "recorded": [], "data": {"portfolio": {"positions": []}}}
+
+    def _fake_record_picks(recs, **kw):
+        state["recorded"].append(recs)
+        return len(recs)
+
+    monkeypatch.setattr("report_engine.picks_log.record_picks", _fake_record_picks)
 
     class _FakeCollector:
         def __getattr__(self, item):
@@ -173,35 +192,26 @@ def test_summary_is_truncated_to_600_chars(fake_engine):
 
 # ── report_picks 的留痕钩子 ───────────────────────────────────────────────
 
-def test_report_picks_records_decisions_before_writing(fake_engine, monkeypatch):
+def test_report_picks_records_decisions_before_writing(fake_engine):
     """推荐是选出来的不是写出来的：采完就留痕，不等成稿成功。
 
     这批 DecisionLog 就是下次 report_strategy 里「上期推荐回顾」的数据源。
     """
-    recorded = []
-    monkeypatch.setattr("report_engine.picks_log.record_picks",
-                        lambda recs, **kw: recorded.append(recs) or len(recs))
     recs = [{"symbol": "600519.SH", "price": 1700.0}]
     fake_engine["data"] = {"portfolio": {"positions": []},
                            "top_stocks": {"buy_recommendations": recs}}
 
     list(get_runner("report_picks").run({}))
-    assert recorded == [recs]
+    assert fake_engine["recorded"] == [recs]
 
 
-def test_other_sections_do_not_record_decisions(fake_engine, monkeypatch):
-    recorded = []
-    monkeypatch.setattr("report_engine.picks_log.record_picks",
-                        lambda recs, **kw: recorded.append(recs) or 0)
+def test_other_sections_do_not_record_decisions(fake_engine):
     for name in ("report_market", "report_news", "report_positions", "report_strategy"):
         list(get_runner(name).run({}))
-    assert recorded == []
+    assert fake_engine["recorded"] == []
 
 
-def test_report_picks_with_no_recommendations_records_nothing(fake_engine, monkeypatch):
-    recorded = []
-    monkeypatch.setattr("report_engine.picks_log.record_picks",
-                        lambda recs, **kw: recorded.append(recs) or 0)
+def test_report_picks_with_no_recommendations_records_nothing(fake_engine):
     fake_engine["data"] = {"portfolio": {"positions": []}}
     list(get_runner("report_picks").run({}))
-    assert recorded == [[]]
+    assert fake_engine["recorded"] == [[]]
