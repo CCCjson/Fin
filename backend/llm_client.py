@@ -89,6 +89,82 @@ class _ToolCallAccumulator:
         return not self._by_index
 
 
+def _open_stream(client: OpenAI, kwargs: dict):
+    """带 stream_options 回退的流打开——部分兼容端点不认 include_usage。"""
+    try:
+        return client.chat.completions.create(
+            **kwargs, stream_options={"include_usage": True})
+    except Exception:
+        return client.chat.completions.create(**kwargs)
+
+
+def stream_text(
+    messages: list[dict],
+    *,
+    model: str,
+    temperature: float = 0.5,
+    max_tokens: int = 0,
+    client: Optional[OpenAI] = None,
+    cancel_event: Optional[threading.Event] = None,
+) -> Generator[dict, None, None]:
+    """
+    纯文本流式调用 chat.completions（无 tools）。给报告章节、新闻解读这类"只出稿"
+    的场景用，消灭各引擎里手抄的 create(stream=True) 循环。
+
+    Yields:
+      {"type": "text", "content": "..."}              — 文本增量
+      {"type": "done", "content": str, "tokens": int,
+       "prompt_tokens": int, "completion_tokens": int, "cancelled": bool}
+
+    token 用**覆盖取最终值**而非累加：OpenAI 只在最后一个 chunk 发送非空 usage，
+    `+=` 会在同一 chunk 内双计。
+
+    max_tokens 仅在 > 0 时下发（0 = 不限）。GPT-5 系列的 max_completion_tokens /
+    temperature 约束由 normalize_chat_params 统一处理。
+
+    cancel_event 命中即关闭底层流并跳出——大多数端点会因连接断开提前停止生成，
+    真的省下后续 token。
+    """
+    client = client or build_client()
+
+    kwargs = dict(model=model, messages=messages, temperature=temperature, stream=True)
+    if max_tokens > 0:
+        kwargs["max_tokens"] = max_tokens
+    kwargs = normalize_chat_params(kwargs)
+
+    stream = _open_stream(client, kwargs)
+
+    full_content = ""
+    token_count = 0
+    prompt_tokens = 0
+    completion_tokens = 0
+    cancelled = False
+
+    for chunk in stream:
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled = True
+            try:
+                stream.close()
+            except Exception:
+                logger.warning("stream_text: 取消时关闭底层流失败，忽略")
+            break
+        if getattr(chunk, "usage", None):
+            token_count = chunk.usage.total_tokens
+            prompt_tokens = getattr(chunk.usage, "prompt_tokens", 0) or 0
+            completion_tokens = getattr(chunk.usage, "completion_tokens", 0) or 0
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if delta is None or not delta.content:
+            continue
+        full_content += delta.content
+        yield {"type": "text", "content": delta.content}
+
+    yield {"type": "done", "content": full_content, "tokens": token_count,
+           "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+           "cancelled": cancelled}
+
+
 def stream_chat(
     messages: list[dict],
     *,
@@ -124,12 +200,7 @@ def stream_chat(
         kwargs["tool_choice"] = "auto"
     kwargs = normalize_chat_params(kwargs)
 
-    try:
-        stream = client.chat.completions.create(
-            **kwargs, stream_options={"include_usage": True})
-    except Exception:
-        # 部分兼容端点不支持 stream_options，回退
-        stream = client.chat.completions.create(**kwargs)
+    stream = _open_stream(client, kwargs)
 
     full_content = ""
     token_count = 0
