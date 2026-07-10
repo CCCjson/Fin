@@ -18,7 +18,7 @@ from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo, DailyQuote
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes
 from data_engine.deep_history.us_filter import classify_and_persist_us_universe
-from data_engine.fetchers.hk_stock import to_yf_symbol
+from common.market import to_yf_symbol
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 PROGRESS_FILE = _BACKEND_DIR / "scripts" / "deep_history_overseas_progress.json"

@@ -7,19 +7,8 @@ import pandas as pd
 import re
 from loguru import logger
 
+from common.market import to_yf_symbol
 from data_engine.fetchers.base import BaseFetcher, MarketDataRequest, MarketDataResponse
-
-
-def to_yf_symbol(symbol: str) -> str:
-    """项目里港股代码统一存 5 位数字格式（00700.HK），但 yfinance 只认 4 位（0700.HK）
-    ——5 位格式喂给 yfinance 会返回 "possibly delisted; no price data found"。
-    这里只在实际调 yfinance 前转换，数据库/前端展示不受影响。
-    """
-    if symbol.endswith(".HK"):
-        code = symbol[:-3]
-        if len(code) == 5 and code.isdigit():
-            return f"{code[1:]}.HK"
-    return symbol
 
 
 class HKStockFetcher(BaseFetcher):
