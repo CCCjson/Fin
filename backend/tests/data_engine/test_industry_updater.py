@@ -22,6 +22,11 @@ _SEED = [
     ("600519.SH", "a_share", 1, "stock", None),
     ("300750.SZ", "a_share", 0, "stock", None),      # 停牌/退市 → 不该进候选
     ("510300.SH", "a_share", 1, "etf", None),        # ETF → 不该进候选
+    # 指数没有「所属行业」。更要命的是它和个股**同码不同所**：`to_bare_code`
+    # 剥掉后缀后，000001.SH（上证指数）会被巨潮当成 000001（平安银行）查，
+    # 于是上证指数被写上「货币金融服务」。实测污染了 5 只指数。
+    ("000001.SH", "a_share", 1, "index", None),      # 上证指数
+    ("000300.SH", "a_share", 1, "index", None),      # 沪深300
     ("00700.HK", "hk_stock", 1, "stock", None),      # 港股 → 不该进候选
 ]
 
@@ -76,12 +81,44 @@ def _stub_stream(monkeypatch, source, pairs, *, on_symbols=None):
 
 # ── 候选集 ──────────────────────────────────────────────────────────────────
 
-def test_only_active_non_etf_a_shares_are_candidates(db, monkeypatch):
+def test_only_active_a_share_stocks_are_candidates(db, monkeypatch):
+    """只有**个股**要行业。指数/ETF/停牌股/港股都不该进候选。
+
+    指数尤其危险：它与个股同码不同所，剥掉后缀查巨潮会串到别人身上
+    （上证指数 000001.SH → 平安银行的「货币金融服务」）。
+    """
     seen: list[list[str]] = []
     _stub_stream(monkeypatch, "cninfo", [], on_symbols=seen)
     iu.backfill_industry()
     assert seen[0] == ["000001.SZ", "000002.SZ", "600000.SH", "600519.SH"], \
-        "停牌股 / ETF / 港股不该进候选"
+        f"候选集不干净：{seen[0]}"
+
+
+def test_indices_never_get_an_industry(db, monkeypatch):
+    """哪怕取数层把指数的行业吐回来，也不该落库——它压根不该被查。"""
+    _stub_stream(monkeypatch, "cninfo", [
+        ("000001.SZ", "货币金融服务"),
+        ("000001.SH", "货币金融服务"),      # 上证指数，串到了平安银行
+        ("000300.SH", "批发业"),
+    ])
+    iu.backfill_industry()
+    assert _industries(db) == {"000001.SZ": "货币金融服务"}, \
+        "指数被写上了行业 —— 那是同码个股的行业"
+
+
+def test_commit_batch_refuses_to_write_industry_to_an_index(db):
+    """落库那一层的第二道防线，直接测。
+
+    候选集已经排除了指数，所以走 `backfill_industry` 永远碰不到这条分支
+    ——那样的防线是测不出来的死代码。直接调 `_commit_batch` 才能钉住它。
+    """
+    changed = iu._commit_batch({
+        "000001.SZ": "货币金融服务",     # 平安银行，该写
+        "000001.SH": "货币金融服务",     # 上证指数，绝不该写
+        "510300.SH": "指数",            # ETF，绝不该写
+    })
+    assert changed == 1
+    assert _industries(db) == {"000001.SZ": "货币金融服务"}
 
 
 # ── 分批落库 ────────────────────────────────────────────────────────────────

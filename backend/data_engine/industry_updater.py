@@ -54,18 +54,31 @@ def _write_last_source(source: str, fetched_this_run: int) -> None:
     tmp.replace(_SOURCE_MARKER)
 
 
+def _stock_only(q):
+    """只要**个股**：指数和 ETF 没有「所属行业」。
+
+    指数尤其危险——它和个股**同码不同所**。剥掉后缀去查巨潮会串到别人身上：
+    `000001.SH`（上证指数）→ 裸码 `000001` → 平安银行 →「货币金融服务」。
+    实测污染了 5 只指数：上证50 拿到康佳集团的行业、科创50 拿到国城矿业的、
+    中证500 拿到厦门港务的。规范 §1 早记着这个同码歧义，我第一版没防住。
+    """
+    return q.filter(StockInfo.market == "a_share",
+                    StockInfo.is_active == 1,
+                    StockInfo.stock_type == "stock")
+
+
 def _active_a_share_symbols(session, *, only_missing: bool = False) -> list[str]:
-    q = (session.query(StockInfo.symbol)
-         .filter(StockInfo.market == "a_share",
-                 StockInfo.is_active == 1,
-                 StockInfo.stock_type != "etf"))
+    q = _stock_only(session.query(StockInfo.symbol))
     if only_missing:
         q = q.filter((StockInfo.industry.is_(None)) | (StockInfo.industry == ""))
     return [r[0] for r in q.order_by(StockInfo.symbol).all()]
 
 
 def _clear_industry() -> int:
-    """换源时清空旧口径。返回清掉的行数。"""
+    """换源时清空旧口径。返回清掉的行数。
+
+    这里**故意不加** `_stock_only`：它还要负责清掉历史上误写到指数行的脏数据。
+    """
     session = get_session()
     try:
         n = (session.query(StockInfo)
@@ -83,13 +96,17 @@ def _clear_industry() -> int:
 
 
 def _commit_batch(batch: dict[str, str]) -> int:
-    """写一批，只 UPDATE 真有变化的行。返回实际改动行数。"""
+    """写一批，只 UPDATE 真有变化的行。返回实际改动行数。
+
+    `_stock_only` 在这里再挡一道：候选集已经排除了指数/ETF，但取数层若因为
+    同码歧义吐回一个指数 symbol，落库这层也不能让它进去。
+    """
     if not batch:
         return 0
     session = get_session()
     try:
-        rows = (session.query(StockInfo)
-                .filter(StockInfo.symbol.in_(list(batch.keys()))).all())
+        rows = _stock_only(session.query(StockInfo)) \
+            .filter(StockInfo.symbol.in_(list(batch.keys()))).all()
         changed = 0
         for row in rows:
             new = batch[row.symbol]
