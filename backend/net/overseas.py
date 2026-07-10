@@ -15,7 +15,7 @@ import threading
 
 # 直连海外探针：google:443 —— 能翻墙时可连，被墙时 timeout/RST。用它判"本地能否直接出海外"。
 _CANARY = ("www.google.com", 443)
-_probe = {"ok": None}
+_probe: dict[str, bool | None] = {"ok": None}   # None = 还没探过
 _lock = threading.Lock()
 
 
@@ -28,6 +28,16 @@ def get_overseas_proxy() -> str:
     return os.getenv("KNOWLEDGE_OVERSEAS_PROXY", "")
 
 
+def get_scraper_proxy() -> str:
+    """可选的强反爬专用代理，形如 http://user:pass@host:port。空=不用。
+
+    优先级高于 `resolve_overseas()`：配了它就用它，没配才走海外自适配。
+    （13.4-2 从 knowledge_engine.config 下沉——它只是读 env 的网络层配置，
+    住在引擎层会让 acquisition 反向依赖引擎。）
+    """
+    return os.getenv("KNOWLEDGE_SCRAPER_PROXY", "")
+
+
 def overseas_direct_ok() -> bool:
     """探测本地网络能否直连海外（进程内缓存一次）。"""
     with _lock:
@@ -38,7 +48,7 @@ def overseas_direct_ok() -> bool:
                 _probe["ok"] = True
             except OSError:
                 _probe["ok"] = False
-        return _probe["ok"]
+        return bool(_probe["ok"])
 
 
 def reset_overseas_probe() -> None:

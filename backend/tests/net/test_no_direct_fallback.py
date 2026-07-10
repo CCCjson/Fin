@@ -173,6 +173,157 @@ def test_partial_exhaustion_still_never_goes_direct(monkeypatch):
         "只有拿到 IP 的那一轮发了请求；后续取不到 IP 立即中止，绝不直连"
 
 
+# ── domestic_bounded_get：两条铁律合一（换 IP + 响应封顶）─────────────────────
+#
+# 13.4-2 新增。它和 domestic_get 共用 `_rotate` 驱动，所以铁律自动继承；这里钉住的是
+# 「共用」这件事本身——将来谁把 bounded 路径改成自己手写循环，这几条会立刻变红。
+
+@pytest.fixture
+def spy_bounded(monkeypatch):
+    """记录每次 bounded 请求用的 session.proxies。空 proxies 就是直连。"""
+    import net.domestic as dom
+
+    calls = []
+
+    class _Resp:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def iter_content(self, chunk_size=65536):
+            yield b'{"ok": true}'
+
+        def close(self):
+            pass
+
+    class _Sess:
+        def __init__(self, proxies):
+            self.proxies = proxies or {}
+
+        def request(self, method, url, **kw):
+            calls.append(self.proxies or None)
+            return _Resp()
+
+    monkeypatch.setattr(dom, "make_domestic_session", lambda proxies=None: _Sess(proxies))
+    return calls
+
+
+def test_bounded_raises_instead_of_going_direct_when_quota_exhausted(monkeypatch, spy_bounded):
+    """封顶路径同样不许在额度耗尽时偷偷直连。"""
+    import net.domestic as dom
+
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: _FakePM(ips=[]))
+    with pytest.raises(ProxyExhaustedError):
+        dom.domestic_bounded_get("https://push2.eastmoney.com/x", max_rounds=3)
+    assert spy_bounded == [], "额度耗尽时不该发出任何请求"
+
+
+def test_bounded_returns_capped_and_caps_the_body(monkeypatch):
+    """拿到 IP 后正常返回 Capped，且响应体确实被封顶截断。"""
+    import net.domestic as dom
+
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: _FakePM(ips=["1.1.1.1"]))
+
+    class _Resp:
+        status_code = 200
+        headers = {}
+
+        def iter_content(self, chunk_size=65536):
+            yield b"x" * 5000
+
+        def close(self):
+            pass
+
+    class _Sess:
+        def __init__(self, proxies):
+            self.proxies = proxies
+
+        def request(self, method, url, **kw):
+            return _Resp()
+
+    monkeypatch.setattr(dom, "make_domestic_session", lambda proxies=None: _Sess(proxies))
+
+    cap = dom.domestic_bounded_get("https://push2.eastmoney.com/x", max_bytes=1000)
+    assert cap is not None
+    assert cap.truncated is True and len(cap.data) == 1000
+    assert cap.usable_json is False, "截断的 JSON 不可解析"
+
+
+def test_bounded_rotates_ip_on_http_error(monkeypatch):
+    """4xx/5xx 触发换 IP（与 domestic_get 的 raise_for_status 对齐），绝不直连。"""
+    import net.domestic as dom
+
+    pm = _FakePM(ips=["1.1.1.1", "2.2.2.2", "3.3.3.3"])
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: pm)
+
+    seen = []
+
+    class _Resp:
+        status_code = 503
+        headers = {}
+
+        def iter_content(self, chunk_size=65536):
+            yield b""
+
+        def close(self):
+            pass
+
+    class _Sess:
+        def __init__(self, proxies):
+            self.proxies = proxies
+
+        def request(self, method, url, **kw):
+            seen.append(self.proxies)
+            return _Resp()
+
+    monkeypatch.setattr(dom, "make_domestic_session", lambda proxies=None: _Sess(proxies))
+
+    with pytest.raises(ProxyExhaustedError):
+        dom.domestic_bounded_get("https://push2.eastmoney.com/x", max_rounds=3)
+    assert len(seen) == 3 and None not in seen
+    assert pm.handed_out == ["1.1.1.1", "2.2.2.2", "3.3.3.3"], "每个 5xx 换一个 IP"
+
+
+def test_bounded_too_large_is_an_answer_not_a_failure(monkeypatch):
+    """Content-Length 预判超限 → 直接返回，不换 IP（换了那份响应照样超限）。"""
+    import net.domestic as dom
+
+    pm = _FakePM(ips=["1.1.1.1", "2.2.2.2"])
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: pm)
+
+    class _Resp:
+        status_code = 200
+        headers = {"content-length": "999999999"}
+
+        def iter_content(self, chunk_size=65536):
+            raise AssertionError("超限就不该开始下载")
+
+        def close(self):
+            pass
+
+    class _Sess:
+        def __init__(self, proxies):
+            self.proxies = proxies
+
+        def request(self, method, url, **kw):
+            return _Resp()
+
+    monkeypatch.setattr(dom, "make_domestic_session", lambda proxies=None: _Sess(proxies))
+
+    cap = dom.domestic_bounded_get("https://push2.eastmoney.com/x", max_bytes=1000, max_rounds=3)
+    assert cap is not None and cap.too_large is True
+    assert pm.handed_out == ["1.1.1.1"], "只买了一个 IP，没有徒劳换 IP 重试"
+
+
+def test_bounded_prefer_direct_tries_direct_first(monkeypatch, spy_bounded):
+    import net.domestic as dom
+
+    pm = _FakePM(ips=["1.1.1.1"])
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: pm)
+    dom.domestic_bounded_get("https://push2.eastmoney.com/x", prefer_direct=True)
+    assert spy_bounded == [None], "第一轮必须直连"
+    assert pm.handed_out == [], "直连成功就不该买 IP"
+
+
 # ── domestic_json 透传异常 ─────────────────────────────────────────────────
 
 def test_domestic_json_propagates_exhaustion(monkeypatch, spy_session):

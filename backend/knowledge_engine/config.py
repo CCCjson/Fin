@@ -76,17 +76,9 @@ def get_edgar_ua() -> str:
     return os.getenv("KNOWLEDGE_EDGAR_UA", "Fin Research Tool cccjson0828@gmail.com")
 
 
-def get_scraper_proxy() -> str:
-    """可选反爬代理（强反爬源用），形如 http://user:pass@host:port。
-    websearch 整体的自适配走全局 `net`（env `HTTP_PROXY_MODE`，默认 auto）。"""
-    return os.getenv("KNOWLEDGE_SCRAPER_PROXY", "")
-
-
-def get_overseas_proxy() -> str:
-    """海外出口代理（Shadowrocket，Clash 已弃用）。形如 http://127.0.0.1:1082。
-    空 = 直连。websearch/浏览器爬虫访问海外站点时优先走它，
-    国内站点不受此影响（走快代理池 net/proxy_pool）。"""
-    return os.getenv("KNOWLEDGE_OVERSEAS_PROXY", "")
+# 13.4-2：`get_scraper_proxy` 已下沉 `net/overseas.py`（网络层配置不该住在引擎层，
+# 否则 acquisition 取代理策略要反向 import knowledge_engine）。`get_overseas_proxy`
+# 在这里是与 `net/overseas.py` 逐字重复的**死代码**（零调用方），随之删除。
 
 
 # ---------- 浏览器爬虫（逆向 API：Playwright 无头浏览器） ----------

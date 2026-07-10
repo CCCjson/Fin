@@ -10,10 +10,17 @@
 国外出网（OpenAI/websearch）：
     from net import clash_alive, resolve_proxy, make_httpx_client, apply_proxy_env
 """
+from net.bounded import (
+    MAX_FILE_BYTES,
+    MAX_RESPONSE_BYTES,
+    Capped,
+    bounded_get,
+)
 from net.clash import clash_alive, get_proxy_mode, reset_probe, resolve_proxy
 from net.domestic import (
     ProxyExhaustedError,
     domestic_akshare,
+    domestic_bounded_get,
     domestic_get,
     domestic_json,
     get_proxy_manager,
@@ -28,5 +35,7 @@ __all__ = [
     "make_domestic_session", "make_httpx_client",
     "ProxyManager", "ProxyInfo",
     "domestic_get", "domestic_json", "domestic_akshare", "get_proxy_manager",
+    "domestic_bounded_get",
     "ProxyExhaustedError",
+    "bounded_get", "Capped", "MAX_RESPONSE_BYTES", "MAX_FILE_BYTES",
 ]

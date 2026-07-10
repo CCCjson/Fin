@@ -365,6 +365,10 @@ module = [
   "net.session",
   "net.proxy_pool",
   "net.proxy_manager",
+  "net.bounded",
+  "acquisition",
+  "acquisition.channels",
+  "acquisition.crawler.base",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
