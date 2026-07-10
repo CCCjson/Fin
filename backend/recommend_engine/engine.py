@@ -228,7 +228,10 @@ def recommend(pool_id: Optional[str] = None, max_new_buys: int = 5,
                 name=b.get("name"),
                 action="BUY",
                 recommendation="BUY",
-                confidence=(b.get("composite") or 0) / 100.0 or None,
+                # DecisionLog.confidence 的量纲是 0-100（见 models.py 该列注释：
+                # 「驾驶舱综合分(0-100) 或其它置信度」）。这里曾经除以 100 存成 0-1，
+                # 而 report_picks 存 0-100 —— 同一列两个量纲，跨 source 比胜率必错。
+                confidence=b.get("composite") or None,
                 entry_price=b.get("price"),
                 stop_loss=(b.get("stop_loss") or {}).get("price")
                 if isinstance(b.get("stop_loss"), dict) else b.get("stop_loss"),

@@ -17,7 +17,7 @@ _EM_UT = "bd1d9ddb04089700cf9c27f6f7426281"
 
 
 def _fetch_indices() -> List[Dict]:
-    """主要指数实时（东财 ulist，走 net 层三级兜底：代理→轮换→直连）。"""
+    """主要指数实时（东财 ulist，走 net 层：失败只换快代理 IP 重试，绝不降级直连）。"""
     from net import domestic_json
     data = domestic_json(
         "https://push2.eastmoney.com/api/qt/ulist.np/get",

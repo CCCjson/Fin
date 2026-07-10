@@ -42,6 +42,22 @@ def _cost(model: Optional[str], prompt_tokens: int, completion_tokens: int, tota
     return 0.0
 
 
+def _warn_if_confidence_looks_normalized(source: str, confidence: Optional[float]) -> None:
+    """`DecisionLog.confidence` 的量纲是 **0-100**（见 models.py 该列注释）。
+
+    `recommend_engine` 曾经除以 100 存成 0-1，而 `report_picks` 存 0-100 ——
+    同一列两个量纲，`get_decision_history` 会把 `0.67` 和 `71.4` 一起端给 MoneyBill，
+    跨 source 比胜率必错。写入时就吼一嗓子，别等归因的时候才发现。
+
+    0-1 区间理论上也可能是「真的很低的分」，所以只告警不拦截。
+    """
+    if confidence is not None and 0 < confidence <= 1:
+        logger.warning(
+            f"DecisionLog.confidence={confidence} 看着像 0-1 量纲（source={source}）；"
+            f"这一列约定是 0-100，写入方是不是多除了个 100？"
+        )
+
+
 def record_decision(
     *,
     source: str,
@@ -71,6 +87,7 @@ def record_decision(
 ) -> Optional[str]:
     """记录一条决策，返回 decision_id；任何异常都被吞掉并返回 None（不影响主流程）。"""
     try:
+        _warn_if_confidence_looks_normalized(source, confidence)
         if not total_tokens and (prompt_tokens or completion_tokens):
             total_tokens = prompt_tokens + completion_tokens
         decision_id = uuid.uuid4().hex[:32]
