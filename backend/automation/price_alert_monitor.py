@@ -4,14 +4,11 @@
 盘中每隔 N 秒拉一次全市场快照，比对所有 active 预警，命中即通过
 ws_manager 广播 type="price_alert"，前端复用 RiskToast 弹窗。
 """
-import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List
 
 from loguru import logger
 
-from automation.scheduler import _is_trading_hours
-from automation.websocket_manager import ws_manager
 from data_engine.storage.database import get_session
 from data_engine.storage.repository import PriceAlertRepository
 
@@ -121,23 +118,6 @@ def _scan_once() -> List[Dict]:
         session.close()
 
 
-async def price_alert_loop():
-    """常驻后台循环（在 app startup 中 create_task 启动）"""
-    logger.info("价格预警监控器已启动（开机常驻）")
-    loop = asyncio.get_event_loop()
-    while True:
-        try:
-            if _is_trading_hours():
-                events = await loop.run_in_executor(None, _scan_once)
-                for ev in events:
-                    await ws_manager.broadcast(ev)
-                    logger.info(f"价格预警触发: {ev['data']['symbol']} {ev['data']['alert_type']}")
-                await asyncio.sleep(TRADING_INTERVAL)
-            else:
-                await asyncio.sleep(IDLE_INTERVAL)
-        except asyncio.CancelledError:
-            logger.info("价格预警监控器已停止")
-            break
-        except Exception as e:
-            logger.error(f"价格预警循环异常: {e}")
-            await asyncio.sleep(IDLE_INTERVAL)
+# `price_alert_loop` 常驻轮询已删（Jason 2026-07-10 拍板）：没有独立开关、
+# FIN_DISABLE_SCHEDULERS 管不到，盘中每 30s 无条件出网。改由 MoneyBill 的
+# `check_price_alerts` 工具调 `_scan_once()` 现拉。

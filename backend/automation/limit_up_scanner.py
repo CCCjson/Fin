@@ -1,16 +1,16 @@
 """
-涨停盘中扫描 —— 开机自启的独立后台任务（同 price_alert_monitor.py 范式）。
+涨停盘中快照 —— **按需扫描**，不再是开机自启的常驻后台任务。
 
-盘中每隔 TRADING_INTERVAL 秒抓一次涨停/炸板池快照，写入进程内内存缓存（不入库——
-盘中同一票可能封板→炸板→再封板反复，每次轮询都入库会产生冗余行，且和"盘后一天
-一份定案快照"的 LimitUpPool 表语义冲突，见方案「阶段二」一节）。收盘后走
-limit_up_engine.ingest 的正式流程落库成为当天定案记录。
+盘中抓一次涨停/炸板池写进程内内存缓存（不入库——盘中同一票可能封板→炸板→再封板
+反复，每次都入库会产生冗余行，且和「盘后一天一份定案快照」的 LimitUpPool 表语义
+冲突）。收盘后走 limit_up_engine.ingest 的正式流程落库成为当天定案记录。
 
-只抓 zt(今日涨停)/zb(炸板) 两个池子（不抓 previous/dt），把盘中轮询的接口调用量
-压到最低——涨停池接口是单次请求不需要翻页，但仍需实测代理池压力，轮询间隔先给
-保守值（见方案风险点第6条），不要一上来就抄 price_alert_monitor 的 30 秒。
+2026-07-10：常驻轮询（每 120s，240 次/天）已删。它没有任何开关，连
+FIN_DISABLE_SCHEDULERS 都管不到，没人看的时候也在烧快代理额度。现在由
+`get_intraday_snapshot()` 在缓存过期时懒扫，即 MoneyBill 问了才出网。
+
+只抓 zt(今日涨停)/zb(炸板) 两个池子（不抓 previous/dt）。
 """
-import asyncio
 import time
 from datetime import datetime
 from typing import Dict, Optional
@@ -19,8 +19,7 @@ from loguru import logger
 
 from automation.scheduler import _is_trading_hours
 
-TRADING_INTERVAL = 120  # 盘中轮询间隔（秒），保守值，代理开销待实测后再考虑调低
-IDLE_INTERVAL = 300     # 非交易时间降频，仍保留最后一次盘中数据作为盘后过渡
+TRADING_INTERVAL = 120  # 盘中快照的缓存有效期（秒）：120s 内重复问不再出网
 
 _CACHE: Dict = {"data": None, "ts": 0.0}
 
@@ -70,28 +69,26 @@ def _scan_once() -> Dict:
     }
 
 
-async def limit_up_scan_loop():
-    """常驻后台任务：交易时间内定期扫描，非交易时间自动降频不空转。"""
-    loop = asyncio.get_event_loop()
-    while True:
-        try:
-            if _is_trading_hours():
-                data = await loop.run_in_executor(None, _scan_once)
-                _CACHE["data"] = data
-                _CACHE["ts"] = time.time()
-                await asyncio.sleep(TRADING_INTERVAL)
-            else:
-                await asyncio.sleep(IDLE_INTERVAL)
-        except Exception as e:  # noqa: BLE001 — 常驻任务绝不能因单次失败退出
-            logger.warning(f"[涨停盘中扫描] 单轮失败: {e}")
-            await asyncio.sleep(TRADING_INTERVAL)
+def get_intraday_snapshot(max_age_seconds: float = TRADING_INTERVAL) -> Optional[Dict]:
+    """供 limit_up_engine.service 调用：缓存新鲜就直接返回，过期则**现扫一次**。
 
+    以前靠 `limit_up_scan_loop` 常驻后台每 120s 无条件扫（240 次/天，全在烧快代理
+    额度，哪怕没人看）。改成懒扫：MoneyBill 问「今天涨停多少家」时才出网。
 
-def get_intraday_snapshot(max_age_seconds: float = 600.0) -> Optional[Dict]:
-    """供 limit_up_engine.service 调用：缓存新鲜则返回，否则 None（回退到 DB 数据）。"""
+    非交易时段不扫——盘后走 `limit_up_engine.ingest` 落库，DB 里有定案数据。
+    扫描失败返回上一次的陈旧快照（有总比没有强），全都没有才返回 None。
+    """
     data = _CACHE.get("data")
-    if not data:
-        return None
-    if time.time() - _CACHE.get("ts", 0.0) > max_age_seconds:
-        return None
+    fresh = data and (time.time() - _CACHE.get("ts", 0.0) <= max_age_seconds)
+    if fresh or not _is_trading_hours():
+        return data if fresh else None
+
+    try:
+        data = _scan_once()
+    except Exception as e:  # noqa: BLE001 — 抓取失败不该让 get_limit_up_pool 整个炸掉
+        logger.warning(f"[涨停按需扫描] 失败: {e}")
+        return _CACHE.get("data")   # 退回陈旧快照
+
+    _CACHE["data"] = data
+    _CACHE["ts"] = time.time()
     return data

@@ -6,7 +6,6 @@
 命中经 ws_manager 复用 type="risk_alert" 广播（前端 NotificationBanner 现成处理），
 并同步进业务事件总线（ActivityFeed 可见）。
 """
-import asyncio
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -232,33 +231,6 @@ def _scan_once() -> List[Dict[str, Any]]:
     return events
 
 
-async def position_guard_loop():
-    """常驻后台循环（在 app startup 中 create_task 启动）"""
-    logger.info("持仓守护监控器已启动（开机常驻）")
-    loop = asyncio.get_event_loop()
-    while True:
-        try:
-            if _is_trading_hours():
-                events = await loop.run_in_executor(None, _scan_once)
-                if events:
-                    from automation.websocket_manager import notify_risk_alert
-                    from business_events import publish_event
-                    for ev in events:
-                        await notify_risk_alert(
-                            ev["symbol"], f"position_{ev['kind']}",
-                            ev["message"], ev["detail"])
-                        publish_event(
-                            "risk.position_alert", title=ev["message"],
-                            source="position_guardian", symbol=ev["symbol"],
-                            severity="error" if ev["severity"] == "ERROR" else "warn",
-                            kind=ev["kind"])
-                        logger.info(f"持仓守护触发: {ev['symbol']} {ev['kind']}")
-                await asyncio.sleep(TRADING_INTERVAL)
-            else:
-                await asyncio.sleep(IDLE_INTERVAL)
-        except asyncio.CancelledError:
-            logger.info("持仓守护监控器已停止")
-            break
-        except Exception as e:
-            logger.error(f"持仓守护循环异常: {e}")
-            await asyncio.sleep(IDLE_INTERVAL)
+# `position_guard_loop` 常驻轮询已删（Jason 2026-07-10 拍板）：同 price_alert_monitor。
+# 按需入口是 `build_guard_status()`（agents/tools/portfolio_tools.py 已在用），
+# 命中告警的事件流由 `_scan_once()` 提供，MoneyBill 需要时自己调。

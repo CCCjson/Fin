@@ -159,25 +159,12 @@ async def startup_event():
     start_bg_task()
     logger.info("订单簿 WebSocket 后台推送任务已启动")
 
-    # 价格预警 + 持仓守护常驻监控：均为盘中 30s 定向拉相关票（单次 ulist 轻量
-    # 请求，非全市场快照），MoneyBill 的 create_price_alert / 持仓止损提醒靠它们。
-    try:
-        from automation.price_alert_monitor import price_alert_loop
-        from automation.position_guardian import position_guard_loop
-        asyncio.create_task(price_alert_loop())
-        asyncio.create_task(position_guard_loop())
-        logger.info("价格预警 + 持仓守护监控任务已启动")
-    except Exception as e:
-        logger.warning(f"盘中监控任务启动失败（不影响主服务）: {e}")
-
-    # 涨停盘中扫描：交易时间内定期抓涨停/炸板池快照存内存缓存，不入库
-    # （收盘后走 limit_up_engine.ingest 正式落库），供数据监控页/get_limit_up_pool 用
-    try:
-        from automation.limit_up_scanner import limit_up_scan_loop
-        asyncio.create_task(limit_up_scan_loop())
-        logger.info("涨停盘中扫描任务已启动")
-    except Exception as e:
-        logger.warning(f"涨停盘中扫描任务启动失败（不影响主服务）: {e}")
+    # 价格预警 / 持仓守护 / 涨停扫描 **不再开机常驻自动扫**（Jason 2026-07-10 拍板）。
+    # 这三个盘中轮询没有独立开关、连 FIN_DISABLE_SCHEDULERS 都管不到，白烧快代理额度。
+    # 改成 MoneyBill 需要时才调工具现拉：
+    #   check_price_alerts   → price_alert_monitor._scan_once()
+    #   get_position_guard   → position_guardian.build_guard_status()
+    #   get_limit_up_pool    → limit_up_scanner.get_intraday_snapshot()（缓存过期即懒扫）
 
     # 多实例部署（app 稳定后端 + web 开发后端各跑一份）时，web 端应关闭定时任务，
     # 避免两边重复拉数据/重复扫描新闻。FIN_DISABLE_SCHEDULERS=true 由 restart.sh 注入。

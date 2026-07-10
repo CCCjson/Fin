@@ -64,6 +64,40 @@ def list_price_alerts(status: Optional[str] = None) -> ToolEnvelope:
     return ToolEnvelope(data={"count": len(alerts), "alerts": alerts})
 
 
+class CheckPriceAlertsArgs(BaseModel):
+    pass
+
+
+@tool(
+    name="check_price_alerts",
+    description=(
+        "立刻检查所有 active 价格预警是否触发（现拉一次实时价对比阈值，触发的会自动改状态）。"
+        "用户问「我的预警触发了吗」「有没有到价」时调用。没有 active 预警时不出网。"
+    ),
+    args_model=CheckPriceAlertsArgs,
+    category="monitor",
+    group="watchlist_alerts",
+)
+def check_price_alerts() -> ToolEnvelope:
+    """按需扫描。以前靠 automation/price_alert_monitor 盘中每 30s 常驻轮询，
+    没有开关也没人看，白烧快代理额度（Jason 2026-07-10 拍板改按需）。"""
+    from automation.price_alert_monitor import _scan_once
+
+    events = _scan_once()
+    if not events:
+        return ToolEnvelope(
+            business_result="negative",
+            message="检查完毕，当前没有预警触发（或没有 active 预警）。")
+    hits = [{
+        "symbol": e["data"]["symbol"], "name": e["data"].get("name"),
+        "alert_type": e["data"].get("alert_type"),
+        "threshold": e["data"].get("threshold"),
+        "price": e["data"].get("price"),
+        "message": e["data"].get("message"),
+    } for e in events]
+    return ToolEnvelope(data={"triggered_count": len(hits), "triggered": hits})
+
+
 def preview_create_alert(args: dict) -> dict:
     """确认前预览：预警内容 + 当前价参照。"""
     symbol = (args.get("symbol") or "").strip()
