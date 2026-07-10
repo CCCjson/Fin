@@ -283,3 +283,95 @@ def test_overseas_sites_unaffected(monkeypatch, _reset_proxy_route):
     monkeypatch.setattr(pr, "get_scraper_proxy_enabled", lambda: True)
     monkeypatch.setattr(pr, "_get_manager", lambda: type("M", (), {"get_proxy": lambda s: None})())
     assert pr.curl_proxy_for("https://capitaliq.spglobal.com/x") is None   # 不抛
+
+
+# ── prefer_direct：显式的「先本地，不行再换快代理」（新闻路径）──────────────
+#
+# Jason 2026-07-10：新闻接口先走本地直连，失败再上快代理。这**不违反铁律**——
+# 铁律禁止的是「取不到 IP 就悄悄用 proxies=None 发请求」。这里直连是第 0 次
+# 尝试，是调用方显式点的头，且一旦直连失败就必须走代理；代理也取不到 → 照样抛。
+
+def test_prefer_direct_tries_direct_first(monkeypatch, spy_session):
+    import net.domestic as dom
+
+    pm = _FakePM(ips=["1.1.1.1"])
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: pm)
+    dom.domestic_get("https://push2.eastmoney.com/x", prefer_direct=True)
+    assert spy_session == [None], "第一轮必须直连"
+    assert pm.handed_out == [], "直连成功就不该买 IP"
+
+
+def test_prefer_direct_falls_forward_to_proxy_on_failure(monkeypatch):
+    """直连失败 → 换快代理（前进，不是后退）。"""
+    import net.domestic as dom
+
+    pm = _FakePM(ips=["1.1.1.1", "2.2.2.2"])
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: pm)
+
+    seen = []
+
+    class _Sess:
+        def __init__(self, proxies): self.proxies = proxies
+
+        def get(self, url, **kw):
+            seen.append(self.proxies)
+            if self.proxies is None:
+                raise RuntimeError("直连被掐断")
+
+            class _R:
+                status_code = 200
+
+                def raise_for_status(self): pass
+            return _R()
+
+    monkeypatch.setattr(dom, "make_domestic_session", lambda proxies=None: _Sess(proxies))
+
+    dom.domestic_get("https://push2.eastmoney.com/x", prefer_direct=True, max_rounds=3)
+    assert seen[0] is None, "先直连"
+    assert seen[1] == {"http": "http://1.1.1.1:8080", "https": "http://1.1.1.1:8080"}, "再代理"
+    assert len(seen) == 2, "代理成功就停"
+
+
+def test_prefer_direct_still_raises_when_proxy_exhausted(monkeypatch):
+    """直连失败 + 取不到 IP → 抛。绝不允许「再试一次直连」。"""
+    import net.domestic as dom
+
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: _FakePM(ips=[]))
+
+    seen = []
+
+    class _Sess:
+        def __init__(self, proxies): self.proxies = proxies
+
+        def get(self, url, **kw):
+            seen.append(self.proxies)
+            raise RuntimeError("直连被掐断")
+
+    monkeypatch.setattr(dom, "make_domestic_session", lambda proxies=None: _Sess(proxies))
+
+    with pytest.raises(ProxyExhaustedError):
+        dom.domestic_get("https://push2.eastmoney.com/x", prefer_direct=True, max_rounds=3)
+    assert seen == [None], "只有第 0 轮那一次显式直连；之后取不到 IP 就中止"
+
+
+def test_prefer_direct_defaults_to_false(monkeypatch, spy_session):
+    """默认必须是「只走代理」。忘了传参不能偷偷变成直连。"""
+    import net.domestic as dom
+
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: _FakePM(ips=[]))
+    with pytest.raises(ProxyExhaustedError):
+        dom.domestic_get("https://push2.eastmoney.com/x")
+    assert spy_session == []
+
+
+def test_akshare_prefer_direct(monkeypatch):
+    """新闻的 ak.stock_news_em 走这条路。"""
+    import net.domestic as dom
+
+    pm = _FakePM(ips=["1.1.1.1"])
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: pm)
+
+    def _ak(): return "data"
+    _ak.__name__ = "stock_news_em"
+    assert dom.domestic_akshare(_ak, prefer_direct=True) == "data"
+    assert pm.handed_out == [], "直连成功就不该买 IP"

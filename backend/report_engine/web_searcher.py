@@ -16,24 +16,24 @@ class MarketWebSearcher:
     def __init__(self, random_ip: bool = False):
         """
         Args:
-            random_ip: 若为 True，每次请求都获取随机新 IP，失败直接切换不重试
+            random_ip: True = 少试几轮（直连 + 一轮代理）。历史上它的含义是
+                「每次请求都换新 IP」，那会让 advisor 每分析一只票就烧掉一串 IP。
         """
         self._proxy_manager = None
         self._random_ip = random_ip
         self._ensure_proxy_manager()
 
     def _ensure_proxy_manager(self):
-        """初始化 ProxyManager"""
+        """拿进程内单例。自建 `ProxyManager()` 会多出一份谁也看不见的 IP 缓存。"""
         try:
-            import sys
-            from net import ProxyManager
+            from net import get_proxy_manager
             if self._proxy_manager is None:
-                self._proxy_manager = ProxyManager()
+                self._proxy_manager = get_proxy_manager()
         except Exception as e:
             logger.warning(f"初始化 ProxyManager 失败: {e}")
 
     def _get_proxies(self) -> Optional[Dict[str, str]]:
-        """从 ProxyManager 获取代理IP，返回 requests 格式的 proxies dict"""
+        """复用当前 IP（没过期就不扣额度）。"""
         if not self._proxy_manager:
             return None
         try:
@@ -47,7 +47,7 @@ class MarketWebSearcher:
         return None
 
     def _switch_proxy(self):
-        """切换到新代理"""
+        """换一个新 IP（扣额度）。只该在请求真的失败后调。"""
         if self._proxy_manager:
             self._proxy_manager.switch_proxy()
 
@@ -116,31 +116,29 @@ class MarketWebSearcher:
     def _fetch_with_retry(self, fetch_fn) -> list | dict:
         """带代理重试的通用包装
 
-        random_ip 模式：每次请求获取随机新 IP，失败直接切换 IP 并返回空，不重试。
-        默认模式：失败后自动换代理最多重试 MAX_RETRIES 次。
+        统一节奏：第 0 轮直连 → 第 1 轮复用当前 IP → 之后每轮换新 IP。
+        random_ip 只决定总轮数（2 轮 vs MAX_RETRIES+1 轮）。
         """
-        if self._random_ip:
-            # 随机 IP 模式：先切换到新 IP，只尝试一次
-            self._switch_proxy()
-            proxies = self._get_proxies()
-            try:
-                data = fetch_fn(proxies)
-                if data:
-                    return data
-            except Exception as e:
-                logger.warning(f"{fetch_fn.__name__} 失败(random_ip): {e}")
-                self._switch_proxy()
-            return []
+        # 第 0 轮一律本地直连（新闻是低频接口，先省额度）；直连不通才上快代理。
+        # random_ip 模式只影响「之后还试几轮代理」，不再每次请求都无脑买新 IP
+        # —— 那是 advisor 每分析一只票就烧掉一串 IP 的原因。
+        rounds = 2 if self._random_ip else MAX_RETRIES + 1
 
-        for attempt in range(1, MAX_RETRIES + 1):
-            proxies = self._get_proxies()
+        for attempt in range(rounds):
+            if attempt == 0:
+                proxies = None                      # 直连
+            elif attempt == 1:
+                proxies = self._get_proxies()       # 复用当前 IP，没过期不扣额度
+            else:
+                self._switch_proxy()                # 上一轮的 IP 不行，换一个
+                proxies = self._get_proxies()
             try:
                 data = fetch_fn(proxies)
                 if data:
                     return data
             except Exception as e:
-                logger.warning(f"{fetch_fn.__name__} 第{attempt}次失败: {e}")
-                self._switch_proxy()
+                label = "直连" if attempt == 0 else f"代理第{attempt}轮"
+                logger.warning(f"{fetch_fn.__name__} {label}失败: {e}")
         return []
 
     # ------------------------------------------------------------------
@@ -525,7 +523,7 @@ class MarketWebSearcher:
         }
 
         try:
-            data = domestic_json(url, params=params, timeout=15)
+            data = domestic_json(url, params=params, timeout=15, prefer_direct=True)
             raw = (data or {}).get("data")
             if not raw:
                 return []

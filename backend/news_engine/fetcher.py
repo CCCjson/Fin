@@ -67,8 +67,10 @@ class NewsFetcher:
         logger.info(f"正在抓取{log_label}新闻: {raw_symbol}")
 
         try:
-            # 走统一网络层：快代理轮换重试，绝不直连兜底，Clash 开没开都能抓
-            df = domestic_akshare(ak.stock_news_em, symbol=raw_symbol)
+            # 新闻是低频接口，先试本地直连省额度；直连被掐断才上快代理轮换 IP
+            # （Jason 2026-07-10 拍板）。prefer_direct 是显式的第 0 轮，不是降级——
+            # 直连失败后取不到 IP 依然抛 ProxyExhaustedError，绝不回头再直连。
+            df = domestic_akshare(ak.stock_news_em, symbol=raw_symbol, prefer_direct=True)
         except Exception as e:
             logger.error(f"AkShare 新闻抓取失败: {e}")
             return []

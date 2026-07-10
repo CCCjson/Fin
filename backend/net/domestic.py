@@ -50,22 +50,30 @@ def domestic_get(
     timeout: int = 8,
     max_rounds: int = 5,
     use_proxy_pool: bool = True,
+    prefer_direct: bool = False,
     proxy_mgr: Optional[ProxyManager] = None,
 ) -> Optional[requests.Response]:
     """GET 一个国内 URL：快代理池逐轮换 IP 重试，绝不直连兜底。
+
+    Args:
+        prefer_direct: 第 0 轮先试本地直连，失败了再上快代理（低频接口省额度用，
+            如新闻）。这**不是**降级——铁律禁止的是「取不到 IP 就悄悄 proxies=None」，
+            而这里直连是调用方显式点头的第一次尝试。一旦直连失败就必须走代理，
+            代理取不到 IP 照样抛 `ProxyExhaustedError`，绝不回头再试直连。
 
     Returns:
         成功的 requests.Response；全部失败返回 None（不抛）。
     """
     pm = proxy_mgr if proxy_mgr is not None else (get_proxy_manager() if use_proxy_pool else None)
     total_rounds = max(1, max_rounds)
+    direct_round = 0 if (prefer_direct and pm) else -1
 
     for attempt in range(total_rounds):
         proxies = None
-        if pm:
-            # 首轮复用当前 IP（没过期就不扣额度）；失败后才 switch 换新 IP。
+        if pm and attempt != direct_round:
+            # 首个走代理的轮次复用当前 IP（没过期就不扣额度）；之后每轮 switch 换新 IP。
             # 直接 fetch_one_proxy() 等于每次请求都买一个新 IP。
-            p = pm.get_proxy() if attempt == 0 else pm.switch_proxy()
+            p = pm.get_proxy() if attempt == direct_round + 1 else pm.switch_proxy()
             if not p:
                 # 配了快代理却取不到 IP（额度耗尽 / API 挂）。**绝不用 proxies=None
                 # 发请求** —— 那就是降级直连，铁律禁止（commit 7158f37）。
@@ -107,6 +115,7 @@ def domestic_akshare(
     *args,
     use_proxy_pool: bool = True,
     max_rounds: int = 5,
+    prefer_direct: bool = False,
     **kwargs,
 ) -> Any:
     """在「Clash-无关」环境下执行一个 akshare 调用。
@@ -121,6 +130,7 @@ def domestic_akshare(
 
     Args:
         fn: akshare 函数，如 ak.stock_news_em
+        prefer_direct: 第 0 轮先试直连，失败再上快代理（见 domestic_get 同名参数）。
         *args/**kwargs: 透传给 fn
     Returns:
         fn 的返回值。
@@ -131,12 +141,13 @@ def domestic_akshare(
     with _AKSHARE_LOCK:
         pm = get_proxy_manager() if use_proxy_pool else None
         total_rounds = max(1, max_rounds)
+        direct_round = 0 if (prefer_direct and pm) else -1
 
         for attempt in range(total_rounds):
             proxy_url = None
-            if pm:
-                # 同 domestic_get：首轮复用，失败才换 IP。
-                p = pm.get_proxy() if attempt == 0 else pm.switch_proxy()
+            if pm and attempt != direct_round:
+                # 同 domestic_get：首个代理轮复用当前 IP，之后每轮换新。
+                p = pm.get_proxy() if attempt == direct_round + 1 else pm.switch_proxy()
                 if not p:
                     # 取不到 IP 时 proxy_env(None) 就是直连——不许发请求，也别把
                     # 剩余轮次打完（白白轰炸提取 API）。

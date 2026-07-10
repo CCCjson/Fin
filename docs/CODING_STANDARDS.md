@@ -137,10 +137,13 @@ common / net / data_engine.storage（基础层）
    | `.env` 没配快代理（`get_proxy_manager()` 返回 None）| 没有代理服务可用 | 直连是**唯一选项**，不是降级 → 允许 |
    | 配了但取不到 IP（额度耗尽 / API 挂 / 超时）| 降级直连 | 抛 `ProxyExhaustedError`，**一个请求都不发** |
    | 配了、拿到 IP、请求失败 | 换下一个 IP | 重试到 `max_rounds` 耗尽再抛 |
+   | 调用方显式传 `prefer_direct=True` | **前进式**：直连是第 0 轮 | 直连失败后必须上代理；代理取不到 IP 照样抛，绝不回头再直连 |
 
    `KNOWLEDGE_SCRAPER_PROXY_ENABLED=false` 是逆向爬虫栈的**明示直连开关**（等价于「没配代理」），不是静默降级。
 
-   ⚠️ 仍在绕过铁律的平行栈（13.4-2 `acquisition/` 收编时一并消灭）：`data_engine/fetchers/realtime.py`、`report_engine/web_searcher.py`、`review/service.py`、`scripts/eastmoney_crawler.py` —— 它们各自持有 `ProxyManager` 并手写重试，取不到 IP 时仍会静默直连。
+   `prefer_direct=True`（2026-07-10 拍板）给低频接口省额度用，目前只有**新闻**路径在用（`news_engine/fetcher.py`、`report_engine/web_searcher.py`）。它和铁律不冲突：铁律禁的是「取不到 IP 就悄悄 `proxies=None`」，而这里直连是调用方显式点头的第一次尝试，且**默认 False**——忘了传参不会偷偷变成直连。
+
+   ⚠️ 仍在绕过铁律的平行栈（13.4-2 `acquisition/` 收编时一并消灭）：`data_engine/fetchers/realtime.py`、`review/service.py`、`scripts/eastmoney_crawler.py` —— 它们各自手写重试，取不到 IP 时仍会静默直连。（`report_engine/web_searcher.py` 已改用 `get_proxy_manager()` 单例 + `prefer_direct` 语义。）
 
    门禁：`tests/net/test_no_direct_fallback.py`。
 3. 行情实时源的主备切换（东财→腾讯→新浪）只在 `acquisition/markets/quote_router.py` 一处实现，调用方无感。
