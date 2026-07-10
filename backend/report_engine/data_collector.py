@@ -25,8 +25,9 @@ from data_engine.storage.database import get_session
 from data_engine.storage.models import (
     Signal, BacktestTask, BacktestResult,
     Order, Trade, DailyQuote, RealtimeSnapshot, StockInfo,
-    ManualTrade, AnalysisReport, UserSettings,
+    ManualTrade, UserSettings,
 )
+from report_engine import picks_log
 from report_engine.scorer import SignalScorer
 from report_engine.stock_analyzer import StockAnalyzer
 from portfolio.calculator import PortfolioCalculator
@@ -1229,48 +1230,18 @@ class ReportDataCollector:
 
     # ------------------------------------------------------------------
     def _collect_previous_recommendations(self, session, current_period_end: date, report_type: str = "weekly") -> Dict:
-        """收集上一期同类型报告的推荐标的及其后续表现，形成推荐回顾闭环"""
+        """收集上一批 report_picks 推荐标的及其后续表现，形成推荐回顾闭环。
+
+        数据源是 `DecisionLog`（见 report_engine/picks_log.py 的说明）。`report_type`
+        保留在签名里只为兼容旧 façade 的调用，不再参与筛选——「上期」现在指
+        「上一批推荐」，不是「上一份同周期报告」。
+        """
         try:
-            # 找到最近一期同类型已完成的报告
-            prev_report = (
-                session.query(AnalysisReport)
-                .filter(
-                    AnalysisReport.status == "completed",
-                    AnalysisReport.report_type == report_type,
-                    AnalysisReport.period_end < current_period_end,
-                )
-                .order_by(AnalysisReport.period_end.desc())
-                .first()
-            )
-
-            if not prev_report or not prev_report.data_snapshot:
-                logger.info("无上期报告可回顾")
-                return {"has_previous": False}
-
-            try:
-                snapshot = json.loads(prev_report.data_snapshot)
-            except (json.JSONDecodeError, TypeError):
-                return {"has_previous": False}
-
-            top_stocks = snapshot.get("top_stocks", {})
-            buy_recs = top_stocks.get("buy_recommendations", [])
+            buy_recs, report_date = picks_log.fetch_last_picks(session, current_period_end)
 
             if not buy_recs:
-                # 上期报告存在但无买入推荐，如实告知而非伪装成"首次报告"
-                return {
-                    "has_previous": True,
-                    "report_id": prev_report.report_id,
-                    "report_date": str(prev_report.period_end),
-                    "report_title": prev_report.title,
-                    "recommendations": [],
-                    "summary": {
-                        "total": 0, "valid": 0, "winning": 0,
-                        "losing": 0, "no_data": 0, "flat": 0,
-                        "win_rate": 0, "avg_return_pct": 0,
-                    },
-                }
+                return {"has_previous": False}
 
-            report_date = prev_report.period_end
             recommendations = []
             winning = 0
             losing = 0
@@ -1418,9 +1389,9 @@ class ReportDataCollector:
 
             return {
                 "has_previous": True,
-                "report_id": prev_report.report_id,
+                "report_id": f"picks_{report_date.isoformat()}",
                 "report_date": str(report_date),
-                "report_title": prev_report.title,
+                "report_title": f"上期买入推荐（{total_recs} 只）",
                 "recommendations": recommendations,
                 "summary": {
                     "total": total_recs,

@@ -60,12 +60,17 @@ class ReportSectionSubagent(SubagentRunner):
                 message=f"[{self.name}] 数据采集失败：{e}"))
             return
 
+        self._after_collect(data)
+
         inner = write_section(self.section, data, report_type=report_type,
                               model=model, cancel_event=cancel_event)
         # max_summary 比旧全量报告的 1500 小：五章摘要都要进 context，且 MoneyBill
         # 写纵览只需要结论，不需要正文。
         yield from relay_markdown(inner, agent=self.name, model=model, max_summary=600,
                                   summary_prefix=self._summary_prefix(data))
+
+    def _after_collect(self, data: dict) -> None:
+        """采完数据、成稿之前的钩子。默认什么都不做。"""
 
     def _summary_prefix(self, data: dict) -> str:
         """摘要前缀 = 收尾政策 + 本章涉及的标的清单。
@@ -121,6 +126,14 @@ class ReportStrategySubagent(ReportSectionSubagent):
 class ReportPicksSubagent(ReportSectionSubagent):
     name = "report_picks"
     section = "picks"
+
+    def _after_collect(self, data: dict) -> None:
+        """推荐一算出来就留痕，不等成稿——标的是选出来的，不是写出来的。
+
+        这批 DecisionLog 就是下次 report_strategy 里「上期推荐回顾」的数据源。
+        """
+        from report_engine.picks_log import record_picks
+        record_picks((data.get("top_stocks") or {}).get("buy_recommendations") or [])
 
 
 SECTION_SUBAGENTS = [

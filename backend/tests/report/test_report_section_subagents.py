@@ -169,3 +169,39 @@ def test_summary_is_truncated_to_600_chars(fake_engine):
     env = drain_subagent_done(get_runner("report_news").run({}))
     assert "…(已截断)" in env["message"]
     assert env["message"].count("字") == 600
+
+
+# ── report_picks 的留痕钩子 ───────────────────────────────────────────────
+
+def test_report_picks_records_decisions_before_writing(fake_engine, monkeypatch):
+    """推荐是选出来的不是写出来的：采完就留痕，不等成稿成功。
+
+    这批 DecisionLog 就是下次 report_strategy 里「上期推荐回顾」的数据源。
+    """
+    recorded = []
+    monkeypatch.setattr("report_engine.picks_log.record_picks",
+                        lambda recs, **kw: recorded.append(recs) or len(recs))
+    recs = [{"symbol": "600519.SH", "price": 1700.0}]
+    fake_engine["data"] = {"portfolio": {"positions": []},
+                           "top_stocks": {"buy_recommendations": recs}}
+
+    list(get_runner("report_picks").run({}))
+    assert recorded == [recs]
+
+
+def test_other_sections_do_not_record_decisions(fake_engine, monkeypatch):
+    recorded = []
+    monkeypatch.setattr("report_engine.picks_log.record_picks",
+                        lambda recs, **kw: recorded.append(recs) or 0)
+    for name in ("report_market", "report_news", "report_positions", "report_strategy"):
+        list(get_runner(name).run({}))
+    assert recorded == []
+
+
+def test_report_picks_with_no_recommendations_records_nothing(fake_engine, monkeypatch):
+    recorded = []
+    monkeypatch.setattr("report_engine.picks_log.record_picks",
+                        lambda recs, **kw: recorded.append(recs) or 0)
+    fake_engine["data"] = {"portfolio": {"positions": []}}
+    list(get_runner("report_picks").run({}))
+    assert recorded == [[]]
