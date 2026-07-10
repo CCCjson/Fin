@@ -30,6 +30,9 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 # 保存原始响应的目录
 PROXY_RAW_RESPONSE_DIR = Path(__file__).parent.parent / "scripts" / "proxy_raw_responses"
 
+# 剩余 IP 低于此数时每次提取都告警（快代理没有查余额接口，只能靠提取响应捎带）
+_LOW_QUOTA_WARN = 500
+
 
 @dataclass
 class ProxyInfo:
@@ -78,6 +81,9 @@ class ProxyManager:
         self.current_proxy: ProxyInfo | None = None
         self.fetch_count: int = 0  # 累计请求 API 次数
         self.fail_count: int = 0   # 累计失效 IP 次数
+        # 套餐剩余 IP 数。快代理在每次提取的响应里白送这个数，是余额的唯一真源
+        # （没有单独的查余额接口）。None = 还没提取过。
+        self.order_left_count: int | None = None
         # 取 IP 的三个方法要串行：单例被多线程共用（domestic_get 并发、
         # realtime 的 worker 池），否则会并发打提取 API 白烧额度。可重入：
         # fetch_one_proxy 在切备用链接时会递归调自己。
@@ -162,6 +168,11 @@ class ProxyManager:
         if isinstance(data, dict):
             inner = data.get("data", data)
             if isinstance(inner, dict):
+                left = inner.get("order_left_count")
+                if isinstance(left, int):
+                    self.order_left_count = left
+                    if left < _LOW_QUOTA_WARN:
+                        logger.warning(f"⚠️ 快代理额度仅剩 {left} 个 IP")
                 ip_list = (
                     inner.get("proxy_list")
                     or inner.get("list")
@@ -185,26 +196,29 @@ class ProxyManager:
         return self._parse_single_proxy(item)
 
     def _parse_single_proxy(self, item: Any) -> ProxyInfo | None:
-        """解析单个代理 IP 条目（支持 ip:port 和 ip:port:username:password 格式）"""
+        """解析单个代理 IP 条目。
+
+        快代理 `getdps` 有两种字符串格式，取决于链接带了哪些 flag：
+
+        | flag | proxy_list[0] |
+        |---|---|
+        | `f_auth=1` | `ip:port:user:pass` —— 冒号分隔 |
+        | `f_auth=1&f_et=1` | `ip:port,user:pass,180` —— **逗号分组**，末段是剩余秒数 |
+
+        `f_et` 给的秒数是**唯一可信的寿命来源**（实测 180s，而 `_default_expire_at()`
+        猜的是 300s）。没有它就只能猜，猜长了就会拿着死 IP 发请求。
+        """
         if isinstance(item, str):
-            parts = item.strip().split(":")
-            if len(parts) == 4:
-                # ip:port:username:password
-                return ProxyInfo(
-                    ip=parts[0],
-                    port=int(parts[1]),
-                    username=parts[2],
-                    password=parts[3],
-                    expire_at=self._default_expire_at(),
-                )
-            elif len(parts) >= 2:
-                # ip:port
-                return ProxyInfo(
-                    ip=parts[0],
-                    port=int(parts[1]),
-                    expire_at=self._default_expire_at(),
-                )
-            return None
+            item = item.strip()
+            if not item:
+                return None
+            try:
+                if "," in item:
+                    return self._parse_comma_grouped(item)
+                return self._parse_colon_joined(item)
+            except (ValueError, IndexError):
+                logger.warning(f"无法解析代理条目: {item!r}")
+                return None
 
         if isinstance(item, dict):
             ip = item.get("ip") or item.get("IP") or item.get("host")
@@ -232,8 +246,50 @@ class ProxyManager:
 
         return None
 
+    def _parse_comma_grouped(self, item: str) -> ProxyInfo | None:
+        """`f_et=1` 的格式：`ip:port[,user:pass][,ttl_seconds]`，字段顺序不敏感。"""
+        addr, *rest = item.split(",")
+        ip, port = self._split_addr(addr)
+
+        username = password = ""
+        expire_at = self._default_expire_at()
+        for field in rest:
+            field = field.strip()
+            if ":" in field:
+                username, password = field.split(":", 1)
+            elif field.isdigit():
+                expire_at = (datetime.now() + timedelta(seconds=int(field))).isoformat()
+            else:
+                raise ValueError(f"未知字段: {field!r}")
+
+        return ProxyInfo(ip=ip, port=port, username=username, password=password,
+                         expire_at=expire_at)
+
+    def _parse_colon_joined(self, item: str) -> ProxyInfo | None:
+        """旧格式：`ip:port` 或 `ip:port:user:pass`（无寿命信息，只能猜）。"""
+        parts = item.split(":")
+        if len(parts) == 4:
+            return ProxyInfo(ip=parts[0], port=int(parts[1]),
+                             username=parts[2], password=parts[3],
+                             expire_at=self._default_expire_at())
+        if len(parts) == 2:
+            return ProxyInfo(ip=parts[0], port=int(parts[1]),
+                             expire_at=self._default_expire_at())
+        raise ValueError(f"字段数不对: {len(parts)}")
+
+    @staticmethod
+    def _split_addr(addr: str) -> tuple[str, int]:
+        ip, _, port = addr.strip().rpartition(":")
+        if not ip:
+            raise ValueError(f"缺少端口: {addr!r}")
+        return ip, int(port)
+
     def _default_expire_at(self) -> str:
-        """默认过期时间：5 分钟后"""
+        """猜测的过期时间。只在 API 没给寿命时用（链接没带 `f_et=1`）。
+
+        故意保守取 5 分钟：**过期只是上限兜底，轮换由请求失败驱动**。猜短了会白白
+        丢掉还能用的 IP，猜长了最多浪费一次请求就被 `report_failure` 换掉。
+        """
         return (datetime.now() + timedelta(minutes=5)).isoformat()
 
     def _normalize_expire_time(self, raw: Any) -> str:
