@@ -21,14 +21,17 @@ from typing import List, Dict
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import akshare as ak
-import pandas as pd
 from loguru import logger
 
 from data_engine.storage.database import init_db, get_session
 from data_engine.storage.models import StockInfo, DailyQuote, DataUpdateLog
 
-# 导入企业级爬虫
-from eastmoney_crawler import EastMoneyCrawler, CrawlerConfig, parse_kline_data, ProxyTimeoutError
+from acquisition.markets.eastmoney_crawler import (
+    CrawlerConfig,
+    EastMoneyCrawler,
+    ProxyTimeoutError,
+    parse_kline_data,
+)
 
 from net import ProxyManager, get_proxy_manager
 
@@ -126,117 +129,6 @@ def get_all_a_share_list() -> List[Dict]:
     except Exception as e:
         logger.error(f"获取股票列表失败: {e}")
         raise
-
-
-ETF_CACHE_FILE = Path(__file__).parent / "etf_list_cache.json"
-ETF_CACHE_DAYS = 7  # 缓存有效期（天）
-
-
-def get_etf_list(proxy_mgr: 'ProxyManager' = None) -> List[Dict]:
-    """通过东财 clist API 获取全量 ETF 列表，结果缓存到本地文件"""
-
-    # 加载缓存（作为基础数据，后续增量补全）
-    etfs = []
-    seen_codes = set()
-    if ETF_CACHE_FILE.exists():
-        try:
-            with open(ETF_CACHE_FILE, "r", encoding="utf-8") as f:
-                cache = json.load(f)
-            etfs = cache.get("data", [])
-            seen_codes = {e["code"] for e in etfs}
-            logger.info(f"加载缓存 ETF: {len(etfs)} 只")
-        except Exception as e:
-            logger.warning(f"读取 ETF 缓存失败: {e}")
-
-    logger.info("正在从东财 API 补全 ETF 列表...")
-
-    import requests as req
-
-    API_URL = "https://88.push2.eastmoney.com/api/qt/clist/get"
-
-    def _get_proxies():
-        if not proxy_mgr:
-            return None
-        p = proxy_mgr.get_proxy()
-        return p.to_requests_proxies() if p else None
-
-    def _fetch_page(page: int):
-        """获取单页，失败换 IP 重试，最多 5 次。成功返回 list，失败返回 None"""
-        params = {
-            "pn": page, "pz": 100, "po": 1, "np": 1,
-            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-            "fltt": 2, "invt": 2, "fid": "f12",
-            "fs": "b:MK0021,b:MK0022,b:MK0023,b:MK0024,b:MK0827",
-            "fields": "f12,f14",
-        }
-        for _ in range(5):
-            proxies = _get_proxies()
-            try:
-                resp = req.get(API_URL, params=params, proxies=proxies, timeout=15)
-                data = resp.json()
-                items = data.get("data", {}).get("diff") if data.get("data") else None
-                return list(items.values()) if isinstance(items, dict) else (items or [])
-            except Exception:
-                if proxy_mgr:
-                    proxy_mgr.switch_proxy()
-        return None  # 全部失败
-
-    try:
-        new_count = 0
-        for page in range(1, 20):
-            items = _fetch_page(page)
-            if items is None:
-                logger.warning(f"  ETF 第{page}页获取失败，跳过 (已有缓存数据兜底)")
-                continue  # 失败跳过，缓存里有这些数据
-            if not items:
-                break  # 空列表 = 分页结束
-
-            page_new = 0
-            for item in items:
-                code = str(item.get("f12", "")).strip()
-                name = str(item.get("f14", "")).strip()
-                if len(code) != 6 or code in seen_codes:
-                    continue
-
-                if code.startswith(("51", "56", "58", "50", "52", "53")):
-                    exchange = "SH"
-                elif code.startswith(("15", "16")):
-                    exchange = "SZ"
-                else:
-                    continue
-
-                seen_codes.add(code)
-                etfs.append({
-                    "symbol": f"{code}.{exchange}",
-                    "name": name,
-                    "code": code,
-                    "stock_type": "etf",
-                    "exchange": exchange,
-                })
-                page_new += 1
-
-            new_count += page_new
-            logger.info(f"  ETF 第{page}页: 新增{page_new} 只 (总计 {len(etfs)})")
-
-            if len(items) < 100:
-                break
-            time.sleep(0.3)
-
-        logger.info(f"ETF 列表完成: 共 {len(etfs)} 只 (本次新增 {new_count})")
-
-        # 保存缓存
-        try:
-            with open(ETF_CACHE_FILE, "w", encoding="utf-8") as f:
-                json.dump({"updated_at": datetime.now().isoformat(), "data": etfs}, f, ensure_ascii=False, indent=2)
-            logger.info(f"ETF 列表已缓存到 {ETF_CACHE_FILE.name}")
-        except Exception as e:
-            logger.warning(f"保存 ETF 缓存失败: {e}")
-
-        return etfs
-
-    except Exception as e:
-        logger.warning(f"东财 ETF 接口失败: {e}，已获取 {len(etfs)} 只")
-        return etfs
 
 
 def get_index_list() -> List[Dict]:
@@ -386,8 +278,9 @@ def main():
     logger.info(f"已完成: {len(completed_symbols)} 只")
 
     # 获取列表（ETF 已停用：2026-07-09 Jason 拍板不交易 ETF、不再获取其数据，
-    # 库里 1393 只 ETF 已全部 is_active=0。这里不再调 get_etf_list，否则
-    # save_stock_list_to_db 会把它们重新置回 is_active=1 复活）
+    # 库里 1393 只 ETF 已全部 is_active=0；喂 ETF 进 save_stock_list_to_db 会把它们
+    # 重新置回 is_active=1 复活。取 ETF 列表的 get_etf_list 已于 13.4-2 删除——
+    # 它是死代码，且裸 requests 打东财、取不到 IP 就静默直连。）
     stocks = get_all_a_share_list()
     etfs: List[Dict] = []
     indices = get_index_list()

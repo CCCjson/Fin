@@ -11,7 +11,6 @@ A股深历史日线回补 —— 常驻后台任务。
 """
 import json
 import queue
-import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -29,12 +28,12 @@ from data_engine.liveness import LivenessTracker
 from net import ProxyManager, get_proxy_manager
 from net.proxy_pool import ProxyPool, is_proxy_connect_error
 
-# eastmoney_crawler 还住在 scripts/（13.4-2 迁 acquisition/markets 时这段就没了）
-_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
-
-from eastmoney_crawler import EastMoneyCrawler, CrawlerConfig, parse_kline_data, ProxyTimeoutError  # noqa: E402
+from acquisition.markets.eastmoney_crawler import (
+    CrawlerConfig,
+    EastMoneyCrawler,
+    ProxyTimeoutError,
+    parse_kline_data,
+)
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 PROGRESS_FILE = _BACKEND_DIR / "scripts" / "deep_history_a_share_progress.json"

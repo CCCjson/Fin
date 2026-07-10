@@ -6,13 +6,11 @@
 缺历史数据的股票走逐只慢路径。
 """
 import os
-import sys
 import json
 import time
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from datetime import datetime, date, timedelta
 from typing import Generator, Optional, Dict, List, Tuple
 
@@ -21,18 +19,18 @@ from sqlalchemy import func
 
 from net.proxy_pool import ProxyPool, is_proxy_connect_error
 
-from data_engine.storage.database import get_session, engine
+from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo, DailyQuote, DataUpdateLog
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, klines_to_records
 from data_engine.liveness import LivenessTracker
 from net import ProxyManager, get_proxy_manager
 
-# eastmoney_crawler 还住在 scripts/（13.4-2 迁 acquisition/markets 时这段就没了）
-_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
-
-from eastmoney_crawler import EastMoneyCrawler, CrawlerConfig, parse_kline_data, ProxyTimeoutError, resolve_eastmoney_market  # noqa: E402
+from acquisition.markets.eastmoney_crawler import (
+    CrawlerConfig,
+    EastMoneyCrawler,
+    ProxyTimeoutError,
+    parse_kline_data,
+)
 
 # 批量行情接口
 from data_engine.fetchers.realtime import fetch_a_share_realtime_cached

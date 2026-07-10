@@ -183,14 +183,11 @@ class MarketWebSearcher:
         复用 eastmoney_crawler 的 API 端点和 parse_kline_data 解析逻辑，
         直接构建 secid 参数绕过 code→market 的映射问题。
         """
-        import sys
-        from pathlib import Path
-
-        # 导入 parse_kline_data
-        scripts_dir = str(Path(__file__).resolve().parent.parent / "scripts")
-        if scripts_dir not in sys.path:
-            sys.path.insert(0, scripts_dir)
-        from eastmoney_crawler import EastMoneyCrawler, CrawlerConfig, parse_kline_data
+        from acquisition.markets.eastmoney_crawler import (
+            CrawlerConfig,
+            EastMoneyCrawler,
+            parse_kline_data,
+        )
 
         INDEX_SECIDS = {
             "上证指数": "1.000001",
