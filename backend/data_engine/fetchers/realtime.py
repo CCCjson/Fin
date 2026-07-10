@@ -200,6 +200,30 @@ def _maybe_fill_from_fallback(unique_data: List[Dict[str, Any]]) -> List[Dict[st
     return unique_data
 
 
+_QUOTE_POOL = None
+_QUOTE_POOL_LOCK = threading.Lock()
+
+
+def _get_quote_pool(proxy_mgr):
+    """全市场翻页共用的常驻代理池。
+
+    **绝不能每次调用都新建**：新池的槽是空的，`acquire()` 立刻买 3 个 IP，函数返回
+    后连同还有两分半有效期的 IP 一起被 GC。前端行情页每 15 秒穿透一次缓存，就是
+    每 15 秒烧 3 个全新 IP（720 个/小时）—— 这是烧掉近万个 IP 的那个 bug。
+
+    常驻之后，槽内 IP 只在「请求失败」或「真的过期」时才换。挂机不抓取 = 零消耗。
+    """
+    global _QUOTE_POOL
+    if _QUOTE_POOL is not None:
+        return _QUOTE_POOL
+    with _QUOTE_POOL_LOCK:
+        if _QUOTE_POOL is None:
+            from net.proxy_pool import ProxyPool
+            _QUOTE_POOL = ProxyPool(size=CONCURRENT_POOL_SIZE, mgr=proxy_mgr,
+                                    min_delay=0.15, max_delay=1.0)
+    return _QUOTE_POOL
+
+
 def _fetch_all_concurrent(
     sort_field: str,
     ascending: bool,
@@ -212,10 +236,8 @@ def _fetch_all_concurrent(
     每 IP 请求节奏 ~0.15-1.0s（比旧串行版单 IP 连打 10 页还保守），
     3 IP 并行 → 54 页约 5-8s（旧串行 ~30s）。
     """
-    from net.proxy_pool import ProxyPool
-
-    pool = ProxyPool(size=CONCURRENT_POOL_SIZE, mgr=proxy_mgr,
-                     min_delay=0.15, max_delay=1.0)
+    pool = _get_quote_pool(proxy_mgr)
+    pool.reset_breaker()   # 池子长活，别让上一轮的熔断计数误伤这一轮
 
     def _fetch_page_via_pool(page: int, max_attempts: int = 2,
                              retries: int = 0) -> Tuple[List[Dict[str, Any]], int]:

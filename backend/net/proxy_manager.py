@@ -393,3 +393,37 @@ if __name__ == "__main__":
     else:
         print(f"未知命令: {cmd}")
         print("用法: python -m net.proxy_manager [fetch|status]")
+
+
+# ── 进程内单例 ──────────────────────────────────────────────────────────────
+
+_PM_SINGLETON: ProxyManager | None = None
+_PM_LOCK = threading.Lock()
+
+
+def get_proxy_manager() -> ProxyManager | None:
+    """进程内共享的 ProxyManager（未配置快代理时返回 None）。
+
+    **必须是单例**：每 `ProxyManager()` 一次，`current_proxy` 缓存就多一份彼此
+    看不见的副本，于是每条出网链路各买各的 IP。实测同一秒内 10 次 `domestic_json`
+    烧掉 10 个 IP。想要一个新 IP 请调 `switch_proxy()`，别新建 manager。
+    """
+    global _PM_SINGLETON
+    if _PM_SINGLETON is not None:
+        return _PM_SINGLETON
+    with _PM_LOCK:
+        if _PM_SINGLETON is None:
+            try:
+                pm = ProxyManager()
+                _PM_SINGLETON = pm if pm.api_url else None
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"无法创建 ProxyManager: {e}")
+                return None
+    return _PM_SINGLETON
+
+
+def reset_proxy_manager() -> None:
+    """丢弃单例（测试用；.env 换了快代理链接后也可以调）。"""
+    global _PM_SINGLETON
+    with _PM_LOCK:
+        _PM_SINGLETON = None

@@ -23,7 +23,7 @@ from contextlib import contextmanager
 
 from loguru import logger
 
-from net.proxy_manager import ProxyInfo, ProxyManager
+from net.proxy_manager import ProxyInfo, ProxyManager, get_proxy_manager
 
 # 直连（无代理）时的保守限速区间
 DIRECT_MIN_DELAY = 2.0
@@ -138,7 +138,9 @@ class ProxyPool:
         success_floor: int = 200,
         initial_success: int = 0,
     ):
-        self.mgr = mgr or ProxyManager()
+        # 默认走进程单例：`ProxyManager()` 每 new 一个就多一份彼此看不见的 IP
+        # 缓存，两个池就是两份额度。未配快代理时单例是 None，退化成 direct_mode。
+        self.mgr = mgr or get_proxy_manager() or ProxyManager()
         self._mgr_lock = threading.Lock()
         self.direct_mode = not bool(self.mgr.api_url)
 
@@ -282,6 +284,18 @@ class ProxyPool:
                 logger.warning(f"代理槽 {slot.slot_id} 未取到新 IP（额度尽/网络问题？）")
                 if not self.direct_mode:
                     self._record_connect_failure()
+
+    def reset_breaker(self, initial_success: int = 0) -> None:
+        """新一轮任务开始前复位熔断计数。
+
+        池子跨调用长活（省 IP）之后就有了这个需求：某次任务把它熔断了，不能让它
+        永久瘫在 dead —— 快代理可能只是当时抽风。槽内还没过期的 IP **不动**，
+        复位的只是「这一轮连续失败了几次」。
+        """
+        with self._mgr_lock:
+            self._state = "closed"
+            self._consec_proxy_failures = 0
+            self._total_success = initial_success
 
     @property
     def breaker_state(self) -> str:

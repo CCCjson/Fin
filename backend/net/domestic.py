@@ -19,43 +19,23 @@ import requests
 from loguru import logger
 
 from net.env import proxy_env
-from net.proxy_manager import ProxyManager
+
+# 单例住在 proxy_manager.py；这里再导出，历史调用方（含测试）打的是 `net.domestic.*`
+from net.proxy_manager import (
+    ProxyManager,
+)
+from net.proxy_manager import (
+    get_proxy_manager as get_proxy_manager,
+)
+from net.proxy_manager import (
+    reset_proxy_manager as reset_proxy_manager,
+)
 from net.session import make_domestic_session
 
 # akshare 调用串行化：domestic_akshare 通过全局 env 注入代理，必须互斥
 _AKSHARE_LOCK = threading.Lock()
 
 
-_PM_SINGLETON: Optional[ProxyManager] = None
-_PM_LOCK = threading.Lock()
-
-
-def get_proxy_manager() -> Optional[ProxyManager]:
-    """进程内共享的 ProxyManager（未配置快代理时返回 None）。
-
-    **必须是单例**：每次 `ProxyManager()` 新建实例，`current_proxy` 缓存就丢了，
-    于是每一次国内请求都去买一个新 IP。实测同一秒内 10 次 `domestic_json`
-    烧掉 10 个 IP，8394 的额度 8 天见底。
-    """
-    global _PM_SINGLETON
-    if _PM_SINGLETON is not None:
-        return _PM_SINGLETON
-    with _PM_LOCK:
-        if _PM_SINGLETON is None:
-            try:
-                pm = ProxyManager()
-                _PM_SINGLETON = pm if pm.api_url else None
-            except Exception as e:  # noqa: BLE001
-                logger.debug(f"无法创建 ProxyManager: {e}")
-                return None
-    return _PM_SINGLETON
-
-
-def reset_proxy_manager() -> None:
-    """丢弃单例（测试用；.env 换了快代理链接后也可以调）。"""
-    global _PM_SINGLETON
-    with _PM_LOCK:
-        _PM_SINGLETON = None
 
 
 class ProxyExhaustedError(RuntimeError):
