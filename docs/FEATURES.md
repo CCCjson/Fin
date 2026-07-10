@@ -41,7 +41,7 @@ MoneyBill 人格/沟通风格/工作方式铁律：`backend/agents/skills/monito
 - **"四分流"铁律**：推荐 / 查询 / 筛选 / 涨停候选预测，四类请求要分流到不同工具，不能混用
 - 选股推荐纪律、涨停候选池预测纪律、subagent 收尾规则、安全红线均写在 monitor.md 里
 
-深度任务子代理（`agents/subagents/`）：`deep_stock.py`（个股深度研判，委托 `advisor_engine`，输出结论/关键证据/操作计划/失效条件4段≤1200字，必须给精确入场/止损/止盈价，prompt见`agents/skills/deep_stock.md`）、`news.py`（新闻深度解读）、`report.py`（投研报告/策略研发，委托 `alpha_lab`）。
+深度任务子代理（`agents/subagents/`）：`deep_stock.py`（个股深度研判，委托 `advisor_engine`，输出结论/关键证据/操作计划/失效条件4段≤1200字，必须给精确入场/止损/止盈价，prompt见`agents/skills/deep_stock.md`）、`news.py`（新闻深度解读，委托 `news_engine`）、`alpha_lab.py`（策略研发，委托 `alpha_lab`）、`report_sections.py`（**五个投研报告章节**：`report_market` / `report_news` / `report_positions` / `report_strategy` / `report_picks`，委托 `report_engine.section_writer`）。
 
 20个工具文件（`agents/tools/`）：`data_tools` `analysis_tools` `backtest_tools` `signal_tools` `screener_tools` `pool_tools` `watchlist_tools` `alert_tools` `portfolio_tools` `trading_tools` `decision_tools` `review_tools` `news_tools` `knowledge_tools` `monitor_tools` `settings_tools` `recommend_tools` `limit_up_tools` `market_tools` `intraday_tools` `nav_tools`。**新增工具必须同步归组到 `tool_groups.py`，否则首次会话就会抛 RuntimeError（`_validate` 断言 CORE∪组=REGISTRY 全集）。**
 
@@ -55,10 +55,10 @@ MoneyBill 人格/沟通风格/工作方式铁律：`backend/agents/skills/monito
 | AI顾问 | `advisor_engine/{context_collector,prompt_builder,service}.py` | 个性化投研建议生成，单次流式completion无循环 | 对话（`deep_stock` subagent委托） |
 | 持仓/对账 | `portfolio/{calculator,closed_trade_service,reconciliation_service,risk_analyzer,trade_recorder}.py` | 系统持仓vs券商真实持仓对账、风险体检 | 页面（Automation持仓Tab）+ 对话，聊天内`position_table` widget |
 | 每日复盘 | `review/service.py` | AI交易打分/复盘 | 对话 |
-| 投研报告 | `report_engine/{data_collector,generator,pdf_exporter,planner,prompt_builder,scorer,stock_analyzer,web_searcher}.py` | 报告生成含PDF导出与联网检索（P5动态编排未做，固定8章流水线待改造） | 对话 |
+| 投研报告 | `report_engine/{data_collector,section_writer,prompt_builder,chapter_utils,picks_log,scorer,stock_analyzer,web_searcher}.py` | **五个可单独调用的章节**（大盘板块/新闻舆情/持仓诊断/回顾策略/买入推荐），各自分片采集 + 独立成稿、认 cancel；「纵览 & 操作计划」由 MoneyBill 主 agent 撰写。全量报告与 PDF 导出已于 13.2 退役 | 对话（五个 `report_*` subagent） |
 | 知识库/RAG | `knowledge_engine/{chunker,config,database,embedding,idea_miner,models,retriever,reverse_api,scheduler,store,vector_store}.py` | 本地bge-m3向量化 + 逆向爬虫摄入 + alpha idea挖掘 | 页面（DataMonitor知识库面板）+ 对话 |
 | 价格预测 | `prediction_engine/{engine,ensemble,features,remote_predict,validator}.py` | LSTM/XGBoost/Ensemble多模型集成 + 远程GPU训练 | 页面（Prediction工作台） |
-| AI策略生成 | `alpha_lab/{code_generator,engine,evaluator,sandbox,session_manager,strategy_store}.py` | LLM生成策略代码 + AST沙盒执行 + 评分迭代 | 对话（`report` subagent委托） |
+| AI策略生成 | `alpha_lab/{code_generator,engine,evaluator,sandbox,session_manager,strategy_store}.py` | LLM生成策略代码 + AST沙盒执行 + 评分迭代 | 对话（`run_alpha_lab` subagent委托） |
 | 新闻情绪 | `news_engine/{analyzer,fetcher,news_scheduler,prompts,realtime,sentiment}.py` | 定时抓取+BERT/LLM情绪分析 | 页面（DataMonitor新闻任务面板）+ 对话 |
 | 模型微调 | `finetune/{pipeline,remote_train}.py` | 本地/远程GPU微调流水线 | 页面（FineTune工作台） |
 | 自动化常驻监控 | `automation/{limit_up_scanner,pending_order_manager,position_guardian,price_alert_monitor,scheduler,websocket_manager}.py` | 涨停扫描/待审批订单/止损守护/价格预警，开机自启 | 页面（Automation工作台）+ WebSocket推送 |

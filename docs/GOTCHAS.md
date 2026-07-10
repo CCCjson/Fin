@@ -1,6 +1,6 @@
 # 已知坑位与架构决策记录
 
-> 最后更新：2026-07-07。这份文档回答"为什么这么设计 / 之前踩过什么坑"，配合 `docs/ARCHITECTURE.md`（是什么）和 `docs/FEATURES.md`（有什么）一起看。内容来自项目历史踩坑记录，按主题分类，每条格式：**是什么 → 为什么 → 现在应该怎么做**。
+> 最后更新：2026-07-10。这份文档回答"为什么这么设计 / 之前踩过什么坑"，配合 `docs/ARCHITECTURE.md`（是什么）和 `docs/FEATURES.md`（有什么）一起看。内容来自项目历史踩坑记录，按主题分类，每条格式：**是什么 → 为什么 → 现在应该怎么做**。
 
 ## 架构决策
 
@@ -10,6 +10,26 @@
 **为什么**：同一能力普遍有"页面+route+MoneyBill工具"三份入口，维护成本三倍；MoneyBill 工具全部走进程内直调引擎，route 的 HTTP 壳对 agent 来说是纯旁路，白白多一层。
 
 **怎么做**：新能力只做「引擎 + MoneyBill 工具」两层，别再开独立页面/route，除非是重可视化需求（K线、曲线级别）。删任何现有 route 前先 `grep frontend/src` 确认真的没有页面在消费它。
+
+### 为什么投研报告被拆成五个章节工具（13.2）
+2026-07-10 把 `run_research_report` 整条链路删除，换成五个可单独调用的章节 subagent
+（`report_market` / `report_news` / `report_positions` / `report_strategy` / `report_picks`）。
+
+**为什么**：旧的全量报告是一次 **266.6 秒 / 80668 tokens / 32786 字**、全有或全无的调用——想只看板块轮动也得跑完整套。而且它是个平行宇宙：`data_collector` 自己重写了 `recommend_engine`（选股打分）、`review/service`（上期回顾）、`cockpit_engine/aggregator`（市场总览）。原计划的「DAG 并发提速」也站不住：`CHAPTER_DEPS` 关键路径近乎一条链，10 步只能降到 9 步。
+
+**怎么做**：
+- **「Ch1 纵览 & 操作计划」没有工具**，由 MoneyBill 主 agent 看着五章摘要亲自写。相应地，`agents/policy_checks.py` 的 `_SUBAGENT_NAMES`（触发「收尾只能一句话」的 150 字上限）**故意不含** `report_*`，加进去会把纵览压死。
+- 章节摘要末尾必须带一行 `【本章涉及标的】`：`policy_checks._backed_symbols` 只扫工具结果文本判断代码「有没有依据」，而正文只截 600 字进 context，纵览引用的代码很容易被截掉而被判成「凭记忆瞎报」，强制重写一轮。
+- `report_engine/web_searcher.py` 与 `stock_analyzer.py` 是**共享件**（news_engine / advisor_engine / cockpit / `api/routes/news.py` 六处依赖），别跟着报告一起删。
+- `collect_common()`（行情总览 + 持仓）带 300 秒进程内 TTL 缓存，缓存 key **必须含 `report_type` 与 `period_end`**——只按时间做 key 会让周报命中日报的窗口数据。没有它，MoneyBill 连调四个章节会出网抓四次指数。
+- 改任何章节 prompt 前先看 `tests/report/test_section_prompt_parity.py`：它拿退役前冻结的 golden（`tests/report/fixtures/section_prompts_golden.json`，6 个 report_type×周末组合）钉死 prompt 逐字不变。**故意改 prompt 时要连同更新 golden**，并说明改了什么。
+
+### `AnalysisReport` 表已停写停读（13.2）
+表定义还在（DB schema 冻结），但 2026-07-10 起没有任何代码读写它。
+
+**为什么**：它原本只被报告引擎自产自销——全量报告把整份 data 快照塞进 `data_snapshot`，下一期报告再读回来取 `top_stocks.buy_recommendations` 做「上期回顾」。没有 route / scheduler / 前端碰它。
+
+**怎么做**：买入推荐现在写 `DecisionLog`（`source="report_picks"`，见 `report_engine/picks_log.py`）——那张表本来就是为「上次推荐对不对」归因而建的。注意**「上期」的语义变了**：不再是「上一份同周期报告」，而是「上一批 `report_picks` 推荐」，因此不按 `report_type` 过滤。
 
 ### 为什么回测有两套引擎
 `/backtest_cpp` 是 **C++ 正版**（Jason 日常在用，独立进程跑在8002端口，最低5元佣金/印花税/滑点/Sharpe/Sortino全对），`backend/backtest_engine` 是 **Python 遗留版**。

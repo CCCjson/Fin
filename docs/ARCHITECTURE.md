@@ -29,7 +29,7 @@
 | `/backtest_cpp/`（仓库根，非 backend 下）| **C++ 正版回测引擎**，独立服务跑在 `localhost:8002` |
 | `trading_engine/` | 券商对接（brokers）、风控（risk）、监控（monitor）、QMT桥接 |
 | `automation/` | 待确认订单、持仓哨兵、价格预警、调度器、WS 推送 |
-| `report_engine/` | 投研报告生成（数据采集/打分/PDF导出/联网搜索） |
+| `report_engine/` | 投研报告的五个章节成稿（分片采集/打分/联网搜索/章节成稿）|
 | `knowledge_engine/` | 外置金融大脑：文档摄入、向量检索(RAG)、alpha idea 挖掘、逆向 API 爬取 |
 | `advisor_engine/` | AI 投资顾问会话服务（被 `deep_stock` subagent 调用） |
 | `cockpit_engine/` | 决策驾驶舱：技术/基本面/情感/ML/持仓五维打分 |
@@ -109,7 +109,19 @@ backtest_cpp/（端口 8002，独立编译的 C++ 服务）
 `brokers/`(base/easytrader_broker/openctp_broker/qmt_broker/paper_broker)、`risk/`(manager.py/rules.py/adapter.py)、`monitor/`(alerts/logger/performance/tracker)、`qmt_bridge/`、`mac_automation/`(explore_ths.py等，较冷门)、`position_sizing.py`、`config.py`
 
 ### report_engine `backend/report_engine/`
-`data_collector.py` → `stock_analyzer.py`/`scorer.py` → `web_searcher.py` → `planner.py` → `prompt_builder.py` → `generator.py` → `pdf_exporter.py`
+**13.2 已把整篇周报拆成五个可单独调用的章节**（`market` / `news` / `positions` / `strategy` / `picks`），
+全量报告路径（`generator.py` / `planner.py` / `pdf_exporter.py`）已删除，只存在于 git 历史。
+
+`data_collector.py`（五个 `collect_*` 分片 + 共享 `collect_common` TTL 缓存）
+→ `stock_analyzer.py`/`scorer.py` → `web_searcher.py`
+→ `prompt_builder.py`（`build_section_calls` 展开成 1~N 次 LLM 调用）
+→ `section_writer.py`（成稿，走 `llm_client.stream_text`，认 cancel_event）
+
+- `chapter_utils.py`：剥 Ch8 重复标题 / Ch8 覆盖度校验 / 提炼个股操作结论（纯文本）
+- `picks_log.py`：买入推荐写 `DecisionLog`，下次「上期回顾」从那里回读
+- ⚠️ `web_searcher.py` 与 `stock_analyzer.py` 是**共享件**：news_engine / advisor_engine /
+  cockpit / `api/routes/news.py` 六处依赖，不要跟着报告一起删
+- 「Ch1 纵览 & 操作计划」没有对应工具——由 MoneyBill 主 agent 看着五章摘要亲自撰写
 
 ### knowledge_engine `backend/knowledge_engine/`
 独立库 `knowledge.db`（`config.py`的`KNOWLEDGE_DB_PATH`，默认`backend/data/knowledge.db`，与主库分离）
@@ -158,10 +170,11 @@ agents/
 │   ├── news_tools.py knowledge_tools.py monitor_tools.py settings_tools.py
 │   ├── recommend_tools.py limit_up_tools.py market_tools.py intraday_tools.py
 │   └── nav_tools.py（agent驱动前端导航）
-└── subagents/                  # 4个复杂任务子代理
+└── subagents/                  # 复杂任务子代理（都是「贵一点的工具」，会流式吐正文）
     ├── deep_stock.py（个股深度研判，委托 advisor_engine）
-    ├── news.py（新闻深度解读）
-    └── report.py（投研报告/策略研发，委托 alpha_lab）
+    ├── news.py（新闻深度解读，委托 news_engine）
+    ├── alpha_lab.py（策略研发，委托 alpha_lab）
+    └── report_sections.py（五个投研报告章节，委托 report_engine.section_writer）
 ```
 
 调用方向：`agents/tools/*.py` 直接 `import` 对应 `xxx_engine`/`service`，**不经过 HTTP**，用 `run_in_executor` 把同步引擎函数适配成 async。工具本身是"瘦适配器"，不应包含业务逻辑（曾经 `recommend_tools.py` 有 513 行业务逻辑写在工具层，2026-07 已下沉回 `recommend_engine/`，只剩 57 行——**新工具开发要避免重蹈覆辙**）。
