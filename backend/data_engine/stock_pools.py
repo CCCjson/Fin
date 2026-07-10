@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Tuple
 
 from loguru import logger
 
+from common.market import add_exchange_suffix
+
 # ── 简单内存缓存 ──
 _cache: Dict[str, Tuple[Any, float]] = {}
 CACHE_TTL = 3600 * 12  # 12 小时
@@ -24,20 +26,6 @@ def get_cached(key: str):
 
 def set_cached(key: str, data):
     _cache[key] = (data, time.time())
-
-
-def add_exchange_suffix(code: str) -> str:
-    """给纯数字股票代码添加交易所后缀"""
-    code = code.strip()
-    if "." in code:
-        return code
-    if code.startswith(("6", "9")):
-        return f"{code}.SH"
-    elif code.startswith(("0", "3", "2")):
-        return f"{code}.SZ"
-    elif code.startswith(("4", "8")):
-        return f"{code}.BJ"
-    return code
 
 
 # ── 预设指数池 ──
@@ -76,7 +64,13 @@ def fetch_index_constituents(index_code: str) -> List[Dict[str, str]]:
         for _, row in df.iterrows():
             code = str(row[code_col]).strip()
             name = str(row[name_col]).strip() if name_col else ""
-            symbol = add_exchange_suffix(code)
+            try:
+                symbol = add_exchange_suffix(code)
+            except ValueError as e:
+                # 成分股里不该有 ETF/非法码。丢这一行，别让异常炸掉整批，
+                # 也别像旧版那样静默返回无后缀裸码往下游漂。
+                logger.warning(f"指数 {index_code} 成分股代码异常，跳过: {e}")
+                continue
             result.append({"symbol": symbol, "name": name})
 
         return result
@@ -135,7 +129,11 @@ def fetch_industry_stocks(name: str) -> List[Dict[str, str]]:
         for _, row in df.iterrows():
             code = str(row[code_col]).strip()
             stock_name = str(row[name_col]).strip() if name_col else ""
-            symbol = add_exchange_suffix(code)
+            try:
+                symbol = add_exchange_suffix(code)
+            except ValueError as e:
+                logger.warning(f"行业 {name} 成分股代码异常，跳过: {e}")
+                continue
             result.append({"symbol": symbol, "name": stock_name})
         return result
     except Exception as e:
