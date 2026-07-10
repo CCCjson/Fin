@@ -8,7 +8,7 @@
 """
 from typing import Dict, List, Optional
 
-from limit_up_engine.limit_rules import get_limit_threshold
+from common.limit_rules import get_limit_threshold
 
 WEIGHTS = {
     "momentum": 0.35,

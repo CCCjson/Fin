@@ -732,12 +732,28 @@ def _fetch_nasdaq() -> Optional[Dict[str, Any]]:
 
 
 def compute_statistics(quotes: list) -> dict:
-    """计算全市场涨跌统计（涨/跌/平/涨停/跌停家数）"""
-    up = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] > 0)
-    down = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] < 0)
-    flat = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] == 0)
-    limit_up = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] >= 9.9)
-    limit_down = sum(1 for q in quotes if q.get("change_pct") is not None and q["change_pct"] <= -9.9)
+    """计算全市场涨跌统计（涨/跌/平/涨停/跌停家数）。
+
+    涨跌停按**板块阈值**判定（主板 10% / 创业板·科创板 20%），真源 `common.limit_rules`。
+    此前全市场一刀切 9.9%，把创业板/科创板 10%~20% 的普通上涨全记成了涨停。
+    这三档阈值经实盘快照验证：主板非ST 0 越界、创业板 0 越界、科创板 1 只边界值。
+
+    ⚠️ **刻意不传 `name`**，即不启用 ST 的 5% 阈值：本库里名字带 ST 的主板股有 40.5%
+    （62/153）涨跌幅超过 ±5%，最深 -10.16%——`name` 与价格数据自相矛盾，靠名字判 ST
+    不可靠。启用它会把跌停家数凭空抬高 95%。待名称来源查清后再开（见 docs/13）。
+
+    没有 `symbol` 的行（如只带 change_pct 的测试桩）判不出板块，不计入涨跌停。
+    """
+    from common.limit_rules import is_limit_down, is_limit_up
+
+    def _pct(q: dict):
+        return q.get("change_pct")
+
+    up = sum(1 for q in quotes if _pct(q) is not None and _pct(q) > 0)
+    down = sum(1 for q in quotes if _pct(q) is not None and _pct(q) < 0)
+    flat = sum(1 for q in quotes if _pct(q) is not None and _pct(q) == 0)
+    limit_up = sum(1 for q in quotes if is_limit_up(q.get("symbol", ""), _pct(q)))
+    limit_down = sum(1 for q in quotes if is_limit_down(q.get("symbol", ""), _pct(q)))
     return {
         "total": len(quotes),
         "up": up, "down": down, "flat": flat,

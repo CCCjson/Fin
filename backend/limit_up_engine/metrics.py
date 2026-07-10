@@ -7,7 +7,7 @@ from typing import Dict
 from datetime import date as date_cls
 
 from data_engine.storage.models import LimitUpPool
-from limit_up_engine.limit_rules import is_limit_up
+from common.limit_rules import is_limit_up
 
 
 def get_ladder_distribution(session, trade_date: date_cls) -> Dict[str, int]:

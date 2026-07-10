@@ -30,7 +30,7 @@ def _row_symbol(code: str) -> str:
     if code.startswith(("60", "68", "900")):
         market_suffix = "SH"
     elif code.startswith(("8", "4", "92", "87", "83")):
-        market_suffix = "BJ"  # 北交所（本功能不覆盖，见 limit_rules.get_board_type）
+        market_suffix = "BJ"  # 北交所（本功能不覆盖，见 common.limit_rules.get_board_type）
     else:
         market_suffix = "SZ"
     return f"{code}.{market_suffix}"

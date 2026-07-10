@@ -16,7 +16,7 @@ from datetime import date as date_cls
 from loguru import logger
 
 from data_engine.storage.models import LimitUpPool, StockInfo
-from limit_up_engine.limit_rules import get_limit_threshold, is_limit_up
+from common.limit_rules import get_limit_threshold, is_limit_up
 from data_engine.fetchers.limit_up import fetch_strong_pool
 
 QUASI_LOW_RATIO = 0.5     # 准涨停扫描：涨幅至少达到该股涨停阈值的 50%

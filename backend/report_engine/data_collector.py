@@ -14,10 +14,11 @@ import threading
 import time
 import pandas as pd
 from datetime import date, timedelta, datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from loguru import logger
 from sqlalchemy import func, desc, asc
 
+from common.limit_rules import is_limit_down, is_limit_up
 from data_engine.storage.database import get_session
 from data_engine.storage.models import (
     Signal, BacktestTask, BacktestResult,
@@ -267,13 +268,20 @@ class ReportDataCollector:
 
                 for s in snapshots:
                     pct = s.change_pct or 0
-                    if pct >= 9.9:
+                    # 涨跌停按板块阈值判（主板10% / 创业板·科创板20%），真源 common.limit_rules；
+                    # 此前全市场一刀切 9.9。刻意不传 name（不启用 ST 的 5% 阈值），
+                    # 原因见 realtime.compute_statistics 的说明。
+                    if is_limit_up(s.symbol, pct):
                         snapshot_stats["limit_up"] += 1
                         limit_up_stocks.append(s)
-                    elif pct <= -9.9:
+                    elif is_limit_down(s.symbol, pct):
                         snapshot_stats["limit_down"] += 1
                         limit_down_stocks.append(s)
-                    elif pct > 0:
+
+                    # 涨跌家数**包含**涨跌停股（市场惯例，也与 compute_statistics
+                    # 和下面的 DailyQuote 回退路径一致）。此前 elif 链让涨停股
+                    # 既不进 up 也不进 down，上涨家数系统性偏少。
+                    if pct > 0:
                         snapshot_stats["up"] += 1
                     elif pct < 0:
                         snapshot_stats["down"] += 1
@@ -358,13 +366,13 @@ class ReportDataCollector:
                             .filter(DailyQuote.date == date_prev).all()
                         }
 
-                        # 计算涨跌幅
-                        pcts = []
+                        # 计算涨跌幅（留住 symbol：涨跌停要按板块阈值判）
+                        changes: List[Tuple[str, float]] = []
                         for symbol, close_today in today_quotes.items():
                             close_prev = prev_quotes.get(symbol)
                             if close_prev and close_prev > 0 and close_today:
-                                change_pct = (close_today - close_prev) / close_prev * 100
-                                pcts.append(change_pct)
+                                changes.append((symbol, (close_today - close_prev) / close_prev * 100))
+                        pcts = [p for _, p in changes]
 
                         if pcts:
                             snapshot_stats["latest_time"] = f"{date_today} (DailyQuote回退)"
@@ -372,8 +380,8 @@ class ReportDataCollector:
                             snapshot_stats["up"] = sum(1 for p in pcts if p > 0)
                             snapshot_stats["down"] = sum(1 for p in pcts if p < 0)
                             snapshot_stats["flat"] = sum(1 for p in pcts if p == 0)
-                            snapshot_stats["limit_up"] = sum(1 for p in pcts if p >= 9.9)
-                            snapshot_stats["limit_down"] = sum(1 for p in pcts if p <= -9.9)
+                            snapshot_stats["limit_up"] = sum(1 for sym, p in changes if is_limit_up(sym, p))
+                            snapshot_stats["limit_down"] = sum(1 for sym, p in changes if is_limit_down(sym, p))
                             snapshot_stats["distribution"] = {
                                 "gt5": sum(1 for p in pcts if p > 5),
                                 "3to5": sum(1 for p in pcts if 3 < p <= 5),
