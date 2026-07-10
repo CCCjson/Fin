@@ -8,6 +8,7 @@ import uuid
 from typing import Dict, Generator, List, Optional
 
 from dotenv import load_dotenv
+from common.market import to_bare_code
 from loguru import logger
 from openai import OpenAI
 
@@ -122,7 +123,7 @@ class NewsAnalyzer:
             )
 
             if symbol:
-                query = query.filter(NewsArticle.symbol == symbol.split(".")[0])
+                query = query.filter(NewsArticle.symbol == to_bare_code(symbol))
             if market:
                 query = query.filter(NewsArticle.market == market)
 

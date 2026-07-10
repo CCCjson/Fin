@@ -8,6 +8,7 @@ from typing import Dict, Generator, List, Optional
 
 import finnhub
 from dotenv import load_dotenv
+from common.market import to_bare_code
 from loguru import logger
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -62,7 +63,7 @@ class NewsFetcher:
         import akshare as ak
         from net import domestic_akshare
 
-        raw_symbol = symbol.split(".")[0]
+        raw_symbol = to_bare_code(symbol)
         logger.info(f"正在抓取{log_label}新闻: {raw_symbol}")
 
         try:
@@ -121,7 +122,7 @@ class NewsFetcher:
             logger.warning("FINNHUB_API_KEY 未配置，跳过美股个股新闻抓取")
             return []
 
-        raw_symbol = symbol.split(".")[0].strip().upper()
+        raw_symbol = to_bare_code(symbol).strip().upper()  # 美股 ticker 可带点（BRK.B），裸 split 会砍成 BRK
         logger.info(f"正在抓取美股个股新闻: {raw_symbol}")
 
         try:

@@ -5,6 +5,8 @@
 """
 import re
 
+from common.market import to_bare_code
+
 # GPT 在 Ch8 续批里常把二级标题再写一遍（"## 8. 重点买入标的深度分析"
 # 或 "## 8、..." 等变体），累积正文时要剥掉，否则一章出现多个同级标题。
 _DUP_CH8_HEADING = re.compile(r'^\s*##\s+8[.、\s：:][^\n]*\n?', flags=re.MULTILINE)
@@ -28,7 +30,7 @@ def validate_ch8_output(output_text: str, batch_stocks: list[dict]) -> list[dict
             continue
         # 同时检查完整代码(000001.SZ)、纯数字部分(000001)和股票名称
         # GPT 可能只写名称而省略代码，避免误判导致不必要的重试
-        code_only = symbol.split(".")[0]
+        code_only = to_bare_code(symbol)
         name = stock.get("name", "")
         if (symbol not in output_text
                 and code_only not in output_text

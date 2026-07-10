@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from common.market import to_bare_code
 from loguru import logger
 
 JOB_FETCH_ID = "news_fetch_job"
@@ -267,7 +268,7 @@ class NewsScheduler:
         for symbol in symbols:
             market = _infer_market(symbol)
             try:
-                raw_symbol = symbol.split(".")[0]
+                raw_symbol = to_bare_code(symbol)
                 if market == "a_share":
                     articles = fetcher.fetch_a_share_news(raw_symbol)
                 elif market == "hk_stock":

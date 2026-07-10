@@ -16,6 +16,8 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional
 from loguru import logger
 
+from common.market import infer_market_from_symbol, to_bare_code
+
 from data_engine.storage.database import get_session
 from data_engine.storage.models import DailyQuote
 
@@ -169,12 +171,16 @@ class PortfolioRiskAnalyzer:
                 continue
             industry = p.get("industry") or None
 
+            # ak.stock_individual_info_em 只认 A 股。此前对港美股持仓也照查不误，
+            # 每只白跑一次出网、失败后落进 except 记成「未知」——直接跳过。
+            if not industry and infer_market_from_symbol(sym) != "a_share":
+                industry = "未知"
+
             if not industry:
                 try:
                     import akshare as ak
                     from net import domestic_akshare
-                    # 只取A股代码的纯数字部分
-                    code = sym.split(".")[0] if "." in sym else sym
+                    code = to_bare_code(sym)
                     info_df = domestic_akshare(ak.stock_individual_info_em, symbol=code)
                     if info_df is not None and not info_df.empty:
                         # info_df 格式: item / value
