@@ -368,6 +368,7 @@ module = [
   "common.market",
   "common.limit_rules",
   "common.scoring_utils",
+  "common.db",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true

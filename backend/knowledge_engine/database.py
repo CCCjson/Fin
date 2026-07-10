@@ -10,10 +10,9 @@ vector_store.py 用独立 sqlite3 短连接管理（ORM 的 create_all 不认虚
 """
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker, scoped_session, declarative_base
-from sqlalchemy.pool import NullPool
+from sqlalchemy.orm import scoped_session, declarative_base
 
+from common.db import make_session_factory, make_sqlite_engine
 from knowledge_engine.config import get_db_url, get_db_path
 
 # 知识库专用基类（与主库 Base 隔离，create_all 只建本库的表）
@@ -24,24 +23,9 @@ Path(get_db_path()).parent.mkdir(parents=True, exist_ok=True)
 
 _DB_URL = get_db_url()
 
-engine = create_engine(
-    _DB_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=NullPool,
-    echo=False,
-)
-
-
-# SQLite：WAL + 30s busy_timeout，与主库 database.py 一致
-@event.listens_for(engine, "connect")
-def _set_sqlite_pragmas(dbapi_conn, _):
-    cur = dbapi_conn.cursor()
-    cur.execute("PRAGMA journal_mode=WAL")
-    cur.execute("PRAGMA busy_timeout=30000")
-    cur.close()
-
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# 引擎构造（NullPool + WAL + busy_timeout）统一在 common/db.py，与主库同一份
+engine = make_sqlite_engine(_DB_URL)
+SessionLocal = make_session_factory(engine)
 ScopedSession = scoped_session(SessionLocal)
 
 
