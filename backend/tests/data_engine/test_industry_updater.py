@@ -54,14 +54,21 @@ def _industries(make_session) -> dict:
 
 
 def _stub_stream(monkeypatch, source, pairs, *, on_symbols=None):
-    """打桩取数层：返回 (source, 迭代器)，并记录喂进来的 symbol 列表。"""
+    """打桩取数层：返回 (source, 迭代器)，并记录喂进来的 symbol 列表。
+
+    ⚠️ 巨潮源**只产出被要求的 symbol**——它是逐只查的。假对象若无视 `symbols`
+    照吐全部，`resume` 相关的测试就会假绿（第一版正是如此：它顺手覆盖了脏数据，
+    掩盖了「resume 只补缺口、留下旧口径」这个真 bug）。东财源翻全市场页，不筛。
+    """
     def _fake_resolve(symbols=None, **kw):
         return source          # 探测结果由打桩决定，无视调用方传的 "auto"
 
     def _fake_stream(symbols=None, *, source=None, limit=None):
         if on_symbols is not None:
             on_symbols.append(list(symbols or []))
-        return source, iter(pairs)
+        wanted = set(symbols or [])
+        out = pairs if source == "eastmoney" else [p for p in pairs if p[0] in wanted]
+        return source, iter(out)
 
     monkeypatch.setattr(iu, "resolve_source", _fake_resolve)
     monkeypatch.setattr(iu, "stream_a_share_industry", _fake_stream)
@@ -187,3 +194,47 @@ def test_missing_marker_means_first_run(db, monkeypatch):
     _stub_stream(monkeypatch, "eastmoney", [("000001.SZ", "银行Ⅱ")])
     iu.backfill_industry()          # 不该因为没有 marker 就去清空
     assert _industries(db) == {"000001.SZ": "银行Ⅱ"}
+
+
+def test_marker_is_written_before_the_first_batch_lands(db, monkeypatch):
+    """崩溃的半截任务也必须留下源标记 —— 否则下一轮认不出该清空。
+
+    这个洞是「分批 commit」自己挖的：以前跑挂了库里啥也没有，混不了口径；
+    现在半途的批次留在库里，marker 却没写。
+    """
+    def _crash():
+        yield ("000001.SZ", "银行Ⅱ")
+        raise RuntimeError("东财挂了")
+
+    monkeypatch.setattr(iu, "resolve_source", lambda symbols=None, **kw: "eastmoney")
+    monkeypatch.setattr(iu, "stream_a_share_industry",
+                        lambda symbols=None, *, source=None, limit=None: ("eastmoney", _crash()))
+
+    with pytest.raises(RuntimeError):
+        iu.backfill_industry(batch_size=1)
+
+    assert _industries(db) == {"000001.SZ": "银行Ⅱ"}, "第一批该已落库"
+    assert iu._read_last_source() == "eastmoney", \
+        "崩溃的半截任务没留下源标记 —— 下一轮换源时不会清空，两套口径会混在一列"
+
+
+def test_resume_after_a_crashed_run_with_another_source_clears_first(db, monkeypatch):
+    """崩溃的东财半截 + 巨潮 resume ⇒ 必须先清空，绝不能只补缺口。"""
+    def _crash():
+        yield ("000001.SZ", "银行Ⅱ")
+        raise RuntimeError("东财挂了")
+
+    monkeypatch.setattr(iu, "resolve_source", lambda symbols=None, **kw: "eastmoney")
+    monkeypatch.setattr(iu, "stream_a_share_industry",
+                        lambda symbols=None, *, source=None, limit=None: ("eastmoney", _crash()))
+    with pytest.raises(RuntimeError):
+        iu.backfill_industry(batch_size=1)
+
+    # 换巨潮 + resume：库里那条申万口径的「银行Ⅱ」必须先被清掉
+    _stub_stream(monkeypatch, "cninfo",
+                 [(s, "货币金融服务") for s in ("000001.SZ", "000002.SZ",
+                                            "600000.SH", "600519.SH")])
+    iu.backfill_industry(resume=True)
+
+    assert set(_industries(db).values()) == {"货币金融服务"}, \
+        f"两套口径混在了一列：{_industries(db)}"

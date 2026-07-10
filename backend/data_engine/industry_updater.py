@@ -159,6 +159,12 @@ def backfill_industry(*, source: IndustrySource = "auto",
 
     _, stream = stream_a_share_industry(todo, source=used, limit=limit)  # type: ignore[arg-type]
 
+    # 标记必须**在第一批落库之前**写：跑一半崩掉的任务也会留下数据（分批 commit
+    # 的代价），下一轮得认得出库里躺的是哪套口径，才知道该不该清空。
+    # 只在结束时写的话，崩溃的半截任务会让 marker 停在上一轮，`--resume` 就会
+    # 拿新源去补缺口 —— 两套分类混进同一列。
+    _write_last_source(used, 0)
+
     logger.info(f"行业回填开始（源={used}，本轮 {len(todo)} 只）")
     started = time.time()
 
