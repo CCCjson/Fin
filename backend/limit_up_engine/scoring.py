@@ -30,7 +30,7 @@ def _approach_ratio(candidate: Dict) -> Optional[float]:
     ratio = candidate.get("approach_ratio")
     if ratio is not None:
         return ratio
-    threshold = candidate.get("limit_threshold") or get_limit_threshold(candidate["symbol"], candidate.get("name"))
+    threshold = candidate.get("limit_threshold") or get_limit_threshold(candidate["symbol"])
     change_pct = candidate.get("change_pct")
     if not threshold or change_pct is None:
         return None
@@ -135,7 +135,7 @@ def _build_reasons(
     reasons = []
 
     ratio = momentum["approach_ratio"]
-    threshold = candidate.get("limit_threshold") or get_limit_threshold(candidate["symbol"], candidate.get("name"))
+    threshold = candidate.get("limit_threshold") or get_limit_threshold(candidate["symbol"])
     change_pct = candidate.get("change_pct")
     momentum_detail = f"涨幅{change_pct:.1f}%" if change_pct is not None else "涨幅数据缺失"
     if ratio is not None and threshold:

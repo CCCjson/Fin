@@ -16,6 +16,8 @@ from datetime import date as date_cls
 from loguru import logger
 
 from data_engine.storage.models import LimitUpPool, StockInfo
+# ST 的 5% 阈值全仓不启用：靠 name 判 ST 不可靠（本库 40.5% 的 ST 名义主板股
+# 涨跌幅越过 ±5%，行为像 10% 股）。等 StockInfo.is_st 权威列落地再传 name。
 from common.limit_rules import get_limit_threshold, is_limit_up
 from data_engine.fetchers.limit_up import fetch_strong_pool
 
@@ -25,9 +27,9 @@ QUASI_MIN_TURNOVER = 2.0  # 换手率下限 %，过滤缩量假突破
 CONTINUATION_MIN_CHANGE = 3.0  # 昨涨停、今日涨幅至少达到这个百分比才算"仍强势未回落"
 
 
-def _is_supported_board(symbol: str, name: Optional[str] = None) -> bool:
+def _is_supported_board(symbol: str) -> bool:
     """MVP 明确排除北交所/未知板块（降低复杂度，见方案风险点第4条）。"""
-    return get_limit_threshold(symbol, name) is not None
+    return get_limit_threshold(symbol) is not None
 
 
 def _candidate_from_strong_pool(trade_date_str: str) -> List[Dict]:
@@ -39,11 +41,11 @@ def _candidate_from_strong_pool(trade_date_str: str) -> List[Dict]:
     candidates = []
     for row in rows:
         symbol, name = row["symbol"], row.get("name")
-        if not _is_supported_board(symbol, name):
+        if not _is_supported_board(symbol):
             continue
         # 东财"强势股池"不保证未封板——它按"近期强势"筛选，可能包含今日已经涨停的票
         # （比如"近期多次涨停"的票今天可能又封板了）。这类必须排除，否则违反"候选=能买进"的原则。
-        if is_limit_up(symbol, row.get("change_pct"), name):
+        if is_limit_up(symbol, row.get("change_pct")):
             continue
         candidates.append({
             "symbol": symbol, "name": name, "source": "strong",
@@ -63,11 +65,11 @@ def _candidate_from_continuation(session, trade_date: date_cls) -> List[Dict]:
     ).all()
     candidates = []
     for row in rows:
-        if not _is_supported_board(row.symbol, row.name):
+        if not _is_supported_board(row.symbol):
             continue
         if row.change_pct is None or row.change_pct < CONTINUATION_MIN_CHANGE:
             continue
-        if is_limit_up(row.symbol, row.change_pct, row.name):
+        if is_limit_up(row.symbol, row.change_pct):
             continue  # 今天又封板了，归 zt 池范畴，不重复放进候选
         candidates.append({
             "symbol": row.symbol, "name": row.name, "source": "continuation",
@@ -89,10 +91,10 @@ def _candidate_from_quasi_scan(session, quotes: List[Dict]) -> List[Dict]:
         change_pct = q.get("change_pct")
         if not symbol or change_pct is None:
             continue
-        threshold = get_limit_threshold(symbol, name)
+        threshold = get_limit_threshold(symbol)
         if threshold is None:  # 北交所/未知板块不覆盖
             continue
-        if is_limit_up(symbol, change_pct, name):
+        if is_limit_up(symbol, change_pct):
             continue  # 已封板，不是"准涨停"，交给 zt 池当参考数据
         ratio = change_pct / threshold if threshold else 0
         if ratio < QUASI_LOW_RATIO or ratio > QUASI_HIGH_RATIO:

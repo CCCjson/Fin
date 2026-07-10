@@ -7,6 +7,7 @@ from typing import Dict
 from datetime import date as date_cls
 
 from data_engine.storage.models import LimitUpPool
+# ST 的 5% 阈值全仓不启用（见 tests/limit_up_engine/test_st_policy.py 的证据链）
 from common.limit_rules import is_limit_up
 
 
@@ -56,7 +57,7 @@ def get_profit_effect(session, trade_date: date_cls) -> Dict:
     up_count = sum(1 for c in changes if c > 0)
     promotion_count = sum(
         1 for symbol, name, chg in rows
-        if chg is not None and is_limit_up(symbol, chg, name)
+        if chg is not None and is_limit_up(symbol, chg)
     )
     return {
         "sample_count": len(rows),
