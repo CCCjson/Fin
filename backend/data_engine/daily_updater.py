@@ -25,7 +25,7 @@ from data_engine.storage.database import get_session, engine
 from data_engine.storage.models import StockInfo, DailyQuote, DataUpdateLog
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, klines_to_records
 from data_engine.liveness import LivenessTracker
-from net import ProxyManager
+from net import ProxyManager, get_proxy_manager
 
 # eastmoney_crawler 还住在 scripts/（13.4-2 迁 acquisition/markets 时这段就没了）
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
@@ -59,7 +59,8 @@ class DailyUpdater:
     PYTDX_INDEX_VOLUME_FACTOR = 100
 
     def __init__(self):
-        self.proxy_mgr = ProxyManager()
+        # 进程单例：自建实例会多一份谁也看不见的 IP 缓存
+        self.proxy_mgr = get_proxy_manager() or ProxyManager()
         self.crawler: Optional[EastMoneyCrawler] = None
         self.current_proxy = None
         self.proxy_switch_count = 0
@@ -68,7 +69,7 @@ class DailyUpdater:
     def _init_crawler(self):
         """初始化爬虫和第一个代理"""
         self._consec_proxy_fail = 0
-        self.current_proxy = self.proxy_mgr.fetch_one_proxy()
+        self.current_proxy = self.proxy_mgr.get_proxy()   # 没过期就复用，不扣额度
         use_proxy = self.current_proxy is not None
 
         self.crawler = EastMoneyCrawler(CrawlerConfig(

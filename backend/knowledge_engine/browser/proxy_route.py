@@ -45,13 +45,16 @@ def is_domestic(url: str) -> bool:
 
 
 def _get_manager():
-    """懒加载 ProxyManager 单例（非线程安全，取 IP 都在锁内串行）。"""
+    """取进程内 ProxyManager 单例（未配快代理时返回 None）。
+
+    以前这里 `ProxyManager()` 自建一份，和 `net` 那个各持一份 IP 缓存，谁也复用不了谁。
+    """
     global _manager
     if _manager is None:
         with _manager_lock:
             if _manager is None:
-                from net.proxy_manager import ProxyManager
-                _manager = ProxyManager()
+                from net.proxy_manager import get_proxy_manager
+                _manager = get_proxy_manager()
     return _manager
 
 
@@ -75,7 +78,10 @@ def _domestic_proxy_info():
 
     def _fetch():
         with _manager_lock:
-            return _get_manager().get_proxy()
+            mgr = _get_manager()
+            # 单例为 None = 没配快代理。返回 None 走下面的 ProxyExhaustedError
+            # （与旧行为一致：旧版自建的空 ProxyManager 也是 get_proxy() -> None）。
+            return mgr.get_proxy() if mgr else None
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:

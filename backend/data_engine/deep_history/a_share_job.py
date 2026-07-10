@@ -26,7 +26,7 @@ from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo, DailyQuote
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, klines_to_records
 from data_engine.liveness import LivenessTracker
-from net import ProxyManager
+from net import ProxyManager, get_proxy_manager
 from net.proxy_pool import ProxyPool, is_proxy_connect_error
 
 # eastmoney_crawler 还住在 scripts/（13.4-2 迁 acquisition/markets 时这段就没了）
@@ -245,7 +245,7 @@ class AShareDeepHistoryJob:
                     self.status = "done"
                 return
 
-            proxy_mgr = ProxyManager()
+            proxy_mgr = get_proxy_manager() or ProxyManager()
             workers = self._resolve_worker_count(cfg.get("workers"), proxy_mgr)
             logger.info(f"A股深历史回补启动：候选 {len(candidates)} 只，已确认 {already_done} 只，{workers} workers")
 

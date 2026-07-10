@@ -30,7 +30,7 @@ from data_engine.storage.models import StockInfo, DailyQuote, DataUpdateLog
 # 导入企业级爬虫
 from eastmoney_crawler import EastMoneyCrawler, CrawlerConfig, parse_kline_data, ProxyTimeoutError
 
-from net import ProxyManager
+from net import ProxyManager, get_proxy_manager
 
 # 绕过系统代理（Clash）— 必须放在 import 之后，因为 net.proxy_manager 的 load_dotenv 会重新注入
 for _k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
@@ -353,10 +353,10 @@ def main():
     logger.info("=" * 60)
 
     # 初始化代理管理器
-    proxy_mgr = ProxyManager()
+    proxy_mgr = get_proxy_manager() or ProxyManager()
 
     # 获取第 1 个代理 IP
-    current_proxy = proxy_mgr.fetch_one_proxy()
+    current_proxy = proxy_mgr.get_proxy()   # 没过期就复用，不扣额度
     if current_proxy:
         logger.info(f"初始代理: {current_proxy.ip}:{current_proxy.port}")
     else:
