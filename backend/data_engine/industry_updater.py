@@ -1,66 +1,192 @@
 """
 把 A 股所属行业回填进 `StockInfo.industry`。
 
-分层：取数在 `acquisition.markets.industry`，本模块只做编排与落库
-（CODING_STANDARDS §0 —— data_engine 只调度与存储）。
+分层：取数在 `acquisition.markets.industry`（多源链：东财→巨潮），本模块只做
+编排与落库（CODING_STANDARDS §0 —— data_engine 只调度与存储）。
 
 行业分类几乎不变，是**低频任务**：手工跑或月度跑一次即可。
 
-    conda run -n quant python -m data_engine.industry_updater
+    # ⚠️ 必须带 --no-capture-output + python -u，否则 conda run 会把进度日志
+    # 缓冲到进程结束才一次性吐出来（实测：33 分钟的任务全程 0 字节输出）
+    conda run --no-capture-output -n quant python -u -m data_engine.industry_updater
+    conda run --no-capture-output -n quant python -u -m data_engine.industry_updater cninfo --resume
+
+两个源的分类口径不同（东财=申万二级「银行Ⅱ」/ 巨潮=证监会二级「货币金融服务」），
+所以**一轮只用一个源**。换源时先清空 industry 列，绝不让两套口径混在一起——
+混了行业集中度 HHI 就是垃圾。上一轮用的源记在 `_SOURCE_MARKER`。
 """
+import json
+import sys
+import time
+from pathlib import Path
+
 from loguru import logger
 from sqlalchemy.exc import SQLAlchemyError
 
-from acquisition.markets.industry import fetch_a_share_industry_map
+from acquisition.markets.industry import (
+    IndustrySource,
+    resolve_source,
+    stream_a_share_industry,
+)
 from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo
 
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_SOURCE_MARKER = _BACKEND_DIR / "data" / "industry_source.json"
+_BATCH_SIZE = 200
 
-def backfill_industry(*, limit: int | None = None) -> dict[str, int]:
-    """拉全市场行业映射并写入 `StockInfo.industry`。
 
-    只更新**有变化**的行（新填 or 改名），避免把 5000 多行的 `updated_at`
-    全部刷一遍。库里没有的 symbol 直接跳过——本函数不负责建 StockInfo 行。
+def _read_last_source() -> str | None:
+    try:
+        return str(json.loads(_SOURCE_MARKER.read_text(encoding="utf-8"))["source"])
+    except (OSError, ValueError, KeyError):
+        return None
 
-    Returns:
-        `{"fetched": 拉到的只数, "updated": 实际写库的行数, "missing": 库里没有的只数}`
-    """
-    mapping = fetch_a_share_industry_map(limit=limit)
-    if not mapping:
-        logger.warning("行业映射为空，不写库")
-        return {"fetched": 0, "updated": 0, "missing": 0}
 
+def _write_last_source(source: str, filled: int) -> None:
+    _SOURCE_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _SOURCE_MARKER.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({
+        "source": source, "filled": filled,
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(_SOURCE_MARKER)
+
+
+def _active_a_share_symbols(session, *, only_missing: bool = False) -> list[str]:
+    q = (session.query(StockInfo.symbol)
+         .filter(StockInfo.market == "a_share",
+                 StockInfo.is_active == 1,
+                 StockInfo.stock_type != "etf"))
+    if only_missing:
+        q = q.filter((StockInfo.industry.is_(None)) | (StockInfo.industry == ""))
+    return [r[0] for r in q.order_by(StockInfo.symbol).all()]
+
+
+def _clear_industry() -> int:
+    """换源时清空旧口径。返回清掉的行数。"""
     session = get_session()
     try:
-        rows = (session.query(StockInfo)
-                .filter(StockInfo.symbol.in_(list(mapping.keys()))).all())
-        found = {r.symbol for r in rows}
-
-        updated = 0
-        for row in rows:
-            new = mapping[row.symbol]
-            if row.industry != new:
-                row.industry = new
-                updated += 1
-
+        n = (session.query(StockInfo)
+             .filter(StockInfo.market == "a_share",
+                     StockInfo.industry.isnot(None),
+                     StockInfo.industry != "")
+             .update({StockInfo.industry: None}, synchronize_session=False))
         session.commit()
+        return int(n)
     except SQLAlchemyError:
         session.rollback()
         raise
     finally:
         session.close()
 
-    missing = len(mapping) - len(found)
-    logger.info(f"行业回填完成：拉到 {len(mapping)} 只，写库 {updated} 行，"
-                f"库里没有 {missing} 只")
-    return {"fetched": len(mapping), "updated": updated, "missing": missing}
+
+def _commit_batch(batch: dict[str, str]) -> int:
+    """写一批，只 UPDATE 真有变化的行。返回实际改动行数。"""
+    if not batch:
+        return 0
+    session = get_session()
+    try:
+        rows = (session.query(StockInfo)
+                .filter(StockInfo.symbol.in_(list(batch.keys()))).all())
+        changed = 0
+        for row in rows:
+            new = batch[row.symbol]
+            if row.industry != new:
+                row.industry = new
+                changed += 1
+        session.commit()
+        return changed
+    except SQLAlchemyError:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def backfill_industry(*, source: IndustrySource = "auto",
+                      resume: bool = False,
+                      limit: int | None = None,
+                      batch_size: int = _BATCH_SIZE) -> dict:
+    """拉行业映射并**分批**写入 `StockInfo.industry`。
+
+    分批 commit 而非一次性：全市场逐只查要跑半小时，一次性攒完再写意味着
+    中途挂掉半小时全白费，过程还完全不可观测。
+
+    Args:
+        source: `auto` 先探东财、不通换巨潮。
+        resume: 只补 `industry` 为空的票。换源时旧口径会被清空，于是每只都算缺
+            行业，resume 自动退化为全量重跑（口径永远不会混）。
+        limit: 只处理前 N 只（调试用）。
+
+    Returns:
+        `{"source", "fetched", "updated", "skipped_resume", "elapsed_seconds"}`
+    """
+    session = get_session()
+    try:
+        all_symbols = _active_a_share_symbols(session)
+    finally:
+        session.close()
+
+    # 源必须在**建 stream 之前**定下来：它决定要不要清空旧口径、resume 是否合法，
+    # 以及巨潮源该喂哪批 symbol。`resolve_source` 里那次探测只发一个请求，
+    # 之后建 stream 时传显式 source，不会再探第二次。
+    used = resolve_source(all_symbols, source=source)
+    last = _read_last_source()
+
+    if last is not None and last != used:
+        # 换源必须清空旧口径：两套分类体系混在一列里，行业集中度 HHI 就是垃圾。
+        # 清空之后每只票都算「缺行业」，所以 resume **自动**退化成全量重跑
+        # ——不需要额外的守卫（写过一个，变异测试证明它什么也没多做）。
+        cleared = _clear_industry()
+        logger.warning(f"换源 {last} → {used}：已清空 {cleared} 行旧口径的 industry"
+                       f"{'；resume 随之退化为全量重跑' if resume else ''}")
+
+    todo = all_symbols
+    skipped = 0
+    if resume:
+        session = get_session()
+        try:
+            todo = _active_a_share_symbols(session, only_missing=True)
+        finally:
+            session.close()
+        skipped = len(all_symbols) - len(todo)
+        logger.info(f"resume：跳过已有行业的 {skipped} 只，待补 {len(todo)} 只")
+        if not todo:
+            logger.info("没有缺行业的票，无需回填")
+            return {"source": used, "fetched": 0, "updated": 0,
+                    "skipped_resume": skipped, "elapsed_seconds": 0.0}
+
+    _, stream = stream_a_share_industry(todo, source=used, limit=limit)  # type: ignore[arg-type]
+
+    logger.info(f"行业回填开始（源={used}，本轮 {len(todo)} 只）")
+    started = time.time()
+
+    batch: dict[str, str] = {}
+    fetched = updated = 0
+    for symbol, industry in stream:
+        batch[symbol] = industry
+        fetched += 1
+        if len(batch) >= batch_size:
+            updated += _commit_batch(batch)
+            logger.info(f"已落库 {fetched} 只（改动 {updated} 行）")
+            batch = {}
+    updated += _commit_batch(batch)
+
+    elapsed = time.time() - started
+    _write_last_source(used, fetched)
+    logger.info(f"行业回填完成（源={used}）：拉到 {fetched} 只，写库 {updated} 行，"
+                f"耗时 {elapsed / 60:.1f} 分钟")
+    return {"source": used, "fetched": fetched, "updated": updated,
+            "skipped_resume": skipped, "elapsed_seconds": round(elapsed, 1)}
 
 
 if __name__ == "__main__":
-    import sys
-
     logger.remove()
     logger.add(sys.stdout, level="INFO",
                format="<green>{time:HH:mm:ss}</green> | <level>{message}</level>")
-    result = backfill_industry()
+
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    src: IndustrySource = args[0] if args else "auto"  # type: ignore[assignment]
+    result = backfill_industry(source=src, resume="--resume" in sys.argv)
     logger.info(f"结果: {result}")

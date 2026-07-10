@@ -151,7 +151,7 @@ common / net / data_engine.storage（基础层）
 
    | 想要的性质 | 靠什么 | 何时生效 |
    |---|---|---|
-   | 东财行情 / 个股 K 线 / 腾讯 / 雪球 / akshare **共用同一个 IP** | `get_proxy_manager()` 单例 + `get_proxy()` 复用 | **默认**，只要 IP 没过期（实测寿命 180s）。与站点无关，不需要调用方做任何事 |
+   | 东财行情 / 个股 K 线 / 腾讯 / 雪球 / akshare **共用同一个 IP** | `get_proxy_manager()` 单例 + `get_proxy()` 复用 | **默认**，只要 IP 没过期（实测寿命 **120s**，非早期记的 180s）。与站点无关 |
    | 并发失败时不各买各的替补 | `ProxyManager.switch_proxy(stale=手上那个IP)` | 自动（`_rotate` 已用） |
    | 一次逻辑取数拆成 N 个请求要**整体重试** | `net.domestic_rotate(run, what=...)` | 调用方显式选用 |
 
@@ -168,9 +168,21 @@ common / net / data_engine.storage（基础层）
    - 同一批新 IP 上的端点通过率天差地别（n=8~14）：百度 100%、腾讯 `qt.gtimg` 100%、`qt/ulist.np` 38%、`push2his` K 线 25%、`qt/clist`(pz=100) 0%、`qt/stock/get` 0%。9 个 `push2` 分片域名（`1./7./72./88.` …）**封禁一致**，换分片无用。
    - **我们会毒化自己的池子**：快代理是共享池、IP 回收再发；一轮重度抓取会把自己下次拿到的 IP 提前烧掉。实测本机 IP 也在一小时内被东财从所有 `push2` 端点封掉（腾讯不受影响）。
 
-   推论：`_rotate` 每次失败买一个新 IP 是**正确**的（那个 IP 对东财确实没用了），但对 push2 端点而言经济性很差。省 IP 的正道是 **①限速**（`BaseCrawler(min_interval=)`）**②尽量走腾讯/新浪/pytdx**（它们对同一批 IP 通过率 100%），而不是加预热或预探活（预探活的成本等于直接发真请求）。
+   推论：`_rotate` 每次失败买一个新 IP 是**正确**的（那个 IP 对东财确实没用了），但对 push2 端点而言经济性很差。省 IP 的正道是 **①限速**（`BaseCrawler(min_interval=)`）**②换数据源**，而不是加预热或预探活（预探活的成本等于直接发真请求）。
 
    `_rotate` 仍然把一切失败都归咎于 IP。若某端点对所有 IP 都失败，每次调用会白烧 `max_rounds - 1` 个 IP 才放弃。**新增抓取前先手工验一次该端点在新 IP 上的通过率。**
+
+4. **东财不行就换源**（2026-07-10 Jason 拍板）。同一份数据尽量备好**非东财**的源；东财走不通就切过去，而不是一路换 IP 硬打。
+
+   ⚠️ **akshare ≠ 换源**。它大量函数就是包的东财（`*_em` 后缀 = eastmoney），换成 akshare 常常还在打 `push2`。真正的换源是换**站点**：巨潮 `webapi.cninfo.com.cn`、新浪 `finance.sina.com.cn`、同花顺 `10jqka.com.cn`、腾讯 `qt.gtimg.cn`、通达信 pytdx（TCP，压根不经代理）。判断办法：`inspect.getsource(ak.xxx)` 看 URL。
+
+   写源链的三条纪律：
+
+   - **一轮只用一个源。** 各源的分类/字段口径不同（东财 `f100` 是申万二级「银行Ⅱ」，巨潮是证监会二级「货币金融服务」）。两套口径混进同一列，行业集中度 HHI 就是垃圾。
+   - **探测要便宜。** 用一个真实请求 + `max_rounds=2` 探主源；别等主源把 `max_rounds × 页数` 个 IP 烧完才想起换源。
+   - **非门控的源显式直连**（`domestic_akshare(..., use_proxy_pool=False)`）。这是**明示直连**不是静默降级（§8.2 三态里「没有代理服务可用」那一态）。尤其注意 `domestic_akshare` 把**空 DataFrame 当失败去换 IP**——巨潮对退市票本来就返回空，挂上代理池会为每只白烧 `max_rounds` 个 IP。
+
+   范例：`acquisition/markets/industry.py`（东财 clist `f100` → 巨潮 `stock_profile_cninfo`），门禁 `tests/acquisition/test_industry.py`。
 
    `ProxyExhaustedError` 有**两个子类**，因为调用方的正确反应不同：
 
@@ -181,8 +193,8 @@ common / net / data_engine.storage（基础层）
 
    只 `except ProxyExhaustedError` 的调用方行为不变。范例见 `acquisition/markets/industry.py`。
 
-4. 行情实时源的主备切换（东财→腾讯→新浪）只在 `acquisition/markets/quote_router.py` 一处实现，调用方无感。
-5. 例外仅**三类**：localhost 内部服务（C++ 回测 :8002、订单簿撮合、MLX server）可裸 httpx/requests，不走代理层；LLM API 统一走 `llm_client.build_client()` + `llm_config.normalize_chat_params()`，流式循环用 `stream_chat()`（带工具）/ `stream_text()`（纯文本，13.4 新抽，消灭 4 处手抄）；**非 HTTP 协议数据源**（pytdx 走 TCP socket 连通达信，塞不进 HTTP 代理层）——它仍须包在 `acquisition/markets/` 门面里，引擎层不得直接 `import pytdx`。
+5. 行情实时源的主备切换（东财→腾讯→新浪）只在 `acquisition/markets/quote_router.py` 一处实现，调用方无感。**按上一条重新权衡主备顺序**：腾讯对同一批快代理 IP 通过率 100%，东财每次都在赌 IP。
+6. 例外仅**三类**：localhost 内部服务（C++ 回测 :8002、订单簿撮合、MLX server）可裸 httpx/requests，不走代理层；LLM API 统一走 `llm_client.build_client()` + `llm_config.normalize_chat_params()`，流式循环用 `stream_chat()`（带工具）/ `stream_text()`（纯文本，13.4 新抽，消灭 4 处手抄）；**非 HTTP 协议数据源**（pytdx 走 TCP socket 连通达信，塞不进 HTTP 代理层）——它仍须包在 `acquisition/markets/` 门面里，引擎层不得直接 `import pytdx`。
 
 ---
 

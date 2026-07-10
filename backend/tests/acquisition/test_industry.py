@@ -7,7 +7,7 @@
 """
 import pytest
 
-from acquisition.markets.industry import fetch_a_share_industry_map
+from acquisition.markets.industry import _iter_eastmoney, fetch_a_share_industry_map
 from net.domestic import ProxyQuotaExhaustedError, ProxyRetriesExhaustedError
 
 pytestmark = pytest.mark.baseline
@@ -61,7 +61,7 @@ def test_parses_f100_into_symbol_industry_map(patch_crawler):
         {"f12": "688981", "f14": "中芯国际", "f100": "半导体"},
     ], total=4)})
 
-    m = fetch_a_share_industry_map()
+    m = dict(_iter_eastmoney())
     assert m == {
         "600000.SH": "银行Ⅱ",
         "000001.SZ": "银行Ⅱ",
@@ -79,7 +79,7 @@ def test_skips_stocks_without_industry(patch_crawler):
         {"f12": "600003", "f14": "某某", "f100": None},
     ], total=4)})
 
-    assert fetch_a_share_industry_map() == {"600000.SH": "银行Ⅱ"}
+    assert dict(_iter_eastmoney()) == {"600000.SH": "银行Ⅱ"}
 
 
 def test_skips_unparseable_code_without_killing_the_batch(patch_crawler):
@@ -90,7 +90,7 @@ def test_skips_unparseable_code_without_killing_the_batch(patch_crawler):
         {"f12": "abc", "f14": "脏码", "f100": "垃圾"},
     ], total=3)})
 
-    assert fetch_a_share_industry_map() == {"600000.SH": "银行Ⅱ"}
+    assert dict(_iter_eastmoney()) == {"600000.SH": "银行Ⅱ"}
 
 
 def test_dead_page_is_skipped_not_fatal(patch_crawler):
@@ -101,7 +101,7 @@ def test_dead_page_is_skipped_not_fatal(patch_crawler):
     }
     fake = patch_crawler(pages, dead_pages=[2])
 
-    m = fetch_a_share_industry_map(page_size=100)
+    m = dict(_iter_eastmoney(page_size=100))
     assert m == {"600000.SH": "银行Ⅱ", "600003.SH": "钢铁"}
     assert [int(p["pn"]) for p in fake.seen_params] == [1, 2, 3], "第 2 页失败后要继续第 3 页"
 
@@ -111,7 +111,7 @@ def test_first_page_failure_does_not_abort(patch_crawler):
     pages = {2: _page([{"f12": "600002", "f14": "b", "f100": "钢铁"}], total=200)}
     fake = patch_crawler(pages, dead_pages=[1])
 
-    assert fetch_a_share_industry_map(page_size=100) == {"600002.SH": "钢铁"}
+    assert dict(_iter_eastmoney(page_size=100)) == {"600002.SH": "钢铁"}
     assert [int(p["pn"]) for p in fake.seen_params] == [1, 2]
 
 
@@ -121,7 +121,7 @@ def test_quota_exhausted_aborts_the_whole_job(patch_crawler):
     fake = patch_crawler(pages, quota_dead_pages=[2])
 
     with pytest.raises(ProxyQuotaExhaustedError):
-        fetch_a_share_industry_map(page_size=100)
+        dict(_iter_eastmoney(page_size=100))
     assert [int(p["pn"]) for p in fake.seen_params] == [1, 2], "额度耗尽后不该再翻第 3 页"
 
 
@@ -130,7 +130,7 @@ def test_dead_pool_aborts_after_consecutive_failures(patch_crawler):
     pages = {1: _page([{"f12": "600000", "f14": "a", "f100": "银行Ⅱ"}], total=10_000)}
     fake = patch_crawler(pages, dead_pages=range(2, 50))
 
-    m = fetch_a_share_industry_map(page_size=100)
+    m = dict(_iter_eastmoney(page_size=100))
     assert m == {"600000.SH": "银行Ⅱ"}, "拿到的部分要留下"
     pages_tried = [int(p["pn"]) for p in fake.seen_params]
     assert pages_tried == [1, 2, 3, 4, 5], f"连续 4 页失败就该中止，实际翻了 {pages_tried}"
@@ -138,14 +138,127 @@ def test_dead_pool_aborts_after_consecutive_failures(patch_crawler):
 
 def test_stops_at_total(patch_crawler):
     fake = patch_crawler({1: _page([{"f12": "600000", "f14": "a", "f100": "银行Ⅱ"}], total=1)})
-    fetch_a_share_industry_map(page_size=100)
+    dict(_iter_eastmoney(page_size=100))
     assert len(fake.seen_params) == 1, "total 已够就不该再翻页"
 
 
 def test_requests_f100_field(patch_crawler):
     fake = patch_crawler({1: _page([], total=0)})
-    fetch_a_share_industry_map()
+    dict(_iter_eastmoney())
     assert "f100" in fake.seen_params[0]["fields"]
+
+
+# ── 源链：东财不行就换巨潮 ────────────────────────────────────────────────────
+
+@pytest.fixture
+def patch_sources(monkeypatch):
+    """替换两个源与探测函数，只测选源逻辑。"""
+    calls = []
+
+    def _install(*, em_reachable, em_map=None, cninfo_map=None):
+        monkeypatch.setattr("acquisition.markets.industry._eastmoney_reachable",
+                            lambda: calls.append("probe") or em_reachable)
+        monkeypatch.setattr("acquisition.markets.industry._iter_eastmoney",
+                            lambda **kw: calls.append("eastmoney") or iter((em_map or {}).items()))
+        monkeypatch.setattr("acquisition.markets.industry._iter_cninfo",
+                            lambda syms, **kw: calls.append("cninfo") or iter((cninfo_map or {}).items()))
+        return calls
+    return _install
+
+
+def test_auto_uses_eastmoney_when_reachable(patch_sources):
+    calls = patch_sources(em_reachable=True, em_map={"600000.SH": "银行Ⅱ"})
+    m, src = fetch_a_share_industry_map(["600000.SH"])
+    assert (m, src) == ({"600000.SH": "银行Ⅱ"}, "eastmoney")
+    assert calls == ["probe", "eastmoney"], "探通了就不该碰巨潮"
+
+
+def test_auto_falls_back_to_cninfo_when_eastmoney_blocked(patch_sources):
+    """东财 IP 被封 → 立刻换巨潮，而不是把 max_rounds 烧完。"""
+    calls = patch_sources(em_reachable=False, cninfo_map={"600000.SH": "货币金融服务"})
+    m, src = fetch_a_share_industry_map(["600000.SH"])
+    assert (m, src) == ({"600000.SH": "货币金融服务"}, "cninfo")
+    assert calls == ["probe", "cninfo"], "探不通就不该再翻东财的页"
+
+
+def test_probe_bounds_the_ip_spend(monkeypatch):
+    """探测最多换 2 个 IP —— 别在东财全面封禁时先烧 32 个才知道换源。"""
+    import acquisition.markets.industry as ind
+
+    seen = {}
+
+    class _Crawler:
+        def __init__(self, **kw):
+            seen.update(kw)
+
+        def get_json(self, url, *, params=None, headers=None):
+            raise ProxyRetriesExhaustedError("全挂")
+
+    monkeypatch.setattr(ind, "BaseCrawler", _Crawler)
+    assert ind._eastmoney_reachable() is False
+    assert seen["max_rounds"] == 2, f"探测的换 IP 预算是 {seen['max_rounds']}，太贵了"
+
+
+def test_one_source_per_run_no_taxonomy_mixing(patch_sources):
+    """两套分类口径混进同一列，HHI 就是垃圾。auto 必须只用一个源。"""
+    calls = patch_sources(em_reachable=True, em_map={"600000.SH": "银行Ⅱ"},
+                          cninfo_map={"600519.SH": "酒、饮料和精制茶制造业"})
+    m, _ = fetch_a_share_industry_map(["600000.SH", "600519.SH"])
+    assert m == {"600000.SH": "银行Ⅱ"}, "东财通了就不该再混入巨潮的口径"
+    assert "cninfo" not in calls
+
+
+def test_explicit_source_skips_the_probe(patch_sources):
+    calls = patch_sources(em_reachable=True, cninfo_map={"600000.SH": "货币金融服务"})
+    m, src = fetch_a_share_industry_map(["600000.SH"], source="cninfo")
+    assert src == "cninfo" and calls == ["cninfo"], "指名了源就不该探东财"
+
+
+def test_cninfo_requires_symbols():
+    with pytest.raises(ValueError, match="symbols"):
+        fetch_a_share_industry_map(None, source="cninfo")
+
+
+def test_cninfo_never_uses_the_proxy_pool(monkeypatch):
+    """巨潮逐只查：空 DataFrame 是**真实答案**（退市票），不是失败。
+
+    挂上代理池的话 `domestic_akshare` 会把空结果当失败去换 IP，
+    为每只退市票白烧 max_rounds 个 IP。
+    """
+    import acquisition.markets.industry as ind
+
+    kwargs_seen = []
+
+    class _Row(dict):
+        pass
+
+    class _DF:
+        empty = False
+
+        def __init__(self, v):
+            self.iloc = [_Row({"所属行业": v})]
+
+    def _fake_ak(fn, **kw):
+        kwargs_seen.append(kw)
+        return _DF("货币金融服务")
+
+    monkeypatch.setattr("net.domestic.domestic_akshare", _fake_ak)
+    monkeypatch.setattr(ind, "_CNINFO_INTERVAL", 0)
+    out = dict(ind._iter_cninfo(["600000.SH"]))
+    assert out == {"600000.SH": "货币金融服务"}
+    assert kwargs_seen[0]["use_proxy_pool"] is False, "巨潮走了代理池 —— 退市票会白烧 IP"
+    assert kwargs_seen[0]["symbol"] == "600000", "巨潮要裸码"
+
+
+def test_cninfo_empty_result_is_not_a_failure(monkeypatch):
+    import acquisition.markets.industry as ind
+
+    class _Empty:
+        empty = True
+
+    monkeypatch.setattr("net.domestic.domestic_akshare", lambda fn, **kw: _Empty())
+    monkeypatch.setattr(ind, "_CNINFO_INTERVAL", 0)
+    assert dict(ind._iter_cninfo(["600000.SH", "600001.SH"])) == {}
 
 
 # ── 风控读库，零出网 ─────────────────────────────────────────────────────────
