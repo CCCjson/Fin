@@ -1,6 +1,14 @@
-"""一批请求共享一个 IP —— 并发失败时不许各买各的。
+"""一个 IP 服务所有国内抓取 —— 共享靠单例，省钱靠 stale 守卫，原子靠 domestic_rotate。
 
-## 问题
+三件事各司其职，别搞混（这份文档就是为了防止再搞混）：
+
+| 想要的性质 | 靠什么 | 何时生效 |
+|---|---|---|
+| 东财 / 个股 K 线 / 股吧 / 雪球 **共用一个 IP** | 单例 + `get_proxy()` 复用 | **默认**，IP 没过期就复用 |
+| 并发失败时不各买各的替补 | `switch_proxy(stale=手上那个IP)` | 本文件修的 |
+| 一次逻辑取数拆成 N 个请求要**整体重试** | `domestic_rotate(run)` | 调用方显式选用 |
+
+## 曾经的病：并发超买
 
 `switch_proxy()` 是**无条件买新 IP**。N 个并发请求撞死在**同一个** IP 上，
 就各自调一次 `switch_proxy()` → 买 N 个 IP，尽管它们死的是同一个 IP。
@@ -18,9 +26,16 @@
 
 调用方失败时说的是「换掉**我手上这个**」，而不是「随便买一个」。若此刻
 `current_proxy` 已经不是它了（别人先一步换过），直接复用那个新 IP，不扣额度。
+全程持 `_lock`，所以是确定性的：第一个进去的人买，后面的人白捡。
 
-配套 `domestic_rotate(run)`：一批请求整体交给 `run(proxies)`，整批共享一个 IP，
-任一子请求失败就整批换一个 IP 重来。铁律（取不到 IP 就抛）从 `_rotate` 继承。
+**这条守卫不认识站点**——它作用在 IP 层。所以东财 + 个股 + 雪球 + akshare
+一起并发撞死同一个 IP，也只买一个替补（`test_cross_site_...` 钉住这点）。
+
+## `domestic_rotate` 管的不是省 IP，是原子性
+
+有了 stale 守卫，N 个独立 `domestic_get` 并发失败也只买 1 个替补。
+`domestic_rotate` 存在的理由是**整体重试**：5 个子请求凑成一份快照，
+不能 3 个来自旧 IP、2 个来自新 IP。代价是重做已成功的子请求。
 """
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -123,6 +138,111 @@ def test_concurrent_failures_on_same_ip_buy_only_one_replacement(monkeypatch, pm
     assert pm.api.calls == 2, (
         f"买了 {pm.api.calls} 个 IP。5 个线程死在同一个 IP 上，只该买 1 个替补。"
         f"实际用过的 IP 序列: {seen}"
+    )
+
+
+# ── 1b. 跨站点/跨端点/跨原语：全都共用同一个 IP，失败也只买一个替补 ─────────────
+#
+# Jason 2026-07-10 提的场景：「我要的不仅是东财的行情数据，还要某个个股数据，
+# 还有其他网站的别的数据的时候，共享一个 IP 去获取吗？」
+# 答案：是，而且这是**默认行为**——单例 + get_proxy() 复用，与站点无关。
+# stale 守卫也作用在 IP 层而非站点层，所以失败时同样只买一个替补。
+
+def test_cross_site_requests_share_one_ip_and_one_replacement(monkeypatch, pm):
+    """东财行情 + 东财 K 线 + 雪球 + 腾讯 + akshare 并发取数：
+
+    - 全程只用一个 IP（单例复用，与打哪个站无关）
+    - 这个 IP 死了，5 条链路只买 1 个替补（stale 守卫，与站点无关）
+    """
+    import net.domestic as dom
+
+    monkeypatch.setattr(dom, "get_proxy_manager", lambda: pm)
+
+    dead = "10.0.0.1"
+    per_site_ips: dict[str, list[str]] = {}
+    lock = threading.Lock()
+    # 5 条链路都拿到 IP1 之后才让它们一起失败。否则起步晚的线程会直接拿到替补，
+    # 根本没碰过 IP1 —— 那也是对的（单例共享），但测不到「撞死同一个 IP」这件事。
+    all_hold_ip1 = threading.Barrier(5, timeout=5)
+
+    def _record(site, ip):
+        with lock:
+            first = site not in per_site_ips
+            per_site_ips.setdefault(site, []).append(ip)
+        if first:
+            all_hold_ip1.wait()
+
+    class _Sess:
+        def __init__(self, proxies):
+            self.proxies = proxies
+
+        def _go(self, url):
+            ip = _ip_of(self.proxies)
+            _record(url.split("/")[2], ip)      # 按域名记账
+            if ip == dead:
+                raise RuntimeError("Connection aborted")
+
+        def get(self, url, **kw):
+            self._go(url)
+
+            class _R:
+                status_code = 200
+
+                def raise_for_status(self):
+                    pass
+            return _R()
+
+        def request(self, method, url, **kw):   # bounded_get 走这条
+            self._go(url)
+
+            class _R:
+                status_code = 200
+                headers = {}
+
+                def iter_content(self, chunk_size=65536):
+                    yield b'{"ok":1}'
+
+                def close(self):
+                    pass
+            return _R()
+
+    monkeypatch.setattr(dom, "make_domestic_session", lambda proxies=None: _Sess(proxies))
+
+    # akshare 那条路不走 session，靠 proxy_env 注入；用当前 IP 判活死
+    def _fake_ak():
+        ip = pm.current_proxy.ip if pm.current_proxy else "direct"
+        _record("akshare", ip)
+        if ip == dead:
+            raise RuntimeError("akshare 被掐断")
+        return "df"
+    _fake_ak.__name__ = "stock_individual_info_em"
+
+    jobs = [
+        lambda: dom.domestic_get("https://push2.eastmoney.com/api/qt/ulist.np/get", max_rounds=4),
+        lambda: dom.domestic_get("https://push2his.eastmoney.com/api/qt/stock/kline/get", max_rounds=4),
+        lambda: dom.domestic_get("https://stock.xueqiu.com/v5/stock/quote.json", max_rounds=4),
+        lambda: dom.domestic_bounded_get("https://qt.gtimg.cn/q=sh600519", max_rounds=4),
+        lambda: dom.domestic_akshare(_fake_ak, max_rounds=4),
+    ]
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        results = [f.result() for f in [pool.submit(j) for j in jobs]]
+
+    assert all(r is not None for r in results), "5 条链路都该最终成功"
+    assert len(per_site_ips) == 5, f"应有 5 个不同来源，实际 {sorted(per_site_ips)}"
+
+    # ① 共享：barrier 保证 5 条链路第一次出网时拿到的是同一个 IP（单例复用，与站点无关）
+    assert all(ips[0] == dead for ips in per_site_ips.values()), \
+        f"5 条链路第一次出网该复用同一个 IP: {per_site_ips}"
+
+    # ② 收敛：同一个 IP 死了之后，5 条链路落到同一个替补上（stale 守卫，与站点无关）
+    replacements = {ips[-1] for ips in per_site_ips.values()}
+    assert len(replacements) == 1, f"5 条链路落到了 {len(replacements)} 个不同替补: {per_site_ips}"
+
+    # ③ 账单：全程只买 2 个 IP。没有守卫的话是 6 个（IP1 + 每条链路各买一个）
+    assert pm.api.calls == 2, (
+        f"跨 5 个站点/端点，只该买 2 个 IP（IP1 + 一个替补），实际买了 {pm.api.calls}。"
+        f"\n各来源用过的 IP: {per_site_ips}"
     )
 
 
