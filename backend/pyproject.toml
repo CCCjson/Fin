@@ -230,7 +230,6 @@ known-first-party = [
 "net/proxy_manager.py" = ["F541", "I001", "UP006", "UP035", "UP045"]
 "net/proxy_pool.py" = ["I001", "UP006", "UP035", "UP037", "UP045"]
 "net/session.py" = ["UP006", "UP035", "UP045"]
-"net_proxy.py" = ["I001"]
 "news_engine/__init__.py" = ["I001"]
 "news_engine/analyzer.py" = ["I001", "UP006", "UP035", "UP045"]
 "news_engine/fetcher.py" = ["F401", "I001", "UP006", "UP035", "UP045"]

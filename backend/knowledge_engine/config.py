@@ -78,7 +78,7 @@ def get_edgar_ua() -> str:
 
 def get_scraper_proxy() -> str:
     """可选反爬代理（强反爬源用），形如 http://user:pass@host:port。
-    websearch 整体的自适配走全局 net_proxy（env `HTTP_PROXY_MODE`，默认 auto）。"""
+    websearch 整体的自适配走全局 `net`（env `HTTP_PROXY_MODE`，默认 auto）。"""
     return os.getenv("KNOWLEDGE_SCRAPER_PROXY", "")
 
 

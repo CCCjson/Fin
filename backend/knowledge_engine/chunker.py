@@ -13,7 +13,7 @@ from knowledge_engine.config import get_embed_model, get_chunk_tokens, get_chunk
 # transformers 首次 import 前强制 HF 离线 + 同步代理 env（见 embedding.py 说明）
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-from net_proxy import apply_proxy_env as _apply_proxy_env
+from net import apply_proxy_env as _apply_proxy_env
 _apply_proxy_env()
 
 _tokenizer = None

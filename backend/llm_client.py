@@ -24,7 +24,7 @@ def build_client(base_url: Optional[str] = None, api_key: Optional[str] = None) 
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY 未配置")
 
-    from net_proxy import make_httpx_client
+    from net import make_httpx_client
     _timeout = HttpxTimeout(connect=15.0, read=300.0, write=30.0, pool=30.0)
     kwargs = dict(
         api_key=api_key,

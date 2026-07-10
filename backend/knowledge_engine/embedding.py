@@ -26,7 +26,7 @@ from knowledge_engine.config import (
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 # 顺带在 import 前同步代理 env（direct 模式清残留死代理），供联网下载场景用。
-from net_proxy import apply_proxy_env as _apply_proxy_env
+from net import apply_proxy_env as _apply_proxy_env
 _apply_proxy_env()
 
 

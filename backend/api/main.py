@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # 在任何引擎/transformers import 之前同步代理 env（direct 模式清掉残留死代理，
 # 让 HF 模型加载/出网请求在 Clash 关时也能直连）。
-from net_proxy import apply_proxy_env
+from net import apply_proxy_env
 apply_proxy_env()
 
 from data_engine import init_db

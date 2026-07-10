@@ -6,7 +6,7 @@ Clash 探测与国外出网代理策略。
 - direct/none：强制直连。
 - 具体 URL  ：强制走该代理。
 
-与旧 net_proxy.py 的区别：`clash_alive()` 改为**带短 TTL 的实时重探**
+与最早那版 net_proxy 的区别：`clash_alive()` 改为**带短 TTL 的实时重探**
 （默认 5 秒），Clash 开/关后最多 5 秒自适应，不再需要重启进程。
 """
 import os

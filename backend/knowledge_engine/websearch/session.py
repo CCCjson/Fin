@@ -15,7 +15,7 @@ from typing import Optional
 
 from knowledge_engine.config import get_scraper_proxy
 from net.overseas import resolve_overseas   # 海外：先探直连,不通走 7898
-from net_proxy import clash_alive, reset_probe  # noqa: F401
+from net import reset_probe
 
 # 抄自 Scrapper config：chrome131 在该版 curl_cffi 有 TLS bug，统一用 chrome120 指纹
 IMPERSONATE = "chrome120"

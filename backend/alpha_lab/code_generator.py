@@ -68,7 +68,7 @@ class CodeGenerator:
         self._init_client()
 
     def _init_client(self):
-        from net_proxy import make_httpx_client
+        from net import make_httpx_client
         if self.config["provider"] == "local":
             _to = HttpxTimeout(connect=15.0, read=300.0, write=30.0, pool=30.0)
             self.client = OpenAI(
