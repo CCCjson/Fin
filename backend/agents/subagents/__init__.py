@@ -1,5 +1,5 @@
 """
-Subagent 注册 —— 把 4 个复杂任务登记成对模型透明的「特殊工具」(is_subagent=True)。
+Subagent 注册 —— 把复杂任务登记成对模型透明的「特殊工具」(is_subagent=True)。
 import 本包即触发注册（agents/__init__.py 会 import 它）。
 
 参数用 args_model 声明（同域工具的单一数据源约定），校验发生在
@@ -13,13 +13,12 @@ from pydantic import BaseModel, Field
 from agents.registry import REGISTRY, ToolDef
 from agents.subagents.deep_stock import DeepStockSubagent
 from agents.subagents.news import NewsSubagent
-from agents.subagents.report import ReportSubagent
 from agents.subagents.report_sections import SECTION_SUBAGENTS
 from agents.subagents.alpha_lab import AlphaLabSubagent
 
 _RUNNERS = {
     r.name: r
-    for r in ([DeepStockSubagent(), NewsSubagent(), ReportSubagent(), AlphaLabSubagent()]
+    for r in ([DeepStockSubagent(), NewsSubagent(), AlphaLabSubagent()]
               + [cls() for cls in SECTION_SUBAGENTS])
 }
 
@@ -64,18 +63,6 @@ _register(
     "【新闻/舆情深度解读】：抓取并用 AI 综合解读市场或个股的最新新闻与情绪，慢但全。"
     "适合「这些消息意味着什么/新闻面怎么看」；只要快速情绪分数（秒回）用 get_news_sentiment。",
     NewsArgs,
-)
-
-
-class ReportArgs(BaseModel):
-    report_type: Literal["daily", "weekly", "monthly"] = Field("weekly", description="报告周期，默认 weekly")
-
-
-_register(
-    "run_research_report",
-    "【投研报告】：生成多章节的深度投资研究报告（日报/周报/月报），汇总市场、信号、回测、持仓、新闻。"
-    "用户说「帮我出一份周报/投研报告/复盘报告」时用。耗时较长。",
-    ReportArgs,
 )
 
 

@@ -107,8 +107,13 @@ _TEMPLATES: Dict[str, Callable[[dict], str]] = {
     # deep_agents（subagent 也走同一 TOOL_RESULT）
     "run_deep_stock": _with("已完成深度研判："),
     "run_news_analysis": lambda a: "已完成新闻深度解读",
-    "run_research_report": lambda a: "已生成投研报告",
     "run_alpha_lab": lambda a: "已完成策略研发迭代",
+    # 五个报告章节（13.2 拆解，各自独立成稿）
+    "report_market": lambda a: "已写好大盘与板块章节",
+    "report_news": lambda a: "已写好新闻舆情章节",
+    "report_positions": lambda a: "已写好持仓诊断章节",
+    "report_strategy": lambda a: "已写好上期回顾与策略章节",
+    "report_picks": lambda a: "已写好买入推荐章节",
 }
 
 _FALLBACK_OK = "已完成一步数据处理"

@@ -1,9 +1,9 @@
 """
 报告Prompt构建器 — 将结构化数据转换为GPT可用的Prompt
 
-build_multi() 把报告拆成每章独立的 LLM 调用（链式上下文），消除GPT偷懒。
-各章 system prompt 由共享积木（人设/通用规则/格式块）+ 本章差异内容组装而成，
-改人设、改通用规则只需改下方常量一处。
+build_section_calls() 把一个章节工具展开成 1~N 次独立的 LLM 调用（仅 Ch8 买入推荐
+按 4 只一批分批，批次间链式去重）。各章 system prompt 由共享积木（人设/通用规则/
+格式块）+ 本章差异内容组装而成，改人设、改通用规则只需改下方常量一处。
 """
 import json
 from dataclasses import dataclass
@@ -102,25 +102,11 @@ _CH1_FMT_TAIL = """- 三部分用 ### 三级标题分隔
 
 
 @dataclass
-class CallSpec:
-    """一次LLM调用的规格"""
-    call_index: int          # 调用序号
-    chapters: List[int]      # e.g. [3, 4]
-    label: str               # "正在生成第3-4章..."
-    system_prompt: str
-    user_prompt: str = ""    # 由 build_user_prompt_for_call 填充
-    max_tokens: int = 4096
-    needs_previous_outputs: bool = False
-    batch_data: Optional[Dict] = None   # Ch8 分批信息
-    temperature: float = 0.5
-
-
-@dataclass
 class ChapterCall:
     """一次章节 LLM 调用的规格（13.2 拆解后的原子单位）。
 
-    与 CallSpec 的区别：不带 call_index / needs_previous_outputs——章节工具之间
-    不再有「前章结论前置」的链式上下文，各章独立成稿。Ch8 内部的批次链式仍在。
+    章节工具之间没有「前章结论前置」的链式上下文，各章独立成稿，一致性由
+    MoneyBill 撰写纵览时统一口径。Ch8 内部的批次链式仍在（后批要知道前批推了谁）。
     """
     chapter: int
     label: str
@@ -166,7 +152,7 @@ class ReportPromptBuilder:
     """构建AI报告的System/User Prompt"""
 
     # ==================================================================
-    # 章节级原语（13.2）：章节工具与旧 build_multi 共用同一套 _sys_chN / _section_*
+    # 章节级原语（13.2）：把「一章 = 一次 LLM 调用」建模成 ChapterCall
     # ==================================================================
     def system_prompt_for_chapter(
         self, ch: int, data: Dict, report_type: str = "weekly",
@@ -355,170 +341,6 @@ class ReportPromptBuilder:
             f"⚠️ 必须分析的标的：\n{stock_list}"
         )
         return supplement_prompt
-
-    # ==================================================================
-    # 多次调用: 返回 9 个 CallSpec（每章独立调用，链式上下文）
-    # ==================================================================
-    def build_multi(self, data: Dict, report_type: str = "weekly") -> List[CallSpec]:
-        if report_type == "daily":
-            period_label = "日度"
-        elif report_type == "monthly":
-            period_label = "月度"
-        else:
-            period_label = "周度"
-        is_daily = (report_type == "daily")
-        held_symbols = {p["symbol"] for p in data.get("portfolio", {}).get("positions", [])}
-
-        is_weekend = data.get("is_weekend", False)
-
-        specs: List[CallSpec] = [
-            CallSpec(
-                call_index=1, chapters=[2],
-                label="正在生成第2章（市场总览与情绪研判）...",
-                system_prompt=(self._sys_ch2_weekend() if is_weekend
-                               else (self._sys_ch2_daily() if is_daily else self._sys_ch2(period_label))),
-                max_tokens=0,
-                temperature=0.5,
-            ),
-            CallSpec(
-                call_index=2, chapters=[3],
-                label="正在生成第3章（新闻深度分析与舆情研判）...",
-                system_prompt=(self._sys_ch3_weekend() if is_weekend
-                               else (self._sys_ch3_daily() if is_daily else self._sys_ch3(period_label))),
-                max_tokens=0,
-                temperature=0.5,
-            ),
-            CallSpec(
-                call_index=3, chapters=[4],
-                label="正在生成第4章（板块热点与北向资金）...",
-                system_prompt=(self._sys_ch4_weekend() if is_weekend
-                               else (self._sys_ch4_daily() if is_daily else self._sys_ch4(period_label))),
-                max_tokens=0,
-                temperature=0.5,
-            ),
-            CallSpec(
-                call_index=4, chapters=[6],
-                label="正在生成第6章（上期推荐回顾）...",
-                system_prompt=(self._sys_ch6_weekend() if is_weekend
-                               else (self._sys_ch6_daily() if is_daily else self._sys_ch6(period_label))),
-                max_tokens=0,
-                temperature=0.4,
-            ),
-            CallSpec(
-                call_index=5, chapters=[5],
-                label="正在生成第5章（持仓诊断）...",
-                system_prompt=(self._sys_ch5_weekend() if is_weekend
-                               else (self._sys_ch5_daily() if is_daily else self._sys_ch5(period_label))),
-                max_tokens=0,
-                temperature=0.4,
-            ),
-            CallSpec(
-                call_index=6, chapters=[7],
-                label="正在生成第7章（信号与策略表现）...",
-                system_prompt=(self._sys_ch7_weekend() if is_weekend
-                               else (self._sys_ch7_daily() if is_daily else self._sys_ch7(period_label))),
-                max_tokens=0,
-                temperature=0.4,
-            ),
-        ]
-
-        # ── Ch8 拆分为多批 ──
-        buy_recs = data.get("top_stocks", {}).get("buy_recommendations", []) \
-            if isinstance(data.get("top_stocks"), dict) else []
-        batch_size = 4
-        ch8_start_index = 7  # call_index 从 7 开始（Ch2=1, Ch3=2, Ch4=3, Ch6=4, Ch5=5, Ch7=6）
-
-        if buy_recs:
-            batches = [buy_recs[i:i + batch_size] for i in range(0, len(buy_recs), batch_size)]
-            total_batches = len(batches)
-
-            for bi, batch_stocks in enumerate(batches):
-                is_first = (bi == 0)
-                is_last = (bi == total_batches - 1)
-                batch_stock_count = len(batch_stocks)
-
-                if is_first:
-                    if is_weekend:
-                        sys_prompt = self._sys_ch8_weekend(held_symbols, batch_stock_count)
-                    elif is_daily:
-                        sys_prompt = self._sys_ch8_daily(held_symbols, batch_stock_count)
-                    else:
-                        sys_prompt = self._sys_ch8(period_label, held_symbols, batch_stock_count)
-                else:
-                    if is_weekend:
-                        sys_prompt = self._sys_ch8_continuation_weekend(held_symbols, batch_stock_count)
-                    elif is_daily:
-                        sys_prompt = self._sys_ch8_continuation_daily(held_symbols, batch_stock_count)
-                    else:
-                        sys_prompt = self._sys_ch8_continuation(period_label, held_symbols, batch_stock_count)
-
-                specs.append(CallSpec(
-                    call_index=ch8_start_index + bi,
-                    chapters=[8],
-                    label=f"正在生成第8章（买入推荐 - 第{bi+1}/{total_batches}批）...",
-                    system_prompt=sys_prompt,
-                    max_tokens=0,
-                    batch_data={
-                        "batch_index": bi,
-                        "total_batches": total_batches,
-                        "stocks": batch_stocks,
-                        "is_first": is_first,
-                        "is_last": is_last,
-                    },
-                    temperature=0.3,
-                ))
-            ch8_call_count = total_batches
-        else:
-            # 无推荐标的：生成单次"观望"调用，告知 AI 今日无高质量信号
-            if is_weekend:
-                sys_prompt = self._sys_ch8_weekend(held_symbols, 0)
-            elif is_daily:
-                sys_prompt = self._sys_ch8_daily(held_symbols, 0)
-            else:
-                sys_prompt = self._sys_ch8(period_label, held_symbols, 0)
-            specs.append(CallSpec(
-                call_index=ch8_start_index,
-                chapters=[8],
-                label="正在生成第8章（今日无高质量买入信号）...",
-                system_prompt=sys_prompt,
-                max_tokens=0,
-                batch_data={
-                    "batch_index": 0,
-                    "total_batches": 1,
-                    "stocks": [],
-                    "is_first": True,
-                    "is_last": True,
-                },
-                temperature=0.3,
-            ))
-            ch8_call_count = 1
-
-        # ── Ch8 之后的章节，call_index 顺延 ──
-        next_index = ch8_start_index + ch8_call_count
-
-        specs.append(CallSpec(
-            call_index=next_index, chapters=[1],
-            label=f"正在生成第1章（{period_label}纵览 & 操作计划）...",
-            system_prompt=(self._sys_ch1_weekend() if is_weekend
-                          else (self._sys_ch1_daily() if is_daily else self._sys_ch1(period_label))),
-            max_tokens=0,
-            needs_previous_outputs=True,
-            temperature=0.4,
-        ))
-
-        # 预构建 user_prompt（不需要前文的调用先构建好）
-        for spec in specs:
-            if not spec.needs_previous_outputs:
-                spec.user_prompt = self.build_user_prompt_for_call(spec, data)
-
-        return specs
-
-    def build_user_prompt_for_call(
-        self, spec: CallSpec, data: Dict, previous_outputs: Optional[Dict[int, str]] = None
-    ) -> str:
-        """旧全量路径入口（随 build_multi 退役）。薄委托到章节级原语，避免两份 switch。"""
-        return self.build_user_prompt_for_chapter(
-            spec.chapters[0], data, batch_data=spec.batch_data, previous_outputs=previous_outputs)
 
     def build_user_prompt_for_chapter(
         self, ch: int, data: Dict, batch_data: Optional[Dict] = None,
@@ -1493,7 +1315,7 @@ Jason 当前持仓标的: {held_list}
 {_CH1_FMT_TAIL}"""
 
     # ==================================================================
-    # 独立 section 方法（build_user_prompt_for_call 按章节组装数据段）
+    # 独立 section 方法（build_user_prompt_for_chapter 按章节组装数据段）
     # ==================================================================
 
     def _section_market_breadth(self, data: Dict, held_symbols: set) -> str:

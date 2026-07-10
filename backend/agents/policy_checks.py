@@ -28,7 +28,7 @@ _STOCK_CODE_RE = re.compile(r"(?<!\d)\d{6}\.(?:SH|SZ)(?![A-Za-z0-9])")
 # 五个报告章节 subagent（report_market/news/positions/strategy/picks）**故意不在此列**：
 # 废掉全量报告后，Ch1「纵览 & 操作计划」正是要 MoneyBill 看着几章摘要亲自写出来的，
 # 把它们加进来会把纵览强行压成一句话。
-_SUBAGENT_NAMES = {"run_deep_stock", "run_news_analysis", "run_research_report", "run_alpha_lab"}
+_SUBAGENT_NAMES = {"run_deep_stock", "run_news_analysis", "run_alpha_lab"}
 _SUBAGENT_TAIL_MAX_CHARS = 150
 
 

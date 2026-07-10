@@ -1,19 +1,19 @@
-"""采集三个深任务的真实输出样本，作为 LangGraph 迁移前后的人工 diff 基准。
+"""采集深任务的真实输出样本，作为重构前后的人工 diff 基准。
 
 为什么不做成 pytest：LLM 出稿不确定，没法写断言。13.1 的门禁只锁**结构与契约**
 （见 tests/baseline/），**内容质量**靠这里落盘的样本，迁移后再跑一次、人工对比。
 
 用法（会真打 LLM，花钱；需后端依赖就绪）：
-    conda run -n quant python tests/baseline/capture_samples.py            # 全部三个
-    conda run -n quant python tests/baseline/capture_samples.py --only report
+    conda run -n quant python tests/baseline/capture_samples.py            # 全部七个
+    conda run -n quant python tests/baseline/capture_samples.py --only report_market
     conda run -n quant python tests/baseline/capture_samples.py --tag after_graph_migration
 
 产物落到 scripts/data/baseline_samples/<tag>_<shorthash>/，该目录是外置盘符号链接，
 不在源码树里。每个任务一个 .md（正文）+ 一个 .json（事件统计与耗时）。
 
 迁移后对比：
-    diff -u backend/scripts/data/baseline_samples/before_step13_*/report.md \
-            scripts/data/baseline_samples/after_graph_*/report.md
+    # 逐章 diff：把旧整份报告按 '## N.' 切段，与新章节样本逐段对照
+    #   python tests/baseline/split_report_chapters.py <before>/report.md
 """
 from __future__ import annotations
 
@@ -71,9 +71,12 @@ def _drain(stream: Iterator[str]) -> tuple[str, Counter, dict[str, Any]]:
 
 # ── 三个深任务的入口。args 挑的是「有代表性且不太贵」的参数。────────────────
 
-def _run_report() -> Iterator[str]:
-    from agents.subagents.report import ReportSubagent
-    return ReportSubagent().run({"report_type": "weekly"})
+def _run_section(section: str) -> Callable[[], Iterator[str]]:
+    """13.2 把全量报告拆成五个章节工具，每章各出一个样本，好逐章 diff。"""
+    def _run() -> Iterator[str]:
+        from agents.subagents import get_runner
+        return get_runner(f"report_{section}").run({"report_type": "weekly"})
+    return _run
 
 
 def _run_deep_stock() -> Iterator[str]:
@@ -88,7 +91,8 @@ def _run_alpha() -> Iterator[str]:
 
 
 TASKS: dict[str, Callable[[], Iterator[str]]] = {
-    "report": _run_report,
+    **{f"report_{sec}": _run_section(sec)
+       for sec in ("market", "news", "positions", "strategy", "picks")},
     "deep_stock": _run_deep_stock,
     "alpha": _run_alpha,
 }

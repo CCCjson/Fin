@@ -25,9 +25,14 @@ import {
 
 const AGENT_LABELS: Record<string, string> = {
   run_deep_stock: '深度个股研判',
-  Newnew: '新闻舆情解读',
-  run_research_report: '投研报告',
+  run_news_analysis: '新闻舆情解读',
   run_alpha_lab: '策略研发',
+  // 五个报告章节（13.2 把整篇周报拆开）
+  report_market: '大盘与板块',
+  report_news: '新闻舆情',
+  report_positions: '持仓诊断',
+  report_strategy: '回顾与策略',
+  report_picks: '买入推荐',
 };
 
 const QUICK_PROMPTS: { icon: string; text: string }[] = [

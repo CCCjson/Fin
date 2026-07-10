@@ -1,11 +1,8 @@
 """
 报告数据采集器 — 从各数据源收集报告所需数据
 
-对外有两类入口：
-
-- `collect_*()` **分片采集**：每个报告章节只采自己需要的那几块。这是 13.2 拆解后
-  五个章节 subagent 的取数口。
-- `collect()` **全量 façade**：把所有分片合并成旧的那份 data 字典，键与顺序逐字不变。
+对外只有 `collect_{market,news,positions,strategy,picks}()` 五个分片入口，一一对应
+五个章节 subagent。想只看板块轮动就只采市场那片，不必把整套跑一遍。
 
 分片之间共享 `collect_common()`（行情总览 + 持仓），它是全流程最贵的一步——一次
 `MarketWebSearcher` 出网 + 逐持仓抓新闻，且 `_section_market_context` 让五个章节
@@ -184,44 +181,6 @@ class ReportDataCollector:
                 session, period_start, period_end_d, held, want=("buy",))
         finally:
             session.close()
-        return data
-
-    # ==================================================================
-    # 全量 façade（旧路径。键与顺序逐字不变）
-    # ==================================================================
-    def collect(self, report_type: str = "weekly", period_end: Optional[date] = None,
-                enable_web_search: bool = False) -> Dict:
-        """
-        收集报告所需数据
-
-        Args:
-            report_type: 报告类型 (weekly / monthly)
-            period_end: 报告截止日期，默认今天
-            enable_web_search: 是否在定性段额外用真·联网搜索补充外部观点（默认关）
-
-        Returns:
-            结构化数据字典
-        """
-        data = self.collect_common(report_type, period_end, enable_web_search)
-        period_start = date.fromisoformat(data["period_start"])
-        period_end_d = date.fromisoformat(data["period_end"])
-
-        session = get_session()
-        try:
-            data["previous_report"] = self._collect_previous_recommendations(
-                session, period_end_d, report_type)
-            # 提取持仓股代码，传给 signals 和 top_stocks
-            held_symbols = self._held_symbols(data)
-            data["signals"] = self._collect_signals(session, period_start, period_end_d, held_symbols)
-            data["backtest"] = self._collect_backtest(session)
-            data["top_stocks"] = self._collect_top_stocks(session, period_start, period_end_d, held_symbols)
-            data["trading"] = self._collect_trading(session, period_start, period_end_d)
-        finally:
-            session.close()
-
-        # 新闻情感分析 & 重大新闻检测（在 session 外执行，不依赖 DB）
-        data["news_analysis"] = self._analyze_news_sentiment(data)
-
         return data
 
     # ------------------------------------------------------------------
@@ -1044,49 +1003,6 @@ class ReportDataCollector:
         }
 
         return snapshot
-
-    # ------------------------------------------------------------------
-    def _collect_trading(self, session, period_start: date, period_end: date) -> Dict:
-        """收集模拟交易数据"""
-        try:
-            from datetime import datetime as dt
-            start_dt = dt.combine(period_start, dt.min.time())
-            end_dt = dt.combine(period_end, dt.max.time())
-
-            orders = session.query(Order).filter(
-                Order.created_at >= start_dt,
-                Order.created_at <= end_dt,
-            ).all()
-
-            trades = session.query(Trade).filter(
-                Trade.executed_at >= start_dt,
-                Trade.executed_at <= end_dt,
-            ).all()
-
-            total_orders = len(orders)
-            filled = len([o for o in orders if o.status == "FILLED"])
-            rejected = len([o for o in orders if o.status == "REJECTED"])
-
-            total_trades = len(trades)
-            total_amount = sum(t.amount for t in trades)
-            total_commission = sum(t.commission for t in trades)
-
-            return {
-                "orders": {
-                    "total": total_orders,
-                    "filled": filled,
-                    "rejected": rejected,
-                    "fill_rate": round(filled / total_orders * 100, 1) if total_orders else 0,
-                },
-                "trades": {
-                    "total": total_trades,
-                    "total_amount": round(total_amount, 2),
-                    "total_commission": round(total_commission, 2),
-                },
-            }
-        except Exception as e:
-            logger.warning(f"收集交易数据失败: {e}")
-            return {"orders": {}, "trades": {}, "error": str(e)}
 
     # ------------------------------------------------------------------
     def _collect_portfolio(self, session) -> Dict:

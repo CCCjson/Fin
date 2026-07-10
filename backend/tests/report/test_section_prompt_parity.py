@@ -1,21 +1,40 @@
-"""13.2-3 行为基线：章节工具的 prompt 与旧 build_multi 逐字相同。
+"""13.2-3 行为基线：章节工具的 prompt 与退役前的 build_multi 逐字相同。
 
 这是「先原样搬、不改内容」这条决定的执行闸门。只要它绿着，新章节工具的产出
 就能和 `scripts/data/baseline_samples/before_step13/report.md` 做逐章 diff——
 差异只可能来自 LLM 随机性，而不是搬运时改坏了 prompt。
 
-用 13.1 冻结的 collect() 快照当输入，纯函数，不打 LLM、不碰 DB。
+golden 是 `fixtures/section_prompts_golden.json`，在 build_multi 被删除**之前**从
+它身上冻下来的（六个 report_type × 周末组合 × 每次调用的 system/user 哈希，
+外加主路径 weekly|normal 的全文，好让 red 的时候能看清差在哪）。
+
+输入是 13.1 冻结的 collect() 快照，纯函数，不打 LLM、不碰 DB。
 """
+import hashlib
+import json
+import pathlib
+
 import pytest
 
 from report_engine.prompt_builder import SECTION_CHAPTERS, ReportPromptBuilder
 
 pytestmark = pytest.mark.baseline
 
+GOLDEN = json.loads(
+    (pathlib.Path(__file__).parent / "fixtures" / "section_prompts_golden.json").read_text())
+
+COMBOS = sorted(GOLDEN["hashes"])
 # 五个章节工具覆盖旧的 8 章里的 7 章。Ch1「纵览 & 操作计划」不做成工具：
 # 它需要全部前文，废掉全量报告后由 MoneyBill 主 agent 亲自撰写。
-_CHAPTER_TO_SECTION = {2: "market", 4: "market", 3: "news",
-                       5: "positions", 6: "strategy", 7: "strategy", 8: "picks"}
+_ALL_CHAPTERS = {2, 3, 4, 5, 6, 7, 8}
+
+
+def _sha(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def _key(call) -> str:
+    return f"8#{call.batch_data['batch_index']}" if call.chapter == 8 else str(call.chapter)
 
 
 @pytest.fixture(scope="module")
@@ -23,102 +42,82 @@ def builder():
     return ReportPromptBuilder()
 
 
-@pytest.fixture(scope="module")
-def old_specs(builder, report_data_weekly):
-    """旧全量路径的 10 个 CallSpec（含 Ch8 三批）。"""
-    return builder.build_multi(report_data_weekly, "weekly")
-
-
-@pytest.fixture(scope="module")
-def new_calls(builder, report_data_weekly):
-    """新章节工具展开出的全部 ChapterCall，按章节号分组。"""
-    out: dict[int, list] = {}
+def _calls_by_key(builder, data, report_type) -> dict:
+    out = {}
     for section in SECTION_CHAPTERS:
-        for call in builder.build_section_calls(section, report_data_weekly, "weekly"):
-            out.setdefault(call.chapter, []).append(call)
+        for call in builder.build_section_calls(section, data, report_type):
+            out[_key(call)] = call
     return out
 
 
-def test_sections_cover_every_chapter_except_ch1(new_calls, old_specs):
-    old_chapters = {s.chapters[0] for s in old_specs}
-    assert set(new_calls) == old_chapters - {1}
-    assert 1 not in new_calls, "Ch1 纵览应由 MoneyBill 撰写，不做成章节工具"
+# ── 覆盖面 ────────────────────────────────────────────────────────────────
+
+def test_sections_cover_every_chapter_except_ch1(builder, report_data_weekly):
+    calls = _calls_by_key(builder, report_data_weekly, "weekly")
+    chapters = {c.chapter for c in calls.values()}
+    assert chapters == _ALL_CHAPTERS
+    assert 1 not in chapters, "Ch1 纵览应由 MoneyBill 撰写，不做成章节工具"
 
 
-def test_ch8_batches_match_old_path(new_calls, old_specs):
-    """Ch8 的分批数与每批标的必须与旧路径一致（batch_size=4 的确定性切分）。"""
-    old_ch8 = [s for s in old_specs if s.chapters[0] == 8]
-    new_ch8 = new_calls[8]
-    assert len(new_ch8) == len(old_ch8) > 1, "冻结快照应产生多批 Ch8"
-    for old, new in zip(old_ch8, new_ch8, strict=True):
-        assert new.batch_data["batch_index"] == old.batch_data["batch_index"]
-        assert new.batch_data["total_batches"] == old.batch_data["total_batches"]
-        assert new.batch_data["is_first"] == old.batch_data["is_first"]
-        assert new.batch_data["is_last"] == old.batch_data["is_last"]
-        assert ([s["symbol"] for s in new.batch_data["stocks"]]
-                == [s["symbol"] for s in old.batch_data["stocks"]])
+def test_every_section_maps_to_at_least_one_chapter():
+    assert set(SECTION_CHAPTERS) == {"market", "news", "positions", "strategy", "picks"}
+    assert sorted(c for chs in SECTION_CHAPTERS.values() for c in chs) == sorted(_ALL_CHAPTERS)
 
 
-@pytest.mark.parametrize("chapter", sorted(_CHAPTER_TO_SECTION))
-def test_system_prompt_is_byte_identical(chapter, new_calls, old_specs):
-    old = [s for s in old_specs if s.chapters[0] == chapter]
-    new = new_calls[chapter]
-    assert len(new) == len(old)
-    for o, n in zip(old, new, strict=True):
-        assert n.system_prompt == o.system_prompt, f"Ch{chapter} system_prompt 漂移"
+def test_golden_covers_all_six_report_type_weekend_combos():
+    assert COMBOS == ["daily|normal", "daily|weekend", "monthly|normal",
+                      "monthly|weekend", "weekly|normal", "weekly|weekend"]
 
 
-@pytest.mark.parametrize("chapter", sorted(_CHAPTER_TO_SECTION))
-def test_user_prompt_is_byte_identical(chapter, new_calls, old_specs):
-    """旧路径的 user_prompt 是 build_multi 预构建的那份（尚未前置前章结论摘要）。"""
-    old = [s for s in old_specs if s.chapters[0] == chapter]
-    new = new_calls[chapter]
-    for o, n in zip(old, new, strict=True):
-        assert n.user_prompt == o.user_prompt, f"Ch{chapter} user_prompt 漂移"
+# ── 逐字对齐 golden ───────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("combo", COMBOS)
+def test_prompts_match_golden(combo, builder, report_data_weekly):
+    report_type, weekend = combo.split("|")
+    data = dict(report_data_weekly, is_weekend=(weekend == "weekend"))
+    calls = _calls_by_key(builder, data, report_type)
+    golden = GOLDEN["hashes"][combo]
+
+    assert sorted(calls) == sorted(golden), f"{combo} 的调用集合变了"
+    for key, want in golden.items():
+        got = calls[key]
+        assert _sha(got.system_prompt) == want["system"], f"{combo} {key} system_prompt 漂移"
+        assert _sha(got.user_prompt) == want["user"], f"{combo} {key} user_prompt 漂移"
+        assert got.temperature == want["temperature"], f"{combo} {key} temperature 漂移"
+        assert got.label == want["label"], f"{combo} {key} label 漂移"
 
 
-@pytest.mark.parametrize("chapter", sorted(_CHAPTER_TO_SECTION))
-def test_temperature_and_label_preserved(chapter, new_calls, old_specs):
-    old = [s for s in old_specs if s.chapters[0] == chapter]
-    new = new_calls[chapter]
-    for o, n in zip(old, new, strict=True):
-        assert n.temperature == o.temperature, f"Ch{chapter} temperature 漂移"
-        assert n.label == o.label, f"Ch{chapter} label 漂移"
+def test_weekly_normal_prompts_match_golden_verbatim(builder, report_data_weekly):
+    """主路径存了全文：red 的时候能直接看出差在哪个字，而不是只看到哈希不等。"""
+    calls = _calls_by_key(builder, report_data_weekly, "weekly")
+    for key, want in GOLDEN["weekly_normal_full"].items():
+        assert calls[key].system_prompt == want["system"], f"Ch{key} system_prompt"
+        assert calls[key].user_prompt == want["user"], f"Ch{key} user_prompt"
 
 
-# ── 三种报告周期 / 周末变体都要对齐 ────────────────────────────────────────
+def test_ch8_batches_are_deterministic_slices_of_four(builder, report_data_weekly):
+    recs = report_data_weekly["top_stocks"]["buy_recommendations"]
+    calls = builder.build_section_calls("picks", report_data_weekly, "weekly")
+    assert len(calls) == -(-len(recs) // 4) > 1
+    for i, call in enumerate(calls):
+        bd = call.batch_data
+        assert bd["batch_index"] == i
+        assert bd["total_batches"] == len(calls)
+        assert bd["is_first"] == (i == 0)
+        assert bd["is_last"] == (i == len(calls) - 1)
+        assert [s["symbol"] for s in bd["stocks"]] == [s["symbol"] for s in recs[i * 4:i * 4 + 4]]
 
-@pytest.mark.parametrize("report_type", ["daily", "weekly", "monthly"])
-@pytest.mark.parametrize("is_weekend", [False, True])
-def test_prompt_parity_across_report_type_and_weekend(builder, report_data_weekly,
-                                                      report_type, is_weekend):
-    """weekend / daily / 普通 三分支的选择逻辑在新旧两处必须给出同一个 _sys_chN。"""
-    data = dict(report_data_weekly, is_weekend=is_weekend)
-    old_specs = builder.build_multi(data, report_type)
-    new_by_ch: dict[int, list] = {}
-    for section in SECTION_CHAPTERS:
-        for call in builder.build_section_calls(section, data, report_type):
-            new_by_ch.setdefault(call.chapter, []).append(call)
 
-    for spec in old_specs:
-        ch = spec.chapters[0]
-        if ch == 1:
-            continue
-        idx = (spec.batch_data or {}).get("batch_index", 0)
-        got = new_by_ch[ch][idx]
-        assert got.system_prompt == spec.system_prompt, f"{report_type}/weekend={is_weekend} Ch{ch}"
-        assert got.user_prompt == spec.user_prompt, f"{report_type}/weekend={is_weekend} Ch{ch}"
-
+# ── 降级与拒绝 ────────────────────────────────────────────────────────────
 
 def test_no_buy_recommendations_degrades_to_single_watch_call(builder, report_data_weekly):
     """无买入推荐时退化为单次「观望」调用——与旧路径同样的降级。"""
     data = dict(report_data_weekly, top_stocks={"buy_recommendations": [], "sell_warnings": []})
-    old_ch8 = [s for s in builder.build_multi(data, "weekly") if s.chapters[0] == 8]
-    new_ch8 = builder.build_section_calls("picks", data, "weekly")
-    assert len(new_ch8) == len(old_ch8) == 1
-    assert new_ch8[0].label == old_ch8[0].label == "正在生成第8章（今日无高质量买入信号）..."
-    assert new_ch8[0].system_prompt == old_ch8[0].system_prompt
-    assert new_ch8[0].user_prompt == old_ch8[0].user_prompt
+    calls = builder.build_section_calls("picks", data, "weekly")
+    assert len(calls) == 1
+    assert calls[0].label == "正在生成第8章（今日无高质量买入信号）..."
+    assert calls[0].batch_data == {"batch_index": 0, "total_batches": 1, "stocks": [],
+                                   "is_first": True, "is_last": True}
 
 
 def test_unknown_section_rejected(builder, report_data_weekly):
@@ -128,7 +127,7 @@ def test_unknown_section_rejected(builder, report_data_weekly):
 
 # ── Ch8 补充调用的 prompt 也搬得逐字不差 ────────────────────────────────────
 
-def test_ch8_supplement_prompt_matches_old_inline_construction(builder, report_data_weekly):
+def test_ch8_supplement_prompt_keeps_the_old_shape(report_data_weekly):
     """build_ch8_supplement_prompt 是从 generator._retry_missing_stocks 里抠出来的。"""
     recs = report_data_weekly["top_stocks"]["buy_recommendations"][:2]
     prompt = ReportPromptBuilder.build_ch8_supplement_prompt(recs)

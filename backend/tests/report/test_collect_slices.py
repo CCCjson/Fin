@@ -1,7 +1,8 @@
 """13.2-1 行为基线：collect() 拆片。
 
 锁两件事：
-  1. 全量 façade `collect()` 的顶层键与 13.1 冻结快照逐字相同（拆片不许改变旧路径产物）
+  1. 五个分片合起来覆盖 13.1 冻结快照的全部键（`trading` 除外——没有任何
+     `_section_*` 读它，全量报告退役后它就是死数据，已删）
   2. 每个分片只采自己那块——尤其 `collect_positions` 不许触发最贵的买入推荐采集
 
 所有 `_collect_*` 都被替换成哨兵，测的是**装配逻辑**，不碰 DB / 不出网。
@@ -16,12 +17,13 @@ pytestmark = pytest.mark.baseline
 
 PERIOD_END = date(2026, 7, 3)
 
-# 13.1 冻结快照的顶层键，顺序即 collect() 的装配顺序
-GOLDEN_TOP_LEVEL_KEYS = [
+# 13.1 冻结快照里、拆片后仍在生产的顶层键
+LIVE_TOP_LEVEL_KEYS = {
     "report_type", "period_start", "period_end", "is_weekend",
     "market_overview", "portfolio", "previous_report", "signals",
-    "backtest", "top_stocks", "trading", "news_analysis",
-]
+    "backtest", "top_stocks", "news_analysis",
+}
+RETIRED_KEYS = {"trading"}          # 无任何 _section_* 消费，随全量报告一起死
 
 _COMMON_KEYS = ["report_type", "period_start", "period_end", "is_weekend",
                 "market_overview", "portfolio"]
@@ -53,8 +55,6 @@ def collector(monkeypatch):
                         lambda self, s, ps, pe, held=None: {"__sentinel__": "signals"})
     monkeypatch.setattr(ReportDataCollector, "_collect_backtest",
                         lambda self, s: {"__sentinel__": "backtest"})
-    monkeypatch.setattr(ReportDataCollector, "_collect_trading",
-                        lambda self, s, ps, pe: {"__sentinel__": "trading"})
     monkeypatch.setattr(ReportDataCollector, "_collect_previous_recommendations",
                         lambda self, s, pe, rt: {"__sentinel__": "previous_report"})
     monkeypatch.setattr(ReportDataCollector, "_analyze_news_sentiment",
@@ -71,24 +71,22 @@ class _FakeSession:
         pass
 
 
-# ── 1. façade 契约 ────────────────────────────────────────────────────────
+# ── 1. 分片合起来不丢数据 ──────────────────────────────────────────────────
 
-def test_collect_facade_top_level_keys_unchanged(collector):
-    """拆片后 collect() 的顶层键与顺序必须与 13.1 冻结快照逐字相同。"""
-    data = collector.collect(report_type="weekly", period_end=PERIOD_END)
-    assert list(data.keys()) == GOLDEN_TOP_LEVEL_KEYS
-
-
-def test_collect_facade_matches_frozen_fixture_keys(collector, report_data_weekly):
-    """双保险：直接对 13.1 那份真实快照的键集。"""
-    data = collector.collect(report_type="weekly", period_end=PERIOD_END)
-    assert list(data.keys()) == list(report_data_weekly.keys())
+def test_slices_together_cover_every_live_key(collector):
+    """五个分片并起来必须覆盖旧全量快照的全部在产键，一个不落。"""
+    covered = set()
+    for section in ("market", "news", "positions", "strategy", "picks"):
+        collector._calls["top_stocks_want"].clear()
+        covered |= set(getattr(collector, f"collect_{section}")(period_end=PERIOD_END))
+    assert covered == LIVE_TOP_LEVEL_KEYS
 
 
-def test_collect_facade_still_asks_for_both_halves_of_top_stocks(collector):
-    """全量路径必须同时要买入推荐和卖出预警（单次批量取基本面）。"""
-    collector.collect(report_type="weekly", period_end=PERIOD_END)
-    assert collector._calls["top_stocks_want"] == [("buy", "sell")]
+def test_retired_keys_are_gone_from_the_frozen_fixture(collector, report_data_weekly):
+    """`trading` 曾经只为落进 AnalysisReport.data_snapshot 而采，没有 prompt 读它。"""
+    assert set(report_data_weekly) == LIVE_TOP_LEVEL_KEYS | RETIRED_KEYS
+    assert not hasattr(collector, "_collect_trading")
+    assert not hasattr(collector, "collect")
 
 
 def test_period_bounds_matches_fixture(report_data_weekly):

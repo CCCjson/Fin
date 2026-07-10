@@ -24,7 +24,7 @@ RETIRED_PATHS = {
     "/app/realtime": "实时行情已收敛到对话：用 get_realtime_quote / get_market_pulse 回答",
     "/app/signals": "信号分析已收敛到对话：用 signals 工具组（get_today_signals 等）回答",
     "/app/tracking": "信号追踪已收敛到对话：用 signals 工具组回答",
-    "/app/reports": "AI 报告已收敛到对话：用 run_research_report 生成",
+    "/app/reports": "AI 报告已拆成章节工具：按需调 report_market / report_news / report_positions / report_strategy / report_picks，要整份就依次调完再自己写纵览",
     "/app/portfolio": "交易记录已收敛到对话：用 get_trade_history / record_manual_trade",
     "/app/review": "每日复盘已收敛到对话：用 review 工具组回答",
     "/app/advisor": "AI 顾问已并入 MoneyBill 本体：直接对话或用 run_deep_stock",

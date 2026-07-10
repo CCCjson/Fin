@@ -1,6 +1,6 @@
-"""13.1 基线：三个深任务（report / deep_stock / alpha_lab）的对外契约。
+"""13.1 基线：深任务（deep_stock / alpha_lab / news）的对外契约。
 
-13.2/13.3 会把这三个搬到 LangGraph 子图上。搬完之后，**对外契约必须逐字不变**：
+13.3 会把它们搬到 LangGraph 子图上。搬完之后，**对外契约必须逐字不变**：
 - 恰好一个 subagent_done 收尾
 - ToolEnvelope 的 ok / error_code / business_result 形状不变
 - deep_stock 的只读工具白名单不许放宽（安全边界）
@@ -102,118 +102,18 @@ def test_alpha_lab_missing_symbols_yields_validation_error():
     assert result["error_code"] == "validation_error"
 
 
-# ─────────────────────────── report ───────────────────────────
-
-def _fake_report_engines(monkeypatch, chunks: list[str], *, raise_on_collect=False):
-    """把 report 的三层引擎全换成桩。注意打的是**源模块符号**——
-    report.py 在函数体内延迟 import，patch agents.subagents.report 上的引用无效。
-    """
-    import report_engine.data_collector as dc_mod
-    import report_engine.generator as gen_mod
-    import report_engine.planner as planner_mod
-    import report_engine.prompt_builder as pb_mod
-
-    class FakeCollector:
-        def collect(self, report_type="weekly"):
-            if raise_on_collect:
-                raise RuntimeError("数据收集炸了")
-            return {"period_start": "2026-06-29", "period_end": "2026-07-03"}
-
-    class FakePlan:
-        specs = []
-        deps = {}
-
-    class FakePlanner:
-        def plan(self, data, report_type="weekly"):
-            return FakePlan()
-
-    class FakeGenerator:
-        def generate_multi_stream(self, **kwargs):
-            import json as _json
-            # 注意：引擎侧 NDJSON 用的键是 "event"（不是 "type"），token 键是 "token_count"
-            for c in chunks:
-                yield _json.dumps({"event": "chunk", "content": c}, ensure_ascii=False) + "\n"
-            yield _json.dumps({"event": "done", "token_count": 150}, ensure_ascii=False) + "\n"
-
-    monkeypatch.setattr(dc_mod, "ReportDataCollector", FakeCollector)
-    monkeypatch.setattr(planner_mod, "ReportPlanner", FakePlanner)
-    monkeypatch.setattr(gen_mod, "ReportGenerator", FakeGenerator)
-    monkeypatch.setattr(pb_mod, "ReportPromptBuilder", lambda: types.SimpleNamespace())
-
-
-def test_report_happy_path_envelope_shape(monkeypatch):
-    from agents.subagents.report import ReportSubagent
-
-    _fake_report_engines(monkeypatch, ["## 第一章\n", "正文内容。\n"])
-    result = drain_subagent_done(ReportSubagent().run({"report_type": "weekly"}))
-
-    assert result["ok"] is True
-    assert result.get("error_code") is None
-    assert result["business_result"] == "affirmative"
-    assert isinstance(result.get("widgets", []), list), "wire 上只许有复数 widgets"
-    assert "widget" not in result, "单数 widget 不该出现在 wire 上"
-    assert result["message"], "有正文时 message 不该为空"
-    assert result["tokens"] == 150, "引擎 done 事件里的 token_count 要透传到 envelope"
-    assert "禁止复述" in result["message"], (
-        "摘要必须带「禁止复述」前缀——正文已流式展示过，主 agent 再复述会给出重复且矛盾的建议"
-    )
-
-
-def test_report_engine_failure_becomes_internal_error(monkeypatch):
-    from agents.subagents.report import ReportSubagent
-
-    _fake_report_engines(monkeypatch, [], raise_on_collect=True)
-    result = drain_subagent_done(ReportSubagent().run({"report_type": "weekly"}))
-
-    assert result["ok"] is False
-    assert result["error_code"] == "internal_error"
-
-
-def test_report_empty_output_is_explicit_negative_not_silent_success(monkeypatch):
-    """一个字都没生成时必须显式报 negative，不能装作成功。"""
-    from agents.subagents.report import ReportSubagent
-
-    _fake_report_engines(monkeypatch, [])
-    result = drain_subagent_done(ReportSubagent().run({"report_type": "weekly"}))
-
-    assert result["ok"] is True
-    assert result["business_result"] == "negative"
-
-
-@pytest.mark.parametrize("bad_type, normalized", [
-    ("yearly", "weekly"),
-    ("", "weekly"),
-    ("daily", "daily"),
-    ("monthly", "monthly"),
-])
-def test_report_type_normalized(monkeypatch, bad_type, normalized):
-    import report_engine.data_collector as dc_mod
-    from agents.subagents.report import ReportSubagent
-
-    seen = {}
-
-    class FakeCollector:
-        def collect(self, report_type="weekly"):
-            seen["report_type"] = report_type
-            return {"period_start": "2026-06-29", "period_end": "2026-07-03"}
-
-    _fake_report_engines(monkeypatch, ["x"])
-    monkeypatch.setattr(dc_mod, "ReportDataCollector", FakeCollector)
-
-    drain_subagent_done(ReportSubagent().run({"report_type": bad_type}))
-    assert seen["report_type"] == normalized
-
-
 # ─────────────────────── 三者共同的 wire 契约 ───────────────────────
 
 def test_all_subagents_declare_stable_names():
-    """subagent 的 name 就是模型看到的工具名，迁 LangGraph 后不许改。"""
+    """subagent 的 name 就是模型看到的工具名，迁 LangGraph 后不许改。
+
+    report 已于 13.2 拆成五个章节 subagent（run_research_report 退役），
+    它们的契约在 tests/report/test_report_section_subagents.py 里守着。
+    """
     from agents.subagents.alpha_lab import AlphaLabSubagent
     from agents.subagents.deep_stock import DeepStockSubagent
     from agents.subagents.news import NewsSubagent
-    from agents.subagents.report import ReportSubagent
 
-    assert ReportSubagent.name == "run_research_report"
     assert DeepStockSubagent.name == "run_deep_stock"
     assert AlphaLabSubagent.name == "run_alpha_lab"
     assert NewsSubagent.name == "run_news_analysis"
@@ -236,6 +136,6 @@ def test_subagent_done_is_the_only_terminal_event():
 
 def test_no_stray_sys_modules_pollution():
     """确保上面的 monkeypatch 都还原了，没往 sys.modules 里塞假货。"""
-    for name in ("report_engine.generator", "alpha_lab.engine"):
+    for name in ("report_engine.section_writer", "alpha_lab.engine"):
         mod = sys.modules.get(name)
         assert mod is None or isinstance(mod, types.ModuleType)
