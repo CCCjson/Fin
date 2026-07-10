@@ -1,7 +1,20 @@
 """
 报告数据采集器 — 从各数据源收集报告所需数据
+
+对外有两类入口：
+
+- `collect_*()` **分片采集**：每个报告章节只采自己需要的那几块。这是 13.2 拆解后
+  五个章节 subagent 的取数口。
+- `collect()` **全量 façade**：把所有分片合并成旧的那份 data 字典，键与顺序逐字不变。
+
+分片之间共享 `collect_common()`（行情总览 + 持仓），它是全流程最贵的一步——一次
+`MarketWebSearcher` 出网 + 逐持仓抓新闻，且 `_section_market_context` 让五个章节
+全都要用它。故加进程内 TTL 缓存，否则 MoneyBill 连调四个章节工具会出网抓四次指数。
 """
+import copy
 import json
+import threading
+import time
 import pandas as pd
 from datetime import date, timedelta, datetime
 from typing import Dict, List, Optional
@@ -20,9 +33,161 @@ from portfolio.calculator import PortfolioCalculator
 from strategy.indicators import TechnicalIndicators
 
 
+_COMMON_CACHE_TTL_SECONDS = 300
+_COMMON_CACHE_MAX_ENTRIES = 4
+_common_cache: Dict[tuple, tuple] = {}          # key -> (expires_at, data)
+_common_cache_lock = threading.Lock()
+
+
+def _period_bounds(report_type: str, period_end: Optional[date]) -> tuple:
+    """(period_start, period_end, is_weekend) —— 报告期窗口的唯一推导处。"""
+    if period_end is None:
+        period_end = date.today()
+    days = {"daily": 1, "weekly": 7, "monthly": 30}.get(report_type, 7)
+    period_start = period_end - timedelta(days=days)
+    is_weekend = period_end.weekday() >= 5   # 周六=5，周日=6
+    return period_start, period_end, is_weekend
+
+
 class ReportDataCollector:
     """收集AI报告所需的各类数据"""
 
+    # ==================================================================
+    # 共享片：行情总览 + 持仓（最贵，五个章节全要，故 TTL 缓存）
+    # ==================================================================
+    def collect_common(self, report_type: str = "weekly", period_end: Optional[date] = None,
+                       enable_web_search: bool = False) -> Dict:
+        """报告期头部 + market_overview + portfolio（含逐持仓新闻）。
+
+        缓存 key 必须含 report_type 与 period_end——只按时间做 key 会让周报命中日报的
+        窗口数据。返回深拷贝，调用方尽管改。
+        """
+        period_start, period_end, is_weekend = _period_bounds(report_type, period_end)
+        key = (report_type, period_end.isoformat(), enable_web_search)
+
+        now = time.monotonic()
+        with _common_cache_lock:
+            hit = _common_cache.get(key)
+            if hit and hit[0] > now:
+                return copy.deepcopy(hit[1])
+
+        data: Dict = {
+            "report_type": report_type,
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "is_weekend": is_weekend,
+        }
+        session = get_session()
+        try:
+            data["market_overview"] = self._collect_market_overview(
+                session, period_start, period_end, enable_web_search=enable_web_search)
+            data["portfolio"] = self._collect_portfolio(session)
+            self._attach_position_news(data["portfolio"])
+        finally:
+            session.close()
+
+        with _common_cache_lock:
+            if len(_common_cache) >= _COMMON_CACHE_MAX_ENTRIES:
+                oldest = min(_common_cache, key=lambda k: _common_cache[k][0])
+                _common_cache.pop(oldest, None)
+            _common_cache[key] = (now + _COMMON_CACHE_TTL_SECONDS, copy.deepcopy(data))
+        return data
+
+    @staticmethod
+    def _attach_position_news(portfolio: Dict) -> None:
+        """为持仓股抓取新闻（每只最多2条最重要的，内容300字），就地写进 pos["news"]。"""
+        try:
+            from news_engine.fetcher import NewsFetcher
+            fetcher = NewsFetcher()
+        except Exception as e:
+            logger.warning(f"持仓新闻抓取失败: {e}")
+            return
+        for pos in portfolio.get("positions", []):
+            try:
+                news_list = fetcher.fetch_a_share_news(pos["symbol"])
+                pos["news"] = [
+                    {
+                        "title": n["title"],
+                        "content": (n.get("content") or "")[:300],
+                        "source": n.get("source", ""),
+                        "published_at": str(n.get("published_at", "")),
+                    }
+                    for n in news_list[:2]
+                ]
+            except Exception as e:
+                logger.warning(f"持仓股 {pos.get('symbol')} 新闻抓取失败，置空继续: {e}")
+                pos["news"] = []
+
+    @staticmethod
+    def _held_symbols(data: Dict) -> set:
+        return {p["symbol"] for p in data.get("portfolio", {}).get("positions", []) if p.get("symbol")}
+
+    # ==================================================================
+    # 分片采集：每个章节 subagent 只采自己那块
+    # ==================================================================
+    def collect_market(self, report_type: str = "weekly", period_end: Optional[date] = None,
+                       enable_web_search: bool = False) -> Dict:
+        """Ch2 市场总览 + Ch4 板块/北向。只需 common。"""
+        return self.collect_common(report_type, period_end, enable_web_search)
+
+    def collect_news(self, report_type: str = "weekly", period_end: Optional[date] = None,
+                     enable_web_search: bool = False) -> Dict:
+        """Ch3 新闻舆情研判。"""
+        data = self.collect_common(report_type, period_end, enable_web_search)
+        data["news_analysis"] = self._analyze_news_sentiment(data)
+        return data
+
+    def collect_positions(self, report_type: str = "weekly", period_end: Optional[date] = None,
+                          enable_web_search: bool = False) -> Dict:
+        """Ch5 持仓诊断。要持仓个股信号 + 命中持仓的卖出预警（买入推荐那半边用不上）。"""
+        data = self.collect_common(report_type, period_end, enable_web_search)
+        period_start = date.fromisoformat(data["period_start"])
+        period_end_d = date.fromisoformat(data["period_end"])
+        held = self._held_symbols(data)
+        session = get_session()
+        try:
+            data["signals"] = self._collect_signals(session, period_start, period_end_d, held)
+            data["top_stocks"] = self._collect_top_stocks(
+                session, period_start, period_end_d, held, want=("sell",))
+        finally:
+            session.close()
+        return data
+
+    def collect_strategy(self, report_type: str = "weekly", period_end: Optional[date] = None,
+                         enable_web_search: bool = False) -> Dict:
+        """Ch6 上期回顾 + Ch7 信号与策略表现。"""
+        data = self.collect_common(report_type, period_end, enable_web_search)
+        period_start = date.fromisoformat(data["period_start"])
+        period_end_d = date.fromisoformat(data["period_end"])
+        held = self._held_symbols(data)
+        session = get_session()
+        try:
+            data["previous_report"] = self._collect_previous_recommendations(
+                session, period_end_d, report_type)
+            data["signals"] = self._collect_signals(session, period_start, period_end_d, held)
+            data["backtest"] = self._collect_backtest(session)
+        finally:
+            session.close()
+        return data
+
+    def collect_picks(self, report_type: str = "weekly", period_end: Optional[date] = None,
+                      enable_web_search: bool = False) -> Dict:
+        """Ch8 买入推荐。"""
+        data = self.collect_common(report_type, period_end, enable_web_search)
+        period_start = date.fromisoformat(data["period_start"])
+        period_end_d = date.fromisoformat(data["period_end"])
+        held = self._held_symbols(data)
+        session = get_session()
+        try:
+            data["top_stocks"] = self._collect_top_stocks(
+                session, period_start, period_end_d, held, want=("buy",))
+        finally:
+            session.close()
+        return data
+
+    # ==================================================================
+    # 全量 façade（旧路径。键与顺序逐字不变）
+    # ==================================================================
     def collect(self, report_type: str = "weekly", period_end: Optional[date] = None,
                 enable_web_search: bool = False) -> Dict:
         """
@@ -36,56 +201,20 @@ class ReportDataCollector:
         Returns:
             结构化数据字典
         """
-        if period_end is None:
-            period_end = date.today()
-
-        days = {"daily": 1, "weekly": 7, "monthly": 30}.get(report_type, 7)
-        period_start = period_end - timedelta(days=days)
-
-        # 判断是否为周末（周六=5，周日=6）
-        is_weekend = period_end.weekday() >= 5
-
-        data: Dict = {
-            "report_type": report_type,
-            "period_start": period_start.isoformat(),
-            "period_end": period_end.isoformat(),
-            "is_weekend": is_weekend,
-        }
+        data = self.collect_common(report_type, period_end, enable_web_search)
+        period_start = date.fromisoformat(data["period_start"])
+        period_end_d = date.fromisoformat(data["period_end"])
 
         session = get_session()
         try:
-            data["market_overview"] = self._collect_market_overview(
-                session, period_start, period_end, enable_web_search=enable_web_search)
-            data["portfolio"] = self._collect_portfolio(session)
-
-            # 为持仓股抓取新闻（每只最多2条最重要的，内容300字）
-            try:
-                from news_engine.fetcher import NewsFetcher
-                fetcher = NewsFetcher()
-                for pos in data["portfolio"].get("positions", []):
-                    try:
-                        news_list = fetcher.fetch_a_share_news(pos["symbol"])
-                        pos["news"] = [
-                            {
-                                "title": n["title"],
-                                "content": (n.get("content") or "")[:300],
-                                "source": n.get("source", ""),
-                                "published_at": str(n.get("published_at", "")),
-                            }
-                            for n in news_list[:2]
-                        ]
-                    except Exception:
-                        pos["news"] = []
-            except Exception as e:
-                logger.warning(f"持仓新闻抓取失败: {e}")
-
-            data["previous_report"] = self._collect_previous_recommendations(session, period_end, report_type)
+            data["previous_report"] = self._collect_previous_recommendations(
+                session, period_end_d, report_type)
             # 提取持仓股代码，传给 signals 和 top_stocks
-            held_symbols = {p["symbol"] for p in data["portfolio"].get("positions", [])}
-            data["signals"] = self._collect_signals(session, period_start, period_end, held_symbols)
+            held_symbols = self._held_symbols(data)
+            data["signals"] = self._collect_signals(session, period_start, period_end_d, held_symbols)
             data["backtest"] = self._collect_backtest(session)
-            data["top_stocks"] = self._collect_top_stocks(session, period_start, period_end, held_symbols)
-            data["trading"] = self._collect_trading(session, period_start, period_end)
+            data["top_stocks"] = self._collect_top_stocks(session, period_start, period_end_d, held_symbols)
+            data["trading"] = self._collect_trading(session, period_start, period_end_d)
         finally:
             session.close()
 
@@ -475,25 +604,30 @@ class ReportDataCollector:
         return stats_map
 
     def _collect_top_stocks(self, session, period_start: date, period_end: date,
-                            held_symbols: Optional[set] = None) -> Dict:
+                            held_symbols: Optional[set] = None,
+                            want: tuple = ("buy", "sell")) -> Dict:
         """收集重点个股数据 — 综合评分排序，买入推荐 10 只 + 卖出预警 3 只
 
         Args:
             held_symbols: 用户当前持仓股代码集合，买入推荐会排除这些标的（Ch5 已分析）
+            want: 只算需要的那半边。买入推荐这一半最贵（打分 + 逐股庄股风险 + 逐股新闻），
+                持仓诊断只用得上 sell_warnings，别让它白跑一遍买入侧。
         """
         try:
             scorer = SignalScorer()
             held_symbols = held_symbols or set()
+            want_buy = "buy" in want
+            want_sell = "sell" in want
 
             # ---- Step 4: 构建策略回测统计 ----
-            backtest_stats = self._build_backtest_stats_map(session)
+            backtest_stats = self._build_backtest_stats_map(session) if want_buy else {}
 
             # ---- 买入推荐：综合评分排序（排除持仓股）----
             all_buy_signals = session.query(Signal).filter(
                 Signal.date >= period_start,
                 Signal.date <= period_end,
                 Signal.signal_type == "BUY",
-            ).all()
+            ).all() if want_buy else []
 
             # 过滤掉持仓股，Ch5 已做持仓诊断，Ch8 只推荐新机会
             if held_symbols:
@@ -549,7 +683,7 @@ class ReportDataCollector:
                 Signal.date >= period_start,
                 Signal.date <= period_end,
                 Signal.signal_type == "SELL",
-            ).all()
+            ).all() if want_sell else []
 
             ranked_sells = scorer.rank_sell_signals(all_sell_signals, period_end, top_n=3)
 
