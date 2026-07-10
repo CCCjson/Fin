@@ -24,6 +24,10 @@ from typing import Optional
 # 匹配失败。改用显式的"前面不是数字/后面不是字母数字"负向断言。
 _STOCK_CODE_RE = re.compile(r"(?<!\d)\d{6}\.(?:SH|SZ)(?![A-Za-z0-9])")
 
+# 「子任务出的是成品，主 agent 收尾只能一句话」这条规则**只适用于自成一篇的子任务**。
+# 五个报告章节 subagent（report_market/news/positions/strategy/picks）**故意不在此列**：
+# 废掉全量报告后，Ch1「纵览 & 操作计划」正是要 MoneyBill 看着几章摘要亲自写出来的，
+# 把它们加进来会把纵览强行压成一句话。
 _SUBAGENT_NAMES = {"run_deep_stock", "run_news_analysis", "run_research_report", "run_alpha_lab"}
 _SUBAGENT_TAIL_MAX_CHARS = 150
 

@@ -14,11 +14,13 @@ from agents.registry import REGISTRY, ToolDef
 from agents.subagents.deep_stock import DeepStockSubagent
 from agents.subagents.news import NewsSubagent
 from agents.subagents.report import ReportSubagent
+from agents.subagents.report_sections import SECTION_SUBAGENTS
 from agents.subagents.alpha_lab import AlphaLabSubagent
 
 _RUNNERS = {
     r.name: r
-    for r in [DeepStockSubagent(), NewsSubagent(), ReportSubagent(), AlphaLabSubagent()]
+    for r in ([DeepStockSubagent(), NewsSubagent(), ReportSubagent(), AlphaLabSubagent()]
+              + [cls() for cls in SECTION_SUBAGENTS])
 }
 
 
@@ -75,6 +77,45 @@ _register(
     "用户说「帮我出一份周报/投研报告/复盘报告」时用。耗时较长。",
     ReportArgs,
 )
+
+
+# ── 五个报告章节（13.2 拆解）──────────────────────────────────────────────
+# 都是「成稿长文」：出的是能直接写进报告的一章 Markdown，几十秒起步。
+# 与之相对的是同域的「快查工具」（秒回一个数字/一张表），描述里必须点名，
+# 否则模型会在 report_news / run_news_analysis / get_news_sentiment 之间挑花眼。
+
+class ReportSectionArgs(BaseModel):
+    report_type: Literal["daily", "weekly", "monthly"] = Field(
+        "weekly", description="报告周期，默认 weekly")
+
+
+_SECTION_DESCRIPTIONS = {
+    "report_market": (
+        "【报告章节·大盘与板块】成稿长文：写出「市场总览与情绪研判 + 板块热点与北向资金」两章。"
+        "用户说「看看这周大盘/板块轮动/北向在买什么」时用。"
+        "只要指数涨跌数字（秒回）用 get_market_overview。"
+    ),
+    "report_news": (
+        "【报告章节·新闻舆情】成稿长文：写出「新闻深度分析与舆情研判」一章，含重大新闻检测与情感倾向。"
+        "只要个股情绪分数（秒回）用 get_news_sentiment；"
+        "要针对某只票的新闻深度解读用 run_news_analysis。"
+    ),
+    "report_positions": (
+        "【报告章节·持仓诊断】成稿长文：逐只持仓股做技术面诊断、卖出预警与明日操作建议。"
+        "只要持仓列表/浮盈亏（秒回）用 get_positions。"
+    ),
+    "report_strategy": (
+        "【报告章节·回顾与策略】成稿长文：写出「上期推荐回顾（胜率/涨幅归因）+ 信号与策略表现」两章。"
+        "只要某条信号的胜率统计（秒回）用 get_signal_stats。"
+    ),
+    "report_picks": (
+        "【报告章节·买入推荐】成稿长文：多策略共振打分选出买入标的，逐只给入场价/止损/止盈与理由。"
+        "耗时最长（按 4 只一批分批生成）。要快速选股候选用 recommend_stocks。"
+    ),
+}
+
+for _name, _desc in _SECTION_DESCRIPTIONS.items():
+    _register(_name, _desc, ReportSectionArgs)
 
 
 class AlphaLabArgs(BaseModel):
