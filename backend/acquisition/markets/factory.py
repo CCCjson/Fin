@@ -2,10 +2,10 @@
 数据获取器工厂
 """
 from typing import Dict
-from data_engine.fetchers.base import BaseFetcher
-from data_engine.fetchers.a_share import AShareFetcher
-from data_engine.fetchers.hk_stock import HKStockFetcher
-from data_engine.fetchers.us_stock import USStockFetcher
+from acquisition.markets.base import BaseFetcher
+from acquisition.markets.a_share import AShareFetcher
+from acquisition.markets.hk_stock import HKStockFetcher
+from acquisition.markets.us_stock import USStockFetcher
 
 
 class FetcherFactory:

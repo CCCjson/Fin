@@ -19,7 +19,7 @@ from data_engine.storage.models import LimitUpPool, StockInfo
 # ST 的 5% 阈值全仓不启用：靠 name 判 ST 不可靠（本库 40.5% 的 ST 名义主板股
 # 涨跌幅越过 ±5%，行为像 10% 股）。等 StockInfo.is_st 权威列落地再传 name。
 from common.limit_rules import get_limit_threshold, is_limit_up
-from data_engine.fetchers.limit_up import fetch_strong_pool
+from acquisition.markets.limit_up import fetch_strong_pool
 
 QUASI_LOW_RATIO = 0.5     # 准涨停扫描：涨幅至少达到该股涨停阈值的 50%
 QUASI_HIGH_RATIO = 0.99   # 上限，双重保险防止已封板的票混入（zt池本已排除这类票）
@@ -137,7 +137,7 @@ def build_candidate_pool(
     这是盘后批处理里的单次调用，不是重复轮询，成本可接受（区别于阶段二盘中轮询）。
     """
     if quotes is None:
-        from data_engine.fetchers.realtime import fetch_a_share_realtime_cached
+        from acquisition.markets.realtime import fetch_a_share_realtime_cached
         quotes = fetch_a_share_realtime_cached(ttl=20.0)
 
     merged: Dict[str, Dict] = {}

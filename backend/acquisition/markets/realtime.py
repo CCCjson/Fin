@@ -189,7 +189,7 @@ def _maybe_fill_from_fallback(unique_data: List[Dict[str, Any]]) -> List[Dict[st
     if len(unique_data) >= FALLBACK_MIN_COVERAGE:
         return unique_data
     try:
-        from data_engine.fetchers.china_batch_quotes import fetch_a_share_realtime_via_fallback
+        from acquisition.markets.china_batch_quotes import fetch_a_share_realtime_via_fallback
         have = {r.get("symbol") for r in unique_data}
         extra = fetch_a_share_realtime_via_fallback(exclude=have)
         if extra:

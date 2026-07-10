@@ -5,7 +5,7 @@
 """
 import pytest
 
-from data_engine.fetchers.realtime import FIELD_MAP, _parse_items, compute_statistics
+from acquisition.markets.realtime import FIELD_MAP, _parse_items, compute_statistics
 
 pytestmark = pytest.mark.baseline
 

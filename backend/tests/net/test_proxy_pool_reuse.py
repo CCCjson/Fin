@@ -220,7 +220,7 @@ def test_reset_breaker_keeps_live_ips():
 
 def test_quote_pool_is_a_module_singleton():
     """`_fetch_all_concurrent` 曾经每次调用都 new 一个 3 槽池然后扔掉。"""
-    import data_engine.fetchers.realtime as rt
+    import acquisition.markets.realtime as rt
 
     rt._QUOTE_POOL = None
     pm = _CountingPM()
@@ -235,7 +235,7 @@ def test_quote_pool_is_a_module_singleton():
 
 def test_quote_pool_survives_three_market_sweeps():
     """三轮全市场抓取（每轮 54 页）总共只买 size 个 IP。"""
-    import data_engine.fetchers.realtime as rt
+    import acquisition.markets.realtime as rt
 
     rt._QUOTE_POOL = None
     pm = _CountingPM()

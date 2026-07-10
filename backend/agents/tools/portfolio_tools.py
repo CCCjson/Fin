@@ -28,7 +28,7 @@ def _overlay_realtime_prices(held: list) -> str:
     if _session_phase() != "intraday" or not held:
         return "eod"
     try:
-        from data_engine.fetchers.realtime import fetch_quotes_by_symbols
+        from acquisition.markets.realtime import fetch_quotes_by_symbols
         quotes = {q["symbol"]: q for q in
                   fetch_quotes_by_symbols([p["symbol"] for p in held])}
     except Exception:  # noqa: BLE001 — 实时失败静默回退 EOD

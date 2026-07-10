@@ -76,7 +76,7 @@ def _slim_row(row: Dict, drop: tuple) -> Dict:
 
 def _breadth_stats() -> Optional[Dict[str, Any]]:
     """全市场涨跌家数 + 涨停/跌停家数（复用共享 TTL 缓存的全市场快照）。"""
-    from data_engine.fetchers.realtime import compute_statistics as _compute_statistics, fetch_a_share_realtime_cached
+    from acquisition.markets.realtime import compute_statistics as _compute_statistics, fetch_a_share_realtime_cached
     rows = fetch_a_share_realtime_cached(ttl=60.0)
     if not rows:
         return None

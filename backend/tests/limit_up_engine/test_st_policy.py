@@ -116,7 +116,7 @@ def test_limit_up_count_matches_compute_statistics():
     这两条链曾经不一致：compute_statistics 不传 name（10%），
     limit_up_engine 传 name（ST 走 4.9%）。
     """
-    from data_engine.fetchers.realtime import compute_statistics
+    from acquisition.markets.realtime import compute_statistics
 
     quotes = [
         {"symbol": "600519.SH", "name": "贵州茅台", "change_pct": 9.95},   # 涨停

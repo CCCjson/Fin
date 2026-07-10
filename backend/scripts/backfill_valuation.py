@@ -33,7 +33,7 @@ def refresh_all_valuations(progress_callback: Optional[Callable[[int, int], None
 
     Returns: {total, saved, updated}
     """
-    from data_engine.fetchers.realtime import fetch_a_share_realtime
+    from acquisition.markets.realtime import fetch_a_share_realtime
     from data_engine.storage.models import DataUpdateLog
 
     logger.info("开始全市场估值快照刷新...")

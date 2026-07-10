@@ -112,7 +112,7 @@ def run_stress_test():
     mem_start = get_mem_mb()
 
     # 先预热，把 40s 测速在压测前一次性搞完
-    from data_engine.fetchers.pytdx_fetcher import warmup_pytdx
+    from acquisition.markets.pytdx_fetcher import warmup_pytdx
     warmup_pytdx()
 
     logger.info(

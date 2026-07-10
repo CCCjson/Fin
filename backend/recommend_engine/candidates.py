@@ -146,7 +146,7 @@ def _intraday_buy_map(symbols: list[str], period: int = 15, count: int = 64) -> 
     if not symbols:
         return {}
     import pandas as pd
-    from data_engine.fetchers.pytdx_fetcher import PytdxFetcher
+    from acquisition.markets.pytdx_fetcher import PytdxFetcher
     from strategy.indicators import TechnicalIndicators
     from strategy.strategies import MACrossStrategy, MACDStrategy, KDJStrategy, RSIStrategy
 

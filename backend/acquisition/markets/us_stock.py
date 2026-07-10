@@ -7,7 +7,7 @@ import pandas as pd
 import re
 from loguru import logger
 
-from data_engine.fetchers.base import BaseFetcher, MarketDataRequest, MarketDataResponse
+from acquisition.markets.base import BaseFetcher, MarketDataRequest, MarketDataResponse
 
 
 class USStockFetcher(BaseFetcher):
@@ -67,7 +67,7 @@ class USStockFetcher(BaseFetcher):
     def fetch_realtime(self, symbols: List[str]) -> List[Dict]:
         """获取实时行情（一次批量 download 替代逐只 ticker.info）"""
         try:
-            from data_engine.fetchers.yf_batch import fetch_yf_realtime_batch
+            from acquisition.markets.yf_batch import fetch_yf_realtime_batch
             return fetch_yf_realtime_batch(symbols)
         except Exception as e:
             logger.error(f"获取实时行情失败: {e}")

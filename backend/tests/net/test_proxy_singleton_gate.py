@@ -122,9 +122,9 @@ def test_proxy_pool_is_never_a_throwaway_local():
     人工把关，所以新增一处就必须来这里登记，顺便被迫想一遍它活多久。
     """
     allowed = {
-        "data_engine/fetchers/realtime.py",    # 模块级 _QUOTE_POOL，常驻
+        "acquisition/markets/realtime.py",     # 模块级 _QUOTE_POOL，常驻
         "data_engine/daily_updater.py",        # 一个 job 一个池（~12min）
-        "data_engine/fetchers/financial.py",   # 同上
+        "acquisition/markets/financial.py",    # 同上
         "data_engine/deep_history/a_share_job.py",
     }
     found = set()

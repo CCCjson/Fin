@@ -33,7 +33,7 @@ from acquisition.markets.eastmoney_crawler import (
 )
 
 # 批量行情接口
-from data_engine.fetchers.realtime import fetch_a_share_realtime_cached
+from acquisition.markets.realtime import fetch_a_share_realtime_cached
 
 # 进程级防双跑锁：慢路径要几分钟到几十分钟，双跑会互相抢代理 IP 和写库
 # （2026-07-07 实测过同一分钟内被连点两次，日志里两条"增量更新完成"相差 44ms）
@@ -164,7 +164,7 @@ class DailyUpdater:
             (成功只数, 写入记录数, 失败的股票列表 — 回落东财慢路径)
         """
         try:
-            from data_engine.fetchers.pytdx_fetcher import PytdxFetcher
+            from acquisition.markets.pytdx_fetcher import PytdxFetcher
         except ImportError as e:
             logger.warning(f"pytdx 不可用，指数转东财慢路径: {e}")
             return 0, 0, list(index_stocks)

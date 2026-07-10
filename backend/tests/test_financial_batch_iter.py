@@ -17,7 +17,7 @@ import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from net import proxy_pool as proxy_pool_mod  # noqa: E402
-from data_engine.fetchers.financial import FinancialFetcher  # noqa: E402
+from acquisition.markets.financial import FinancialFetcher  # noqa: E402
 
 
 class _AlwaysFailAcquirePool:

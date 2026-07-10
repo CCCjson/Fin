@@ -13,7 +13,7 @@ from typing import Generator, List
 from loguru import logger
 from sqlalchemy import func
 
-from data_engine.fetchers.financial import FinancialFetcher
+from acquisition.markets.financial import FinancialFetcher
 from data_engine.storage.database import get_session
 from data_engine.storage.models import DataUpdateLog, FinancialData, StockInfo
 from data_engine.storage.repository import FinancialRepository

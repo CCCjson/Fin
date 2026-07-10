@@ -253,7 +253,7 @@ class SignalGenerator:
         Returns:
             与 scan_market() 一致的 result dict
         """
-        from data_engine.fetchers.pytdx_fetcher import PytdxFetcher
+        from acquisition.markets.pytdx_fetcher import PytdxFetcher
 
         logger.info(f"盘中扫描开始: {len(symbols)} 只股票, {period}分钟线, {bar_count}根")
 

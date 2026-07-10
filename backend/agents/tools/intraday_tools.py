@@ -50,7 +50,7 @@ def get_intraday_check(symbol: str) -> ToolEnvelope:
             "get_daily_data，综合诊断用 get_cockpit_score。"))
 
     # 实时快照（现价/日内高低/累计量/昨收/换手/振幅）
-    from data_engine.fetchers.realtime import fetch_quotes_by_symbols
+    from acquisition.markets.realtime import fetch_quotes_by_symbols
     quotes = fetch_quotes_by_symbols([symbol])
     if not quotes or not quotes[0].get("price"):
         return ToolEnvelope(business_result="negative", message=f"{symbol} 实时行情获取失败，稍后再试。")
@@ -63,7 +63,7 @@ def get_intraday_check(symbol: str) -> ToolEnvelope:
     # 当日 1 分钟线（pytdx 现算，含成交额）
     minute_df = None
     try:
-        from data_engine.fetchers.pytdx_fetcher import PytdxFetcher
+        from acquisition.markets.pytdx_fetcher import PytdxFetcher
         fetcher = PytdxFetcher()
         df = fetcher.fetch_minute_bars(symbol, period=1, count=240, keep_amount=True)
         fetcher.close()

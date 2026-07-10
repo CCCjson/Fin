@@ -11,7 +11,7 @@ from loguru import logger
 
 from data_engine.storage.database import get_session
 from data_engine.storage.models import LimitUpPool
-from data_engine.fetchers.limit_up import (
+from acquisition.markets.limit_up import (
     fetch_limit_up_pool,
     fetch_limit_up_pool_previous,
     fetch_zhaban_pool,

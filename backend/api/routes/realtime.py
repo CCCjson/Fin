@@ -15,7 +15,7 @@ from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from data_engine.fetchers.realtime import (
+from acquisition.markets.realtime import (
     fetch_a_share_realtime_cached,
     fetch_index_realtime,
 )
@@ -103,7 +103,7 @@ async def get_realtime_quotes(
     }
 
 
-from data_engine.fetchers.realtime import compute_statistics as _compute_statistics  # noqa: E402
+from acquisition.markets.realtime import compute_statistics as _compute_statistics  # noqa: E402
 
 
 def _save_quotes(quotes: list) -> int:

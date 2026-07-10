@@ -8,7 +8,7 @@ import re
 from loguru import logger
 
 from common.market import add_exchange_suffix
-from data_engine.fetchers.base import BaseFetcher, MarketDataRequest, MarketDataResponse
+from acquisition.markets.base import BaseFetcher, MarketDataRequest, MarketDataResponse
 
 
 def _safe_symbol(code) -> str | None:
@@ -120,7 +120,7 @@ class AShareFetcher(BaseFetcher):
         secid 的「市场.代码」前缀天然区分沪深，000001.SH(上证指数) 与
         000001.SZ(平安银行) 不再混淆。
         """
-        from data_engine.fetchers.realtime import fetch_quotes_by_symbols
+        from acquisition.markets.realtime import fetch_quotes_by_symbols
         result = fetch_quotes_by_symbols(symbols)
         logger.info(f"成功获取 {len(result)}/{len(symbols)} 只标的的实时行情")
         return result

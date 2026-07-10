@@ -76,7 +76,7 @@ def build_guard_status() -> Dict[str, Any]:
     if not held:
         return {"positions": [], "note": "当前无持仓"}
 
-    from data_engine.fetchers.realtime import fetch_quotes_by_symbols
+    from acquisition.markets.realtime import fetch_quotes_by_symbols
     quotes = {q["symbol"]: q for q in fetch_quotes_by_symbols([p["symbol"] for p in held])}
     stop_pct, tp_pct = _risk_thresholds()
 
@@ -153,7 +153,7 @@ def _scan_once() -> List[Dict[str, Any]]:
     if not held:
         return []
 
-    from data_engine.fetchers.realtime import fetch_quotes_by_symbols
+    from acquisition.markets.realtime import fetch_quotes_by_symbols
     symbols = [p["symbol"] for p in held]
     quotes = {q["symbol"]: q for q in fetch_quotes_by_symbols(symbols)}
     if not quotes:

@@ -8,7 +8,7 @@ import re
 from loguru import logger
 
 from common.market import to_yf_symbol
-from data_engine.fetchers.base import BaseFetcher, MarketDataRequest, MarketDataResponse
+from acquisition.markets.base import BaseFetcher, MarketDataRequest, MarketDataResponse
 
 
 class HKStockFetcher(BaseFetcher):
@@ -71,7 +71,7 @@ class HKStockFetcher(BaseFetcher):
     def fetch_realtime(self, symbols: List[str]) -> List[Dict]:
         """获取实时行情（一次批量 download 替代逐只 ticker.info）"""
         try:
-            from data_engine.fetchers.yf_batch import fetch_yf_realtime_batch
+            from acquisition.markets.yf_batch import fetch_yf_realtime_batch
             yf_symbols = [to_yf_symbol(s) for s in symbols]
             restore = dict(zip(yf_symbols, symbols))
             results = fetch_yf_realtime_batch(yf_symbols)

@@ -46,7 +46,7 @@ def _scan_once() -> List[Dict]:
 
         # 定向拉预警涉及的票（单次 ulist 轻量请求）。原先拉全市场快照每轮要
         # 代理翻页数十次，是本监控被关闭开机自启的原因；改定向后成本可忽略。
-        from data_engine.fetchers.realtime import fetch_quotes_by_symbols
+        from acquisition.markets.realtime import fetch_quotes_by_symbols
         symbols = sorted({a.symbol for a in alerts if a.symbol})
         rows = fetch_quotes_by_symbols(symbols)
         for r in rows:

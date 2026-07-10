@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from loguru import logger
 
-from data_engine.fetchers import FetcherFactory, MarketDataRequest
+from acquisition.markets import FetcherFactory, MarketDataRequest
 from data_engine.storage import (
     get_session,
     StockInfo,
@@ -333,7 +333,7 @@ class DataEngine:
 
         # 联网拉取
         try:
-            from data_engine.fetchers.financial import FinancialFetcher
+            from acquisition.markets.financial import FinancialFetcher
             fetcher = FinancialFetcher()
             fresh_df = fetcher.fetch_financial_data(symbol, start_year=start_year)
             if fresh_df.empty:

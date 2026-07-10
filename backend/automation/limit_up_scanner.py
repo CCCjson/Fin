@@ -26,7 +26,7 @@ _CACHE: Dict = {"data": None, "ts": 0.0}
 
 def _scan_once() -> Dict:
     """同步：拉 zt/zb 两池 + 本地聚合成情绪摘要。在线程池执行（避免阻塞事件循环）。"""
-    from data_engine.fetchers.limit_up import fetch_limit_up_pool, fetch_zhaban_pool
+    from acquisition.markets.limit_up import fetch_limit_up_pool, fetch_zhaban_pool
 
     trade_date_str = datetime.now().strftime("%Y%m%d")
     zt_rows = fetch_limit_up_pool(trade_date_str)

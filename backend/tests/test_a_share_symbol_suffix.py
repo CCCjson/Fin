@@ -10,7 +10,7 @@ import types
 import pandas as pd
 import pytest
 
-from data_engine.fetchers.a_share import AShareFetcher, _safe_symbol
+from acquisition.markets.a_share import AShareFetcher, _safe_symbol
 
 
 class TestSafeSymbol:

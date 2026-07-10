@@ -38,7 +38,7 @@ from loguru import logger
 from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo
 from data_engine.storage.repository import FinancialRepository
-from data_engine.fetchers.financial import FinancialFetcher
+from acquisition.markets.financial import FinancialFetcher
 
 # ── 配置 ──
 START_YEAR = os.getenv("FIN_START_YEAR", "2015")

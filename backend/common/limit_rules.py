@@ -1,7 +1,7 @@
 """
 涨跌停阈值判定 —— 按市场板块 + 是否 ST 区分。全项目唯一实现，勿再手写 9.9。
 
-住在 `common/`（基础层）而非 `limit_up_engine/`，因为 `data_engine.fetchers.realtime`
+住在 `common/`（基础层）而非 `limit_up_engine/`，因为 `acquisition.markets.realtime`
 与 `report_engine` 也要用它，而依赖只许向下（CODING_STANDARDS §0）。
 
 覆盖范围（MVP 明确排除北交所，降低复杂度，见方案「需要确认/实测的风险点」第4条）：

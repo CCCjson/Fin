@@ -148,7 +148,7 @@ async def startup_event():
 
     # pytdx 预热：测速选最优服务器，后续盘中扫描直连不再等待
     try:
-        from data_engine.fetchers.pytdx_fetcher import warmup_pytdx
+        from acquisition.markets.pytdx_fetcher import warmup_pytdx
         warmup_pytdx()
     except Exception as e:
         logger.warning(f"pytdx 预热失败（不影响其他功能）: {e}")
