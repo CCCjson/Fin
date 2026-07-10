@@ -32,6 +32,8 @@ pytestmark = pytest.mark.baseline
 
 
 class _FakeProxy:
+    is_expired = False
+
     def __init__(self, ip: str):
         self.ip, self.port = ip, 8080
 
@@ -47,6 +49,7 @@ class _FakePM:
 
     `get_proxy()` 复用当前 IP（真实 ProxyManager 的语义）；这里的 fake IP 永不过期，
     所以「首轮 get_proxy → 失败 → switch_proxy」的换 IP 路径能被如实测出来。
+    `switch_proxy(stale=)` 也忠实建模「别人换过了就白捡」的守卫。
     """
 
     def __init__(self, ips=()):
@@ -65,7 +68,13 @@ class _FakePM:
         return self.current_proxy
 
     fetch_one_proxy = _next
-    switch_proxy = _next
+
+    def switch_proxy(self, stale=None):
+        if (stale is not None and self.current_proxy is not None
+                and self.current_proxy is not stale
+                and not self.current_proxy.is_expired):
+            return self.current_proxy      # 别人已经换过了，白捡
+        return self._next()
 
     def get_proxy(self):
         return self.current_proxy or self._next()

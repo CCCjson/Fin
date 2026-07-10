@@ -12,6 +12,8 @@ pytestmark = pytest.mark.baseline
 
 
 class _FakeProxy:
+    is_expired = False
+
     def __init__(self, ip: str):
         self.ip, self.port = ip, 8080
 
@@ -23,7 +25,7 @@ class _FakeProxy:
 
 
 class _FakePM:
-    """ips 为空 = 额度耗尽。"""
+    """ips 为空 = 额度耗尽。`switch_proxy(stale=)` 忠实建模「别人换过了就白捡」。"""
 
     def __init__(self, ips=()):
         self.ips = list(ips)
@@ -41,7 +43,13 @@ class _FakePM:
         return self.current_proxy
 
     fetch_one_proxy = _next
-    switch_proxy = _next
+
+    def switch_proxy(self, stale=None):
+        if (stale is not None and self.current_proxy is not None
+                and self.current_proxy is not stale
+                and not self.current_proxy.is_expired):
+            return self.current_proxy
+        return self._next()
 
     def get_proxy(self):
         return self.current_proxy or self._next()

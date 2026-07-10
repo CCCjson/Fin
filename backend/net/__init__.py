@@ -23,6 +23,7 @@ from net.domestic import (
     domestic_bounded_get,
     domestic_get,
     domestic_json,
+    domestic_rotate,
     get_proxy_manager,
 )
 from net.env import apply_proxy_env, proxy_env
@@ -35,7 +36,7 @@ __all__ = [
     "make_domestic_session", "make_httpx_client",
     "ProxyManager", "ProxyInfo",
     "domestic_get", "domestic_json", "domestic_akshare", "get_proxy_manager",
-    "domestic_bounded_get",
+    "domestic_bounded_get", "domestic_rotate",
     "ProxyExhaustedError",
     "bounded_get", "Capped", "MAX_RESPONSE_BYTES", "MAX_FILE_BYTES",
 ]

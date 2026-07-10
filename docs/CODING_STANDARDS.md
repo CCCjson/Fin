@@ -122,7 +122,7 @@ common / net / data_engine.storage（基础层）
 
 | 类 | 职责 | 用在 |
 |---|---|---|
-| `BaseCrawler` | 通用抓取原语：bounded_get 流式封顶 50MB、代理策略、重试、限速 | 一切普通 HTTP 抓取 |
+| `BaseCrawler` | 通用抓取原语：bounded_get 流式封顶 50MB、代理策略（`Channel` 三选一）、重试、限速 | 一切普通 HTTP 抓取 |
 | `ReverseApiCrawler`（逆向类） | 按 `crawler/sites/` 站点配置调用**已侦查好**的接口 | 雪球/股吧/Capital IQ 等已逆向站点 |
 | `ApiDiscoverer`（探测类） | 侦查**新站点**的接口结构，产出站点配置 | 接入新数据源时 |
 
@@ -143,11 +143,20 @@ common / net / data_engine.storage（基础层）
 
    `prefer_direct=True`（2026-07-10 拍板）给低频接口省额度用，目前只有**新闻**路径在用（`news_engine/fetcher.py`、`report_engine/web_searcher.py`）。它和铁律不冲突：铁律禁的是「取不到 IP 就悄悄 `proxies=None`」，而这里直连是调用方显式点头的第一次尝试，且**默认 False**——忘了传参不会偷偷变成直连。
 
-   ⚠️ 仍在绕过铁律的平行栈（13.4-2 `acquisition/` 收编时一并消灭）：`data_engine/fetchers/realtime.py`、`review/service.py`、`scripts/eastmoney_crawler.py` —— 它们各自手写重试，取不到 IP 时仍会静默直连。（`report_engine/web_searcher.py` 已改用 `get_proxy_manager()` 单例 + `prefer_direct` 语义。）
+   ⚠️ 仍在绕过铁律的平行栈（13.4-2 `acquisition/` 收编时一并消灭）：`acquisition/markets/realtime.py`、`review/service.py`、`acquisition/markets/eastmoney_crawler.py` —— 它们各自手写重试，取不到 IP 时仍会静默直连。（`report_engine/web_searcher.py` 已改用 `get_proxy_manager()` 单例 + `prefer_direct` 语义。）
 
    门禁：`tests/net/test_no_direct_fallback.py`。
-3. 行情实时源的主备切换（东财→腾讯→新浪）只在 `acquisition/markets/quote_router.py` 一处实现，调用方无感。
-4. 例外仅两类：localhost 内部服务（C++ 回测 :8002、订单簿撮合、MLX server）可裸 httpx/requests，不走代理层；LLM API 统一走 `llm_client.build_client()` + `llm_config.normalize_chat_params()`，流式循环用 `stream_chat()`（带工具）/ `stream_text()`（纯文本，13.4 新抽，消灭 4 处手抄）。
+
+3. **一次逻辑取数 = 多个 HTTP 请求时，整批共享一个 IP**（2026-07-10 Jason 拍板并实测）。用 `net.domestic_rotate(run, what=...)`：整批交给 `run(proxies)`，任一子请求抛异常就**整批**换一个 IP 重来。
+
+   反例：给 5 个子请求各调一次 `domestic_get`。正常时 `get_proxy()` 复用同一个 IP 没事，可**一旦这个 IP 死了，5 个子请求各跑一个换 IP 循环、各买一个替补**。实测 5 并发买 5 个 IP（应该只买 2 个）。
+
+   底层守卫：`ProxyManager.switch_proxy(stale=手上那个IP)` —— 语义是「换掉**我手上这个**」，不是「随便买一个」。若 `current_proxy` 已经不是它了（别人先一步换过），直接复用那个新 IP 不扣额度。不传 `stale` 仍是无条件买（未收编的旧调用方）。
+
+   实测（真快代理 + 真东财）：20 个并发请求跨 4 轮，只买 3 个 IP；每失败一轮正好换 1 个。门禁：`tests/net/test_batch_shares_one_ip.py`。
+
+4. 行情实时源的主备切换（东财→腾讯→新浪）只在 `acquisition/markets/quote_router.py` 一处实现，调用方无感。
+5. 例外仅**三类**：localhost 内部服务（C++ 回测 :8002、订单簿撮合、MLX server）可裸 httpx/requests，不走代理层；LLM API 统一走 `llm_client.build_client()` + `llm_config.normalize_chat_params()`，流式循环用 `stream_chat()`（带工具）/ `stream_text()`（纯文本，13.4 新抽，消灭 4 处手抄）；**非 HTTP 协议数据源**（pytdx 走 TCP socket 连通达信，塞不进 HTTP 代理层）——它仍须包在 `acquisition/markets/` 门面里，引擎层不得直接 `import pytdx`。
 
 ---
 

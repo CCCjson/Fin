@@ -84,13 +84,19 @@ def _rotate(
     total_rounds = max(1, max_rounds)
     # prefer_direct 只在「有代理可退守」时才谈得上前进式直连；没代理时每轮都是直连。
     direct_round = 0 if (prefer_direct and pm) else -1
+    last_proxy: Optional[ProxyInfo] = None   # 上一轮用的 IP，换的时候指名道姓换掉它
 
     for attempt in range(total_rounds):
         proxy: Optional[ProxyInfo] = None
         if pm is not None and attempt != direct_round:
-            # 首个走代理的轮次复用当前 IP（没过期就不扣额度）；之后每轮 switch 换新 IP。
-            # 直接 fetch_one_proxy() 等于每次请求都买一个新 IP。
-            proxy = pm.get_proxy() if attempt == direct_round + 1 else pm.switch_proxy()
+            # 首个走代理的轮次复用当前 IP（没过期就不扣额度）；之后指名换掉上一轮那个。
+            # 直接 fetch_one_proxy() 等于每次请求都买一个新 IP；
+            # 无参 switch_proxy() 则会在并发下让每个线程各买一个替补（见 switch_proxy 文档）。
+            proxy = (
+                pm.get_proxy() if attempt == direct_round + 1
+                else pm.switch_proxy(stale=last_proxy)
+            )
+            last_proxy = proxy
             if not proxy:
                 # 配了快代理却取不到 IP（额度耗尽 / API 挂）。**绝不用 proxies=None
                 # 发请求** —— 那就是降级直连，铁律禁止（commit 7158f37）。
@@ -116,6 +122,52 @@ def _rotate(
         raise ProxyExhaustedError(
             f"快代理连续换 {total_rounds} 轮仍取不到 IP 或全部失败，放弃 {what}")
     return None   # 未配置快代理：直连是唯一选项，它也失败了
+
+
+def domestic_rotate(
+    run: Callable[[Optional[Dict[str, str]]], Any],
+    *,
+    what: str,
+    max_rounds: int = 5,
+    use_proxy_pool: bool = True,
+    prefer_direct: bool = False,
+    proxy_mgr: Optional[ProxyManager] = None,
+) -> Any:
+    """**一批请求共享一个快代理 IP**：整批交给 `run(proxies)`，整批失败才换 IP 重来。
+
+    给「一次逻辑取数 = 多个 HTTP 请求」的场景用（如并发取 5 个指数的历史 K 线）。
+    若改成每个子请求各调一次 `domestic_get`，它们就各跑一个换 IP 循环——正常时
+    `get_proxy()` 复用同一个 IP 没问题，可**一旦这个 IP 死了，N 个子请求会各买一个
+    替补**。整批共享一个 IP 就没这个问题：一次失败只换一次。
+
+    `run` 拿到的是 `requests` 的 `proxies` dict（或 None 表示本轮直连）。它内部
+    爱怎么并发怎么并发，只要**任一子请求失败就抛异常**——抛出来就是「整批换 IP 重来」。
+
+    Args:
+        run: 批体。收 proxies，抛异常 = 整批失败。
+        what: 日志/异常里的操作名，如 `指数历史K线`。
+        prefer_direct: 第 0 轮整批走直连，失败再上快代理（见 `_rotate`）。
+
+    Returns:
+        `run` 首次成功的返回值；未配代理且全轮失败时返回 None。
+
+    Raises:
+        ProxyExhaustedError: 配了快代理却取不到 IP，或换满 `max_rounds` 轮仍全败。
+
+    Example:
+        >>> def _batch(proxies):
+        ...     sess = make_domestic_session(proxies)
+        ...     with ThreadPoolExecutor(5) as pool:
+        ...         return [f.result() for f in [pool.submit(sess.get, u) for u in urls]]
+        >>> rows = domestic_rotate(_batch, what="指数历史K线")
+    """
+    return _rotate(
+        lambda proxy: run(_proxies_of(proxy)),
+        what=what,
+        pm=_resolve_pm(use_proxy_pool, proxy_mgr),
+        max_rounds=max_rounds,
+        prefer_direct=prefer_direct,
+    )
 
 
 def _resolve_pm(

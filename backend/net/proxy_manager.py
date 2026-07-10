@@ -324,9 +324,33 @@ class ProxyManager:
                 return self.current_proxy
             return self._fetch_one_proxy_locked()
 
-    def switch_proxy(self) -> ProxyInfo | None:
-        """立即切换到新代理（当前 IP 被封/失效时才调，扣额度）。"""
+    def switch_proxy(self, stale: ProxyInfo | None = None) -> ProxyInfo | None:
+        """当前 IP 被封/失效时换一个。
+
+        Args:
+            stale: 调用方手上那个刚失败的 IP。传了它，语义就从「随便买一个新的」
+                收紧成「**换掉我手上这个**」——若此刻 `current_proxy` 已经不是它了
+                （别的线程先一步换过），直接复用那个新 IP，**不再扣额度**。
+
+                这是「一批/一组并发请求共享一个 IP」的关键。不传 `stale` 就是
+                无条件买（旧语义，尚未收编的调用方仍在用）。
+
+        为什么需要：N 个并发请求撞死在同一个 IP 上，会各自调一次 `switch_proxy()`，
+        于是买 N 个 IP —— 明明第一个人换来的新 IP 就够所有人用。实测 5 并发买 5 个。
+        """
         with self._lock:
+            # 别人已经换过了（且新 IP 还活着）→ 白捡，不买。
+            # `is not` 用对象身份：每次提取都 new 一个 ProxyInfo，不会误判。
+            if (
+                stale is not None
+                and self.current_proxy is not None
+                and self.current_proxy is not stale
+                and not self.current_proxy.is_expired
+            ):
+                logger.debug(f"代理 {stale.ip} 已被其他调用方换成 "
+                             f"{self.current_proxy.ip}，直接复用（未扣额度）")
+                return self.current_proxy
+
             if self.current_proxy:
                 self.fail_count += 1
                 logger.info(f"代理 {self.current_proxy.ip}:{self.current_proxy.port} 已失效 "

@@ -59,7 +59,12 @@ class _CountingPM:
             return self.current_proxy
         return self.fetch_one_proxy()
 
-    def switch_proxy(self):
+    def switch_proxy(self, stale=None):
+        # 忠实建模真 ProxyManager：传了 stale 且别人已经换过了 → 白捡，不扣额度
+        if (stale is not None and self.current_proxy is not None
+                and self.current_proxy is not stale
+                and not self.current_proxy.is_expired):
+            return self.current_proxy
         self.current_proxy = None
         return self.fetch_one_proxy()
 
