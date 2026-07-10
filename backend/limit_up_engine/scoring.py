@@ -9,6 +9,7 @@
 from typing import Dict, List, Optional
 
 from common.limit_rules import get_limit_threshold
+from common.scoring_utils import clamp, lerp
 
 WEIGHTS = {
     "momentum": 0.35,
@@ -23,19 +24,6 @@ _SELECT_REASON_SCORE = {
     "近期多次涨停": 85,
     "60日新高": 65,
 }
-
-
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
-
-
-def _lerp(x: Optional[float], x0: float, x1: float, y0: float, y1: float) -> float:
-    if x is None:
-        return (y0 + y1) / 2
-    if x1 == x0:
-        return y0
-    t = _clamp((x - x0) / (x1 - x0), 0.0, 1.0)
-    return y0 + t * (y1 - y0)
 
 
 def _approach_ratio(candidate: Dict) -> Optional[float]:
@@ -53,20 +41,20 @@ def _approach_score(ratio: Optional[float]) -> float:
     if ratio is None:
         return 30.0
     if ratio < 0.5:
-        return _lerp(ratio, 0.0, 0.5, 0.0, 30.0)
+        return lerp(ratio, 0.0, 0.5, 0.0, 30.0)
     if ratio < 0.8:
-        return _lerp(ratio, 0.5, 0.8, 30.0, 70.0)
-    return _lerp(ratio, 0.8, 0.99, 70.0, 95.0)
+        return lerp(ratio, 0.5, 0.8, 30.0, 70.0)
+    return lerp(ratio, 0.8, 0.99, 70.0, 95.0)
 
 
 def _volume_ratio_score(vr: Optional[float]) -> float:
     if vr is None:
         return 50.0  # 数据缺失（continuation/quasi 来源目前拿不到量比）给中性分，不因缺数据而扣分
     if vr < 1:
-        return _lerp(vr, 0.0, 1.0, 0.0, 30.0)
+        return lerp(vr, 0.0, 1.0, 0.0, 30.0)
     if vr <= 3:
-        return _lerp(vr, 1.0, 3.0, 30.0, 90.0)
-    return _lerp(vr, 3.0, 5.0, 90.0, 100.0)
+        return lerp(vr, 1.0, 3.0, 30.0, 90.0)
+    return lerp(vr, 3.0, 5.0, 90.0, 100.0)
 
 
 def momentum_score(candidate: Dict) -> Dict:
@@ -80,14 +68,14 @@ def _turnover_score(t: Optional[float]) -> float:
     if t is None:
         return 50.0
     if t < 3:
-        return _lerp(t, 0.0, 3.0, 0.0, 40.0)
+        return lerp(t, 0.0, 3.0, 0.0, 40.0)
     if t < 5:
-        return _lerp(t, 3.0, 5.0, 40.0, 80.0)
+        return lerp(t, 3.0, 5.0, 40.0, 80.0)
     if t <= 15:
         return 100.0 - abs(t - 10.0) / 5.0 * 20.0  # 5~15 区间"甜区"，10附近最高，两端衰减到80
     if t <= 25:
-        return _lerp(t, 15.0, 25.0, 80.0, 40.0)
-    return _clamp(_lerp(t, 25.0, 35.0, 40.0, 0.0), 0.0, 40.0)
+        return lerp(t, 15.0, 25.0, 80.0, 40.0)
+    return clamp(lerp(t, 25.0, 35.0, 40.0, 0.0), 0.0, 40.0)
 
 
 def capital_score(candidate: Dict) -> float:
@@ -105,7 +93,7 @@ def theme_score(candidate: Dict, industry_heat: Dict[str, int], zt_total: int) -
         return {"score": 50.0, "industry": industry, "count": None}  # 缺行业标签(quasi来源已知局限)给中性分
     count = industry_heat.get(industry, 0)
     ratio = count / zt_total
-    return {"score": _lerp(ratio, 0.0, 0.25, 0.0, 100.0), "industry": industry, "count": count}
+    return {"score": lerp(ratio, 0.0, 0.25, 0.0, 100.0), "industry": industry, "count": count}
 
 
 def sentiment_score(market_sentiment: Dict) -> float:
@@ -115,14 +103,14 @@ def sentiment_score(market_sentiment: Dict) -> float:
     avg_change = profit_effect.get("avg_change_pct") or 0.0
 
     if zt_count < 30:
-        family_score = _lerp(zt_count, 0, 30, 0, 40)
+        family_score = lerp(zt_count, 0, 30, 0, 40)
     elif zt_count <= 60:
-        family_score = _lerp(zt_count, 30, 60, 40, 70)
+        family_score = lerp(zt_count, 30, 60, 40, 70)
     else:
-        family_score = _lerp(zt_count, 60, 120, 70, 100)
+        family_score = lerp(zt_count, 60, 120, 70, 100)
 
-    break_score = 100.0 - _clamp(break_rate * 100 * 2, 0.0, 100.0)
-    profit_score = _clamp(50.0 + avg_change * 10.0, 0.0, 100.0)
+    break_score = 100.0 - clamp(break_rate * 100 * 2, 0.0, 100.0)
+    profit_score = clamp(50.0 + avg_change * 10.0, 0.0, 100.0)
 
     return 0.4 * family_score + 0.3 * break_score + 0.3 * profit_score
 
@@ -136,7 +124,7 @@ def continuation_score(candidate: Dict) -> float:
         if boards <= 0:
             return 40.0
         if boards <= 7:
-            return _lerp(boards, 1, 7, 50.0, 90.0)
+            return lerp(boards, 1, 7, 50.0, 90.0)
         return 85.0  # 过热衰减：7板以上不再加分，反映高位滞涨风险
     return 50.0  # quasi：无历史强势背景，给中性基础分
 

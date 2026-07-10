@@ -17,10 +17,7 @@ from portfolio.calculator import PortfolioCalculator
 from cockpit_engine.scorer import score_cockpit
 from trading_engine.risk.adapter import build_broker_info, get_total_capital, get_max_position_pct
 from trading_engine.position_sizing import size_position
-
-
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
+from common.scoring_utils import clamp
 
 
 class CockpitAggregator:
@@ -70,8 +67,8 @@ class CockpitAggregator:
             else:
                 s = 50.0 + (10.0 if ma5 > ma20 else -10.0)
             if close is not None and ma20:
-                s += _clamp((close - ma20) / ma20 * 100 * 1.5, -10, 10)  # 价距 ma20，每+1%≈+1.5
-            s = _clamp(s, 0, 100)
+                s += clamp((close - ma20) / ma20 * 100 * 1.5, -10, 10)  # 价距 ma20，每+1%≈+1.5
+            s = clamp(s, 0, 100)
             factors["trend_ma"] = round(s, 1)
             sub_scores.append(s)
 
@@ -84,7 +81,7 @@ class CockpitAggregator:
                 s -= 10.0
             if hist is not None:
                 s += 5.0 if hist > 0 else -5.0
-            s = _clamp(s, 0, 100)
+            s = clamp(s, 0, 100)
             factors["macd"] = round(s, 1)
             sub_scores.append(s)
 
@@ -96,21 +93,21 @@ class CockpitAggregator:
                 s = 40.0           # 超卖：偏弱但有反弹机会
             else:
                 s = 50.0 + (rsi - 50.0) * 1.0  # 30~70 线性映射到 30~70
-            s = _clamp(s, 0, 100)
+            s = clamp(s, 0, 100)
             factors["rsi"] = round(s, 1)
             sub_scores.append(s)
 
         # 4) KDJ：k>d 偏多
         if k is not None and d is not None:
-            s = _clamp(50.0 + (k - d) * 1.5, 0, 100)
+            s = clamp(50.0 + (k - d) * 1.5, 0, 100)
             factors["kdj"] = round(s, 1)
             sub_scores.append(s)
 
         # 5) BOLL 位置：收盘价在通道内的相对位置（下轨0~上轨100）
         if close is not None and boll_u is not None and boll_l is not None and boll_u > boll_l:
             pos = (close - boll_l) / (boll_u - boll_l) * 100
-            factors["boll_pos"] = round(_clamp(pos, 0, 100), 1)
-            sub_scores.append(_clamp(pos, 0, 100))
+            factors["boll_pos"] = round(clamp(pos, 0, 100), 1)
+            sub_scores.append(clamp(pos, 0, 100))
 
         if not sub_scores:
             # 无任何指标可用（一般是没有日线数据）才判数据不足
@@ -130,7 +127,7 @@ class CockpitAggregator:
                 latest_signal_type = stype
                 latest_strength = round(strength, 2)
                 latest_reasons = latest.get("reasons")
-                score += (8.0 if stype == "BUY" else -8.0) * _clamp(strength, 0, 1)
+                score += (8.0 if stype == "BUY" else -8.0) * clamp(strength, 0, 1)
 
         detail = {
             "available": True,
@@ -140,7 +137,7 @@ class CockpitAggregator:
             "signal_count_20": len(signals) if signals else 0,
             "reasons": latest_reasons,
         }
-        return round(_clamp(score, 0, 100), 1), detail
+        return round(clamp(score, 0, 100), 1), detail
 
     @staticmethod
     def _score_fundamental(fin) -> (Optional[float], Dict):
@@ -155,15 +152,15 @@ class CockpitAggregator:
 
         sub_scores = []
         if roe is not None:
-            sub_scores.append(_clamp(50 + (roe - 8) * 3, 0, 100))        # ROE 8%中性，每+1%≈+3
+            sub_scores.append(clamp(50 + (roe - 8) * 3, 0, 100))        # ROE 8%中性，每+1%≈+3
         if net_margin is not None:
-            sub_scores.append(_clamp(50 + (net_margin - 10) * 2, 0, 100))  # 净利率 10%中性
+            sub_scores.append(clamp(50 + (net_margin - 10) * 2, 0, 100))  # 净利率 10%中性
         if rev_yoy is not None:
-            sub_scores.append(_clamp(50 + rev_yoy * 1.5, 0, 100))        # 营收增速 0中性
+            sub_scores.append(clamp(50 + rev_yoy * 1.5, 0, 100))        # 营收增速 0中性
         if np_yoy is not None:
-            sub_scores.append(_clamp(50 + np_yoy * 1.0, 0, 100))         # 净利增速 0中性
+            sub_scores.append(clamp(50 + np_yoy * 1.0, 0, 100))         # 净利增速 0中性
         if debt is not None:
-            sub_scores.append(_clamp(50 + (50 - debt) * 1.0, 0, 100))    # 负债率 50%中性，越低越好
+            sub_scores.append(clamp(50 + (50 - debt) * 1.0, 0, 100))    # 负债率 50%中性，越低越好
 
         if not sub_scores:
             return None, {"available": False}
@@ -225,7 +222,7 @@ class CockpitAggregator:
             "predicted_return": pred.get("predicted_return"),
             "forward_days": pred.get("forward_days"),
         }
-        return round(_clamp(score, 0, 100), 1), detail
+        return round(clamp(score, 0, 100), 1), detail
 
     @staticmethod
     def _score_position(symbol: str, latest_price: Optional[float]) -> (Optional[float], Dict):
@@ -246,7 +243,7 @@ class CockpitAggregator:
             pnl_pct = (latest_price - avg_cost) / avg_cost * 100
         if pnl_pct is None:
             return 50.0, {"holding": True, "quantity": qty, "avg_cost": avg_cost}
-        score = _clamp(50 + pnl_pct * 2.5, 0, 100)  # -20%..+20% → 0..100
+        score = clamp(50 + pnl_pct * 2.5, 0, 100)  # -20%..+20% → 0..100
         detail = {
             "holding": True, "quantity": qty, "avg_cost": avg_cost,
             "current_price": latest_price or pos.get("current_price"),

@@ -367,6 +367,7 @@ ignore_missing_imports = true
 module = [
   "common.market",
   "common.limit_rules",
+  "common.scoring_utils",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
