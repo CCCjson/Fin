@@ -53,8 +53,9 @@ def test_multi_market_callsites_do_not_use_naive_split(path):
 def test_risk_analyzer_no_longer_calls_akshare_at_all():
     """13.4-1 那条守卫（先 infer_market_from_symbol 挡住港美股，再调 akshare）已被**取代**。
 
-    13.4-2 实测 `ak.stock_individual_info_em` 打的 `qt/stock/get` 已被东财封杀，
-    而 `domestic_akshare` 把「端点死了」当成「IP 死了」，于是每只 A 股持仓白烧
+    13.4-2 实测 `ak.stock_individual_info_em` 打的 `qt/stock/get` 是重度 IP 门控端点
+    （新快代理 IP 只有 1/14 能通短字段版，akshare 的 116 字段版 0/14），而
+    `domestic_akshare` 把「东财拒绝这个 IP」当成「IP 坏了」，于是每只 A 股持仓白烧
     max_rounds-1 个快代理 IP、结果还是「未知」。行业分类整体改成读
     `StockInfo.industry`，出网调用消失——比「只对 A 股出网」更强。
 

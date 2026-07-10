@@ -180,11 +180,11 @@ class PortfolioRiskAnalyzer:
         """计算行业集中度。行业分类**只读本地库**（`StockInfo.industry`），零出网。
 
         此前逐只持仓调 `domestic_akshare(ak.stock_individual_info_em)`。该 akshare
-        接口打的是 `push2.eastmoney.com/api/qt/stock/get`——**该端点已被东财封杀**
-        （2026-07-10 实测：同一 Session 同一 IP 上 `ulist.np/get` 返 200，它连 TLS
-        都建不起来）。而 `domestic_akshare` 把「端点死了」当成「IP 死了」，于是每只
-        持仓白烧 `max_rounds - 1` 个快代理 IP，异常再被 `except Exception` 吞成
-        「未知」——**烧了 IP，一个行业都没查到**。
+        接口打的是 `push2.eastmoney.com/api/qt/stock/get`——一个**重度 IP 门控**的
+        端点（2026-07-10 实测：新提取的快代理 IP 里只有 1/14 能打通它的短字段版，
+        而 akshare 的 116 字段版 0/14，直连也失败）。`domestic_akshare` 把「东财
+        拒绝这个 IP」当成「IP 坏了」，于是每只持仓白烧 `max_rounds - 1` 个快代理 IP，
+        异常再被 `except Exception` 吞成「未知」——**烧了 IP，一个行业都没查到**。
 
         行业数据现由 `data_engine.industry_updater` 从东财 `clist/get` 的 f100
         字段全市场回填进 `StockInfo.industry`（那个端点是活的）。库里没有就是「未知」。

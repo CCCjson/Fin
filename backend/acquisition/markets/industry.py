@@ -3,17 +3,25 @@ A 股所属行业（申万二级）—— 从东财 `qt/clist/get` 的 `f100` �
 
 ## 为什么不用 akshare
 
-`ak.stock_individual_info_em` 打的是 `push2.eastmoney.com/api/qt/stock/get`。
-**该端点已被东财封杀**（2026-07-10 实测：同一个 Session、同一个 IP 上
-`ulist.np/get` 返 200，它却连 TLS 都建不起来；换 5 个新 IP、加 `ut`、加 UA、
-减字段、直连，全失败）。
+`ak.stock_individual_info_em` 打的是 `push2.eastmoney.com/api/qt/stock/get`，
+一个**重度 IP 门控**的端点。2026-07-10 实测（每次都用新提取的快代理 IP）：
 
-更糟的是 `domestic_akshare` 把「端点死了」当成「IP 死了」，于是每调一次
-白烧 `max_rounds - 1` 个快代理 IP。`risk_analyzer` 逐只持仓调它，异常被
-`except Exception` 吞成「未知」——**烧了 IP，一个行业都没查到**。
+| 端点 | 新 IP 通过率 |
+|---|---|
+| `qt/ulist.np/get` | 3~6 / 10 |
+| `qt/stock/get`（短字段） | **1 / 14** |
+| `qt/stock/get` + akshare 的 116 字段 | **0 / 14**（含那个短字段能通的 IP，及直连） |
 
-`qt/clist/get` 是活的（全市场行情翻页一直在用它），`f100` 就是所属行业。
+而 `domestic_akshare` 把「东财拒绝这个 IP」和「IP 本身坏了」当成同一回事，
+每调一次白烧 `max_rounds - 1` 个快代理 IP。`risk_analyzer` 逐只持仓调它，
+异常再被 `except Exception` 吞成「未知」——**烧了 IP，一个行业都没查到**。
+
+`qt/clist/get` 是全市场行情翻页一直在用的端点，`f100` 就是所属行业。
 一次翻 ~53 页拿到全市场，落库后风控查行业零出网。
+
+⚠️ clist 的通过率同样受东财 IP 封禁影响，且**会随我们自己的抓取量恶化**
+（快代理是共享池、IP 回收再发；打爆东财 = 把自己下次会拿到的 IP 提前烧掉）。
+所以本函数单页失败跳过、连续失败中止，且带 `min_interval` 限速。
 
 ## 为什么不用 `domestic_rotate`
 

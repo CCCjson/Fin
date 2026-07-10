@@ -1,8 +1,9 @@
 """行业分类：取数（东财 clist f100）+ 回填 + 风控读库零出网。
 
-背景：`ak.stock_individual_info_em` 打的 `qt/stock/get` 已被东财封杀
-（2026-07-10 实测），而 `domestic_akshare` 把「端点死了」当成「IP 死了」，
-于是 `risk_analyzer` 逐只持仓白烧 max_rounds-1 个快代理 IP，结果还是「未知」。
+背景：`ak.stock_individual_info_em` 打的 `qt/stock/get` 是**重度 IP 门控**端点
+（2026-07-10 实测：新快代理 IP 只有 1/14 能通短字段版，akshare 的 116 字段版 0/14）。
+`domestic_akshare` 把「东财拒绝这个 IP」当成「IP 坏了」，于是 `risk_analyzer`
+逐只持仓白烧 max_rounds-1 个快代理 IP，结果还是「未知」。
 """
 import pytest
 
@@ -158,7 +159,7 @@ def _risk_analyzer_tree():
 
 
 def test_risk_analyzer_never_touches_the_dead_endpoint():
-    """`stock_individual_info_em` 打的 qt/stock/get 已被东财封杀，且每调一次白烧 IP。
+    """`stock_individual_info_em` 打的 qt/stock/get 重度 IP 门控，每调一次白烧 IP。
 
     结构门禁：只看 AST 里的标识符（docstring 里记着这段历史，是有意为之）。
     比「monkeypatch 一个函数再断言它没被调」硬——那种测试在符号已经不被 import
