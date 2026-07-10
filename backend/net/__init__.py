@@ -3,11 +3,16 @@
 
 国内数据源（东财/akshare）：
     from net import domestic_get, domestic_json, domestic_akshare, make_domestic_session, ProxyManager
+
+⛔ 铁律：国内抓取失败只换快代理 IP 重试，**任何场景禁止降级本地直连**。
+配了快代理却取不到 IP（额度耗尽）→ 抛 ProxyExhaustedError，一个请求都不发。
+唯一合法直连：`.env` 压根没配快代理（那时直连是唯一选项，不是降级）。
 国外出网（OpenAI/websearch）：
     from net import clash_alive, resolve_proxy, make_httpx_client, apply_proxy_env
 """
 from net.clash import clash_alive, get_proxy_mode, reset_probe, resolve_proxy
 from net.domestic import (
+    ProxyExhaustedError,
     domestic_akshare,
     domestic_get,
     domestic_json,
@@ -23,4 +28,5 @@ __all__ = [
     "make_domestic_session", "make_httpx_client",
     "ProxyManager", "ProxyInfo",
     "domestic_get", "domestic_json", "domestic_akshare", "get_proxy_manager",
+    "ProxyExhaustedError",
 ]

@@ -2,7 +2,8 @@
 爬虫代理按域名路由 — 国内域名走快代理池，海外走 Shadowrocket。
 
 - 国内（get_domestic_domains 命中）：net/proxy_manager 取快代理 IP（轮换抗封）。
-  未配 kuaidaili 或取 IP 失败 → 优雅降级直连，绝不阻塞。
+  ⛔ 取不到 IP → 抛 ProxyExhaustedError，**绝不降级直连**（铁律，与 net/domestic 同）。
+  唯一例外：显式 KNOWLEDGE_SCRAPER_PROXY_ENABLED=false，那是明示选择直连。
 - 海外：resolve_overseas() —— 先探本地能否直连海外，能就直连(更快)，不通才走
   Shadowrocket(KNOWLEDGE_OVERSEAS_PROXY)。KNOWLEDGE_OVERSEAS_MODE=auto/direct/proxy。
 
@@ -14,12 +15,12 @@ import threading
 from urllib.parse import urlparse
 from typing import Optional
 
-from loguru import logger
 
 from knowledge_engine.config import (
     get_domestic_domains,
     get_scraper_proxy_enabled, get_proxy_fetch_timeout,
 )
+from net import ProxyExhaustedError
 from net.overseas import resolve_overseas   # 海外：先探直连,不通走 7898
 
 _manager = None
@@ -55,9 +56,21 @@ def _get_manager():
 
 
 def _domestic_proxy_info():
-    """取一个国内快代理 IP（带硬超时；未启用/失败/超时一律返 None → 直连）。"""
+    """取一个国内快代理 IP（带硬超时）。
+
+    ⛔ 铁律：国内抓取失败只换 IP 重试，**任何场景禁止降级本地直连**。此前这里
+    在「未启用 / 取 IP 失败 / 超时」三处静默返回 None（= 直连），2026-07-10
+    Jason 拍板「严格统一」后一律抛 `ProxyExhaustedError`。
+
+    Returns:
+        ProxyInfo；或 None —— **仅当**显式 `KNOWLEDGE_SCRAPER_PROXY_ENABLED=false`
+        （明示选择直连，等价于「没配代理」）。
+
+    Raises:
+        ProxyExhaustedError: 已启用代理但取不到 IP（额度耗尽 / API 挂 / 超时）。
+    """
     if not get_scraper_proxy_enabled():
-        return None
+        return None   # 明示选择直连，不是降级
     import concurrent.futures
 
     def _fetch():
@@ -66,20 +79,23 @@ def _domestic_proxy_info():
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(_fetch).result(timeout=get_proxy_fetch_timeout())
-    except concurrent.futures.TimeoutError:
-        logger.warning(f"取快代理 IP 超时（>{get_proxy_fetch_timeout()}s），降级直连")
-        return None
+            pi = ex.submit(_fetch).result(timeout=get_proxy_fetch_timeout())
+    except concurrent.futures.TimeoutError as e:
+        raise ProxyExhaustedError(
+            f"取快代理 IP 超时（>{get_proxy_fetch_timeout()}s），拒绝降级直连") from e
     except Exception as e:
-        logger.warning(f"取快代理 IP 失败，降级直连：{str(e)[:80]}")
-        return None
+        raise ProxyExhaustedError(f"取快代理 IP 失败，拒绝降级直连：{str(e)[:80]}") from e
+
+    if pi is None:
+        raise ProxyExhaustedError("快代理取不到 IP（额度耗尽？），拒绝降级直连")
+    return pi
 
 
 def curl_proxy_for(url: str) -> Optional[str]:
     """给 curl_cffi 用的代理单串；None = 直连。"""
     if is_domestic(url):
         pi = _domestic_proxy_info()
-        return pi.url if pi else None
+        return pi.url if pi else None   # None 只可能是显式关闭代理
     return resolve_overseas()          # 海外：直连优先，不通走 7898
 
 
@@ -88,7 +104,7 @@ def playwright_proxy_for(url: str) -> Optional[dict]:
     if is_domestic(url):
         pi = _domestic_proxy_info()
         if not pi:
-            return None
+            return None   # 只可能是显式 KNOWLEDGE_SCRAPER_PROXY_ENABLED=false
         server = f"{pi.protocol}://{pi.ip}:{pi.port}"
         d = {"server": server}
         if pi.username and pi.password:

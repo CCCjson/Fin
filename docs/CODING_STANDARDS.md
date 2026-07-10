@@ -129,6 +129,20 @@ common / net / data_engine.storage（基础层）
 硬规矩：
 1. **引擎层禁止散写 requests/httpx 出网**——要爬东西就调 acquisition 的三类之一；接新站先用探测类产配置，再用逆向类日常调用；站点配置只存 `acquisition/crawler/sites/` 一处。
 2. 国内抓取**失败只换代理 IP 重试，任何场景禁止降级本地直连**（铁律，commit `7158f37`）；此策略实现在 BaseCrawler/net 层，调用方不自己写重试。
+
+   **边界（2026-07-10 拍板并落地）**：铁律覆盖**全部**国内抓取，含逆向爬虫栈（股吧/雪球，`knowledge_engine/browser/proxy_route.py`）与手动登录（`manual_login.py`）。三种状态：
+
+   | 状态 | 判定 | 行为 |
+   |---|---|---|
+   | `.env` 没配快代理（`get_proxy_manager()` 返回 None）| 没有代理服务可用 | 直连是**唯一选项**，不是降级 → 允许 |
+   | 配了但取不到 IP（额度耗尽 / API 挂 / 超时）| 降级直连 | 抛 `ProxyExhaustedError`，**一个请求都不发** |
+   | 配了、拿到 IP、请求失败 | 换下一个 IP | 重试到 `max_rounds` 耗尽再抛 |
+
+   `KNOWLEDGE_SCRAPER_PROXY_ENABLED=false` 是逆向爬虫栈的**明示直连开关**（等价于「没配代理」），不是静默降级。
+
+   ⚠️ 仍在绕过铁律的平行栈（13.4-2 `acquisition/` 收编时一并消灭）：`data_engine/fetchers/realtime.py`、`report_engine/web_searcher.py`、`review/service.py`、`scripts/eastmoney_crawler.py` —— 它们各自持有 `ProxyManager` 并手写重试，取不到 IP 时仍会静默直连。
+
+   门禁：`tests/net/test_no_direct_fallback.py`。
 3. 行情实时源的主备切换（东财→腾讯→新浪）只在 `acquisition/markets/quote_router.py` 一处实现，调用方无感。
 4. 例外仅两类：localhost 内部服务（C++ 回测 :8002、订单簿撮合、MLX server）可裸 httpx/requests，不走代理层；LLM API 统一走 `llm_client.build_client()` + `llm_config.normalize_chat_params()`，流式循环用 `stream_chat()`（带工具）/ `stream_text()`（纯文本，13.4 新抽，消灭 4 处手抄）。
 

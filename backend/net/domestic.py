@@ -36,6 +36,10 @@ def get_proxy_manager() -> Optional[ProxyManager]:
         return None
 
 
+class ProxyExhaustedError(RuntimeError):
+    """快代理连续换 IP 仍全部失败，本次调用放弃（不降级直连）。"""
+
+
 def domestic_get(
     url: str,
     *,
@@ -59,9 +63,13 @@ def domestic_get(
         if pm:
             # 首轮 fetch，后续 switch 换新 IP；每一轮都换 IP，没有"最后一轮直连"
             p = pm.fetch_one_proxy() if attempt == 0 else pm.switch_proxy()
-            if p:
-                proxies = p.to_requests_proxies()
-                logger.debug(f"domestic_get 使用快代理: {p.ip}:{p.port}（第 {attempt + 1} 轮）")
+            if not p:
+                # 配了快代理却取不到 IP（额度耗尽 / API 挂）。**绝不用 proxies=None
+                # 发请求** —— 那就是降级直连，铁律禁止（commit 7158f37）。
+                logger.warning(f"domestic_get 第 {attempt + 1}/{total_rounds} 轮取不到快代理 IP，跳过（不直连）")
+                continue
+            proxies = p.to_requests_proxies()
+            logger.debug(f"domestic_get 使用快代理: {p.ip}:{p.port}（第 {attempt + 1} 轮）")
         try:
             session = make_domestic_session(proxies)
             resp = session.get(url, params=params, headers=headers, timeout=timeout)
@@ -71,7 +79,11 @@ def domestic_get(
             logger.warning(f"domestic_get 第 {attempt + 1}/{total_rounds} 轮失败: {e}")
             continue
 
-    return None
+    if pm:
+        raise ProxyExhaustedError(
+            f"快代理连续换 {total_rounds} 轮仍取不到 IP 或全部失败，放弃 GET {url}"
+        )
+    return None   # 未配置快代理：直连是唯一选项，它也失败了
 
 
 def domestic_json(url: str, **kwargs) -> Optional[dict]:
@@ -84,10 +96,6 @@ def domestic_json(url: str, **kwargs) -> Optional[dict]:
     except ValueError as e:
         logger.warning(f"domestic_json 解析失败: {e}")
         return None
-
-
-class ProxyExhaustedError(RuntimeError):
-    """快代理连续换 IP 仍全部失败，本次调用放弃（不降级直连）。"""
 
 
 def domestic_akshare(
@@ -124,7 +132,11 @@ def domestic_akshare(
             proxy_url = None
             if pm:
                 p = pm.fetch_one_proxy() if attempt == 0 else pm.switch_proxy()
-                proxy_url = p.to_env_url() if p else None
+                if not p:
+                    # 取不到 IP 时 proxy_env(None) 就是直连——跳过本轮，不许发请求。
+                    logger.warning(f"akshare 第 {attempt + 1}/{total_rounds} 轮取不到快代理 IP，跳过（不直连）")
+                    continue
+                proxy_url = p.to_env_url()
             with proxy_env(proxy_url):
                 try:
                     r = fn(*args, **kwargs)

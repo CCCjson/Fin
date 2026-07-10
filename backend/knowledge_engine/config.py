@@ -135,10 +135,16 @@ def get_scrapers_config_dir() -> str:
 
 
 def get_scraper_proxy_enabled() -> bool:
-    """国内站爬取是否走快代理池（net/proxy_pool，IP 轮换抗封）。
-    默认关——直连开箱即用、可靠；快代理慢/额度耗尽时不会拖死爬虫。
-    需要抗封量抓时再开（且确保 kuaidaili 健康）。"""
-    return os.getenv("KNOWLEDGE_SCRAPER_PROXY_ENABLED", "false").lower() in ("1", "true", "yes")
+    """国内站爬取是否走快代理池（net/proxy_manager，IP 轮换抗封）。
+
+    **默认开**（2026-07-10 Jason 拍板「严格统一」）：国内抓取绝不降级直连的铁律，
+    同样约束逆向爬虫栈。取不到 IP 时 `proxy_route` 抛 `ProxyExhaustedError`，
+    不再静默直连。
+
+    显式设为 false = **明示选择直连**（等价于「没配代理」这个唯一合法直连场景），
+    不是静默降级。快代理额度耗尽又想继续爬时用它，但你会知道自己在直连。
+    """
+    return os.getenv("KNOWLEDGE_SCRAPER_PROXY_ENABLED", "true").lower() in ("1", "true", "yes")
 
 
 def get_proxy_fetch_timeout() -> float:
