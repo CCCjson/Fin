@@ -215,3 +215,28 @@ def test_report_picks_with_no_recommendations_records_nothing(fake_engine):
     fake_engine["data"] = {"portfolio": {"positions": []}}
     list(get_runner("report_picks").run({}))
     assert fake_engine["recorded"] == [[]]
+
+
+# ── 工具描述里点名的工具必须真实存在 ──────────────────────────────────────
+
+def test_descriptions_only_reference_tools_that_exist():
+    """章节工具的描述里会写「快查请用 X」来跟自己划清界限。
+
+    X 必须是真实注册的工具名——曾经写成 `get_market_overview`（真名是
+    `get_market_pulse`），模型照着描述去调只会得到「未注册的工具」。
+    """
+    import re
+
+    from agents.registry import REGISTRY
+
+    registered = {td.name for td in REGISTRY.all()}
+    # 描述里凡是 snake_case 且形如动词_名词的 token，都当成工具名候选
+    candidate = re.compile(r"\b(?:get|run|record|recommend|predict|list|update|load)_[a-z_]+\b")
+
+    missing = set()
+    for name in SECTION_NAMES:
+        desc = REGISTRY.get(name).description
+        for tok in candidate.findall(desc):
+            if tok not in registered:
+                missing.add((name, tok))
+    assert not missing, f"描述里点名了不存在的工具: {sorted(missing)}"
