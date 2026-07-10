@@ -19,6 +19,8 @@ BaseCrawler —— 通用抓取原语，全仓一切出网 HTTP 的门面。
 - `ApiDiscoverer`：侦查**新站点**的接口结构，产出站点配置
 """
 import json
+import threading
+import time
 from typing import Any
 
 from loguru import logger
@@ -45,6 +47,7 @@ class BaseCrawler:
         max_rounds: int = 5,
         prefer_direct: bool = False,
         impersonate: bool = False,
+        min_interval: float = 0.0,
         headers: dict[str, str] | None = None,
     ) -> None:
         """
@@ -57,6 +60,9 @@ class BaseCrawler:
                 省额度用）。这是**前进式**的显式直连，不是降级；一旦直连失败就必须
                 走代理，代理取不到 IP 照样抛。默认 False——忘了传参不会偷偷直连。
             impersonate: 仅 OVERSEAS/DIRECT：用 curl_cffi 伪装 TLS 指纹（强反爬源）。
+            min_interval: 本抓取器两次请求之间的最小间隔（秒）。翻页类任务必设，
+                否则东财会掐连接（`realtime._fetch_one_page` 用信号量 + 0.1s 达到同效）。
+                同一实例内跨线程生效。
             headers: 每次请求附带的默认请求头。
         """
         if channel is Channel.DOMESTIC and impersonate:
@@ -66,7 +72,20 @@ class BaseCrawler:
         self.max_rounds = max_rounds
         self.prefer_direct = prefer_direct
         self.impersonate = impersonate
+        self.min_interval = min_interval
         self.headers = {"User-Agent": USER_AGENT, **(headers or {})}
+        self._pace_lock = threading.Lock()
+        self._last_request_at = 0.0
+
+    def _pace(self) -> None:
+        """限速：保证本抓取器两次请求间隔 ≥ min_interval。"""
+        if self.min_interval <= 0:
+            return
+        with self._pace_lock:
+            wait = self._last_request_at + self.min_interval - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            self._last_request_at = time.monotonic()
 
     # ── 核心：一次有上限的 GET ────────────────────────────────────────────
 
@@ -91,6 +110,7 @@ class BaseCrawler:
             ProxyExhaustedError: 仅 DOMESTIC，配了快代理却取不到 IP / 换满仍全败。
         """
         merged = {**self.headers, **(headers or {})}
+        self._pace()
 
         if self.channel is Channel.DOMESTIC:
             return domestic_bounded_get(

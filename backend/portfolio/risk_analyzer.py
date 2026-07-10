@@ -16,10 +16,10 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional
 from loguru import logger
 
-from common.market import infer_market_from_symbol, to_bare_code
+from sqlalchemy.exc import SQLAlchemyError
 
 from data_engine.storage.database import get_session
-from data_engine.storage.models import DailyQuote
+from data_engine.storage.models import DailyQuote, StockInfo
 
 
 class PortfolioRiskAnalyzer:
@@ -159,39 +159,52 @@ class PortfolioRiskAnalyzer:
     # ------------------------------------------------------------------
     # 2. 行业集中度
     # ------------------------------------------------------------------
+    @staticmethod
+    def _load_industries(symbols: List[str]) -> Dict[str, str]:
+        """一次查库拿到 `symbol -> industry`。查不到/为空的不进 dict。"""
+        if not symbols:
+            return {}
+        try:
+            session = get_session()
+            try:
+                rows = (session.query(StockInfo.symbol, StockInfo.industry)
+                        .filter(StockInfo.symbol.in_(symbols)).all())
+            finally:
+                session.close()
+            return {s: i for s, i in rows if i}
+        except SQLAlchemyError as e:
+            logger.warning(f"读取行业分类失败，全部记为「未知」: {e}")
+            return {}
+
     def _calc_industry_concentration(self, positions: List[Dict], weights: Dict[str, float]) -> Dict:
-        """计算行业集中度（通过 akshare 实时获取行业分类）"""
+        """计算行业集中度。行业分类**只读本地库**（`StockInfo.industry`），零出网。
+
+        此前逐只持仓调 `domestic_akshare(ak.stock_individual_info_em)`。该 akshare
+        接口打的是 `push2.eastmoney.com/api/qt/stock/get`——**该端点已被东财封杀**
+        （2026-07-10 实测：同一 Session 同一 IP 上 `ulist.np/get` 返 200，它连 TLS
+        都建不起来）。而 `domestic_akshare` 把「端点死了」当成「IP 死了」，于是每只
+        持仓白烧 `max_rounds - 1` 个快代理 IP，异常再被 `except Exception` 吞成
+        「未知」——**烧了 IP，一个行业都没查到**。
+
+        行业数据现由 `data_engine.industry_updater` 从东财 `clist/get` 的 f100
+        字段全市场回填进 `StockInfo.industry`（那个端点是活的）。库里没有就是「未知」。
+        """
         industry_map: Dict[str, str] = {}
         industry_weights: Dict[str, float] = {}
 
-        # 尝试通过 akshare 获取行业信息
+        symbols = [p.get("symbol", "") for p in positions if p.get("symbol")]
+        from_db = self._load_industries(symbols)
+
         for p in positions:
             sym = p.get("symbol", "")
             if not sym:
                 continue
-            industry = p.get("industry") or None
+            # 调用方自带的行业 > 本地库 > 未知
+            industry = p.get("industry") or from_db.get(sym) or "未知"
 
-            # ak.stock_individual_info_em 只认 A 股。此前对港美股持仓也照查不误，
-            # 每只白跑一次出网、失败后落进 except 记成「未知」——直接跳过。
-            if not industry and infer_market_from_symbol(sym) != "a_share":
-                industry = "未知"
-
-            if not industry:
-                try:
-                    import akshare as ak
-                    from net import domestic_akshare
-                    code = to_bare_code(sym)
-                    info_df = domestic_akshare(ak.stock_individual_info_em, symbol=code)
-                    if info_df is not None and not info_df.empty:
-                        # info_df 格式: item / value
-                        info_dict = dict(zip(info_df["item"], info_df["value"]))
-                        industry = info_dict.get("行业", "未知")
-                except Exception:
-                    industry = "未知"
-
-            industry_map[sym] = industry or "未知"
+            industry_map[sym] = industry
             w = weights.get(sym, 0)
-            industry_weights[industry_map[sym]] = industry_weights.get(industry_map[sym], 0) + w
+            industry_weights[industry] = industry_weights.get(industry, 0) + w
 
         if not industry_weights:
             return {"concentrated": False, "status": "无行业数据"}

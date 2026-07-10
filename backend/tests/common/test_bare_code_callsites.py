@@ -19,12 +19,14 @@ _BACKEND = pathlib.Path(__file__).resolve().parents[2]
 
 # 会收到多市场 symbol 的取裸码点。web_searcher 的东财 secid 拼装不在此列
 # ——它是 wire 边界（`1.600000`），且非 SH/SZ 直接 continue，BRK.B 到不了那儿。
+# `portfolio/risk_analyzer.py` 曾在此列。13.4-2 之后它**不再取裸码**——行业分类
+# 改成整表读 `StockInfo.industry`（带后缀的 symbol 直接当主键查），akshare 调用整个
+# 消失，`to_bare_code` 自然也没了。守卫见 `tests/acquisition/test_industry.py`。
 MULTI_MARKET_CALLSITES = [
     "news_engine/fetcher.py",
     "news_engine/news_scheduler.py",
     "news_engine/analyzer.py",
     "report_engine/chapter_utils.py",
-    "portfolio/risk_analyzer.py",
 ]
 
 
@@ -48,22 +50,37 @@ def test_multi_market_callsites_do_not_use_naive_split(path):
     assert "to_bare_code" in src
 
 
-def test_risk_analyzer_skips_non_a_share_before_calling_akshare():
-    """ak.stock_individual_info_em 只认 A 股。港美股持仓此前每只白跑一次出网。"""
+def test_risk_analyzer_no_longer_calls_akshare_at_all():
+    """13.4-1 那条守卫（先 infer_market_from_symbol 挡住港美股，再调 akshare）已被**取代**。
+
+    13.4-2 实测 `ak.stock_individual_info_em` 打的 `qt/stock/get` 已被东财封杀，
+    而 `domestic_akshare` 把「端点死了」当成「IP 死了」，于是每只 A 股持仓白烧
+    max_rounds-1 个快代理 IP、结果还是「未知」。行业分类整体改成读
+    `StockInfo.industry`，出网调用消失——比「只对 A 股出网」更强。
+
+    这条测试保留下来，是为了记住：如果哪天有人把 akshare 调回来，它得先解释
+    为什么那个端点又活了。更细的门禁在 `tests/acquisition/test_industry.py`。
+    """
+    import ast
+    import textwrap
+
     from portfolio.risk_analyzer import PortfolioRiskAnalyzer
 
-    src = inspect.getsource(PortfolioRiskAnalyzer._calc_industry_concentration)
-    assert "infer_market_from_symbol" in src
-    # 守卫必须在**真实调用**之前（找调用点而非任意出现——注释里也提到了这个函数名）
-    assert src.index("infer_market_from_symbol") < src.index("domestic_akshare(ak.stock_individual_info_em")
+    src = textwrap.dedent(inspect.getsource(PortfolioRiskAnalyzer._calc_industry_concentration))
+    tree = ast.parse(src)
+    # 只看 AST 标识符：docstring 里刻意记着这段历史，不该被误判
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    names |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    assert "domestic_akshare" not in names, "行业集中度又调回 akshare 了"
+    assert "stock_individual_info_em" not in names
 
 
-def test_industry_concentration_never_calls_akshare_for_hk_or_us(monkeypatch):
-    import net
+def test_industry_concentration_marks_hk_and_us_unknown(monkeypatch):
+    """港美股在 StockInfo.industry 里没有行业（那是 A 股字段）→ 记「未知」，且不出网。"""
     from portfolio.risk_analyzer import PortfolioRiskAnalyzer
 
-    called = []
-    monkeypatch.setattr(net, "domestic_akshare", lambda fn, **kw: called.append(kw) or None)
+    # 不碰真库：读库路径本身另有测试，这里只验分类逻辑
+    monkeypatch.setattr(PortfolioRiskAnalyzer, "_load_industries", staticmethod(lambda syms: {}))
 
     positions = [
         {"symbol": "00700.HK", "market_value": 1000},
@@ -73,5 +90,4 @@ def test_industry_concentration_never_calls_akshare_for_hk_or_us(monkeypatch):
     weights = {p["symbol"]: 1 / 3 for p in positions}
     out = PortfolioRiskAnalyzer()._calc_industry_concentration(positions, weights)
 
-    assert called == [], f"不该为港美股调 A 股接口，实际调了 {called}"
     assert out["industries"] == {"未知": 100.0}

@@ -43,7 +43,28 @@ _AKSHARE_LOCK = threading.Lock()
 
 
 class ProxyExhaustedError(RuntimeError):
-    """快代理连续换 IP 仍全部失败，本次调用放弃（不降级直连）。"""
+    """快代理不可用，本次调用放弃（**绝不降级直连**）。
+
+    两个子类区分「为什么不可用」——因为调用方的正确反应不同：
+    额度耗尽时继续翻页毫无意义，而某一页换满 IP 仍失败时跳过它继续跑很合理。
+    只 `except ProxyExhaustedError` 的旧调用方行为不变。
+    """
+
+
+class ProxyQuotaExhaustedError(ProxyExhaustedError):
+    """配了快代理却**一个 IP 都取不到**（额度耗尽 / 提取 API 挂 / 超时）。
+
+    硬失败：一个请求都没发出去，重试也拿不到 IP。调用方应当整体放弃。
+    """
+
+
+class ProxyRetriesExhaustedError(ProxyExhaustedError):
+    """换满 `max_rounds` 个 IP，每个都失败了。
+
+    IP 是拿到了的，请求也真的发了。可能是这批 IP 都不行，也可能是**端点本身
+    废了**（`_rotate` 把一切失败都归咎于 IP，它分不出来）。批量任务可以跳过
+    这一项继续；单次调用通常该放弃。
+    """
 
 
 def _rotate(
@@ -101,7 +122,7 @@ def _rotate(
                 # 配了快代理却取不到 IP（额度耗尽 / API 挂）。**绝不用 proxies=None
                 # 发请求** —— 那就是降级直连，铁律禁止（commit 7158f37）。
                 # 也不再把剩余轮次打完：那只是白白轰炸提取 API。
-                raise ProxyExhaustedError(
+                raise ProxyQuotaExhaustedError(
                     f"取不到快代理 IP（额度耗尽？），拒绝降级直连，放弃 {what}")
             logger.debug(f"{what} 使用快代理: {proxy.ip}:{proxy.port}（第 {attempt + 1} 轮）")
 
@@ -119,8 +140,9 @@ def _rotate(
         logger.debug(f"{what} 第 {attempt + 1} 轮返回空，换 IP 重试")
 
     if pm is not None:
-        raise ProxyExhaustedError(
-            f"快代理连续换 {total_rounds} 轮仍取不到 IP 或全部失败，放弃 {what}")
+        raise ProxyRetriesExhaustedError(
+            f"快代理连续换 {total_rounds} 个 IP 仍全部失败，放弃 {what}"
+            f"（IP 都拿到了、请求也发了——也可能是这个端点本身废了）")
     return None   # 未配置快代理：直连是唯一选项，它也失败了
 
 

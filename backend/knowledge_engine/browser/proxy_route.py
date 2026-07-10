@@ -20,7 +20,7 @@ from knowledge_engine.config import (
     get_domestic_domains,
     get_scraper_proxy_enabled, get_proxy_fetch_timeout,
 )
-from net import ProxyExhaustedError
+from net import ProxyQuotaExhaustedError
 from net.overseas import resolve_overseas   # 海外：先探直连,不通走 7898
 
 _manager = None
@@ -87,13 +87,13 @@ def _domestic_proxy_info():
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             pi = ex.submit(_fetch).result(timeout=get_proxy_fetch_timeout())
     except concurrent.futures.TimeoutError as e:
-        raise ProxyExhaustedError(
+        raise ProxyQuotaExhaustedError(
             f"取快代理 IP 超时（>{get_proxy_fetch_timeout()}s），拒绝降级直连") from e
     except Exception as e:
-        raise ProxyExhaustedError(f"取快代理 IP 失败，拒绝降级直连：{str(e)[:80]}") from e
+        raise ProxyQuotaExhaustedError(f"取快代理 IP 失败，拒绝降级直连：{str(e)[:80]}") from e
 
     if pi is None:
-        raise ProxyExhaustedError("快代理取不到 IP（额度耗尽？），拒绝降级直连")
+        raise ProxyQuotaExhaustedError("快代理取不到 IP（额度耗尽？），拒绝降级直连")
     return pi
 
 

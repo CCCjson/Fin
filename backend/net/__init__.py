@@ -19,6 +19,8 @@ from net.bounded import (
 from net.clash import clash_alive, get_proxy_mode, reset_probe, resolve_proxy
 from net.domestic import (
     ProxyExhaustedError,
+    ProxyQuotaExhaustedError,
+    ProxyRetriesExhaustedError,
     domestic_akshare,
     domestic_bounded_get,
     domestic_get,
@@ -37,6 +39,6 @@ __all__ = [
     "ProxyManager", "ProxyInfo",
     "domestic_get", "domestic_json", "domestic_akshare", "get_proxy_manager",
     "domestic_bounded_get", "domestic_rotate",
-    "ProxyExhaustedError",
+    "ProxyExhaustedError", "ProxyQuotaExhaustedError", "ProxyRetriesExhaustedError",
     "bounded_get", "Capped", "MAX_RESPONSE_BYTES", "MAX_FILE_BYTES",
 ]

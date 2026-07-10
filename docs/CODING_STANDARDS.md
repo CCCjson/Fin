@@ -163,6 +163,15 @@ common / net / data_engine.storage（基础层）
 
    ⚠️ **`_rotate` 把一切失败都归咎于 IP**。若某个端点对所有 IP 都失败（如 2026-07-10 实测 `push2.eastmoney.com/api/qt/stock/get` 已被东财封杀，而同一 Session 同一 IP 上 `ulist.np/get` 仍 200），每次调用会白烧 `max_rounds - 1` 个 IP 才放弃。新增抓取时先手工验一次端点是否还活着。
 
+   `ProxyExhaustedError` 有**两个子类**，因为调用方的正确反应不同：
+
+   | 子类 | 含义 | 批量任务该怎么办 |
+   |---|---|---|
+   | `ProxyQuotaExhaustedError` | 一个 IP 都取不到（额度耗尽 / 提取 API 挂）；**一个请求都没发** | 整体放弃——继续翻页拿不到 IP |
+   | `ProxyRetriesExhaustedError` | 换满 `max_rounds` 个 IP，每个都失败了；IP 拿到了、请求也发了 | 跳过这一项继续；连续失败多次再判定池子挂了 |
+
+   只 `except ProxyExhaustedError` 的调用方行为不变。范例见 `acquisition/markets/industry.py`。
+
 4. 行情实时源的主备切换（东财→腾讯→新浪）只在 `acquisition/markets/quote_router.py` 一处实现，调用方无感。
 5. 例外仅**三类**：localhost 内部服务（C++ 回测 :8002、订单簿撮合、MLX server）可裸 httpx/requests，不走代理层；LLM API 统一走 `llm_client.build_client()` + `llm_config.normalize_chat_params()`，流式循环用 `stream_chat()`（带工具）/ `stream_text()`（纯文本，13.4 新抽，消灭 4 处手抄）；**非 HTTP 协议数据源**（pytdx 走 TCP socket 连通达信，塞不进 HTTP 代理层）——它仍须包在 `acquisition/markets/` 门面里，引擎层不得直接 `import pytdx`。
 
