@@ -43,11 +43,12 @@ def _read_last_source() -> str | None:
         return None
 
 
-def _write_last_source(source: str, filled: int) -> None:
+def _write_last_source(source: str, fetched_this_run: int) -> None:
     _SOURCE_MARKER.parent.mkdir(parents=True, exist_ok=True)
     tmp = _SOURCE_MARKER.with_suffix(".json.tmp")
     tmp.write_text(json.dumps({
-        "source": source, "filled": filled,
+        # fetched_this_run = 本轮拉到几条，**不是**库里总数（resume 时只补缺口）
+        "source": source, "fetched_this_run": fetched_this_run,
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(_SOURCE_MARKER)
