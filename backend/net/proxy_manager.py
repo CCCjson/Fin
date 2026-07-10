@@ -301,3 +301,34 @@ class ProxyManager:
         else:
             logger.info(f"  当前代理: 无")
         logger.info(f"{'=' * 40}")
+
+
+# ============ CLI 入口 ============
+# 排查快代理额度/连通性用：`conda run -n quant python -m net.proxy_manager [fetch|status]`
+# （原先住在 scripts/proxy_manager.py 的兼容 shim 里，随 shim 一起搬过来。）
+if __name__ == "__main__":
+    import sys
+
+    logger.remove()
+    logger.add(
+        sys.stdout,
+        level="INFO",
+        format="<green>{time:HH:mm:ss}</green> | <level>{level: <7}</level> | <level>{message}</level>",
+    )
+
+    manager = ProxyManager()
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "fetch"
+
+    if cmd == "fetch":
+        proxy = manager.fetch_one_proxy()
+        if proxy:
+            logger.info(f"获取成功: {proxy.ip}:{proxy.port}")
+            logger.info(f"代理 URL: {proxy.url}")
+            logger.info(f"过期时间: {proxy.expire_at}")
+        else:
+            logger.error("获取失败")
+    elif cmd == "status":
+        manager.print_status()
+    else:
+        print(f"未知命令: {cmd}")
+        print("用法: python -m net.proxy_manager [fetch|status]")

@@ -43,9 +43,7 @@ def _sort_quotes(quotes: list, sort_by: str, ascending: bool) -> list:
 def _get_proxy() -> Optional[dict]:
     """尝试获取代理 IP（可选功能）"""
     try:
-        scripts_dir = Path(__file__).parent.parent.parent / "scripts"
-        sys.path.insert(0, str(scripts_dir))
-        from proxy_manager import ProxyManager
+        from net import ProxyManager
         mgr = ProxyManager()
         proxy = mgr.fetch_one_proxy()
         if proxy:

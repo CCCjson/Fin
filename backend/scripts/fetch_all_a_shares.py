@@ -29,9 +29,10 @@ from data_engine.storage.models import StockInfo, DailyQuote, DataUpdateLog
 
 # 导入企业级爬虫
 from eastmoney_crawler import EastMoneyCrawler, CrawlerConfig, parse_kline_data, ProxyTimeoutError
-from proxy_manager import ProxyManager
 
-# 绕过系统代理（Clash）— 必须放在 import 之后，因为 proxy_manager 的 load_dotenv 会重新注入
+from net import ProxyManager
+
+# 绕过系统代理（Clash）— 必须放在 import 之后，因为 net.proxy_manager 的 load_dotenv 会重新注入
 for _k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
     os.environ.pop(_k, None)
 

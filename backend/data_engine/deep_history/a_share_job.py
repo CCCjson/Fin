@@ -26,14 +26,15 @@ from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo, DailyQuote
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, klines_to_records
 from data_engine.liveness import LivenessTracker
+from net import ProxyManager
 from net.proxy_pool import ProxyPool, is_proxy_connect_error
 
+# eastmoney_crawler 还住在 scripts/（13.4-2 迁 acquisition/markets 时这段就没了）
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from eastmoney_crawler import EastMoneyCrawler, CrawlerConfig, parse_kline_data, ProxyTimeoutError  # noqa: E402
-from proxy_manager import ProxyManager  # noqa: E402
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 PROGRESS_FILE = _BACKEND_DIR / "scripts" / "deep_history_a_share_progress.json"

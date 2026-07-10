@@ -26,12 +26,7 @@ class MarketWebSearcher:
         """初始化 ProxyManager"""
         try:
             import sys
-            from pathlib import Path
-            scripts_dir = str(Path(__file__).resolve().parent.parent / "scripts")
-            if scripts_dir not in sys.path:
-                sys.path.insert(0, scripts_dir)
-
-            from proxy_manager import ProxyManager
+            from net import ProxyManager
             if self._proxy_manager is None:
                 self._proxy_manager = ProxyManager()
         except Exception as e:
