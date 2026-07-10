@@ -18,12 +18,12 @@ import queue
 import random
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Dict, Iterator, Optional
 
 from loguru import logger
 
-from net.proxy_manager import ProxyManager, ProxyInfo
+from net.proxy_manager import ProxyInfo, ProxyManager
 
 # 直连（无代理）时的保守限速区间
 DIRECT_MIN_DELAY = 2.0
@@ -111,7 +111,7 @@ class ProxySlot:
 
     def __init__(self, slot_id: int, min_delay: float, max_delay: float):
         self.slot_id = slot_id
-        self.proxy: Optional[ProxyInfo] = None
+        self.proxy: ProxyInfo | None = None
         self.rate_limiter = RateLimiter(min_delay, max_delay)
         self.consecutive_failures = 0
         self.failed = False  # report_failure 标记，下次 acquire 时换 IP
@@ -120,7 +120,7 @@ class ProxySlot:
     def is_direct(self) -> bool:
         return self.proxy is None
 
-    def to_requests_proxies(self) -> Optional[Dict[str, str]]:
+    def to_requests_proxies(self) -> dict[str, str] | None:
         """转为 requests 的 proxies 参数；直连槽返回 None"""
         return self.proxy.to_requests_proxies() if self.proxy else None
 
@@ -131,10 +131,10 @@ class ProxyPool:
     def __init__(
         self,
         size: int = 4,
-        mgr: Optional[ProxyManager] = None,
+        mgr: ProxyManager | None = None,
         min_delay: float = 0.3,
         max_delay: float = 1.5,
-        dead_after: Optional[int] = None,
+        dead_after: int | None = None,
         success_floor: int = 200,
         initial_success: int = 0,
     ):
@@ -178,7 +178,7 @@ class ProxyPool:
         self.ip_fetches = 0
         self.failures = 0
 
-        self._queue: "queue.Queue[ProxySlot]" = queue.Queue()
+        self._queue: queue.Queue[ProxySlot] = queue.Queue()
         for i in range(size):
             self._queue.put(ProxySlot(i, min_delay, max_delay))
 
@@ -289,7 +289,7 @@ class ProxyPool:
         return self._state
 
     @property
-    def stats(self) -> Dict:
+    def stats(self) -> dict:
         return {
             "size": self.size,
             "direct_mode": self.direct_mode,

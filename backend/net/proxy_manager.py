@@ -13,16 +13,15 @@
 
 import json
 import os
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Optional, Dict
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from loguru import logger
 
 from net.session import make_domestic_session
-
 
 # 加载 .env（本文件在 backend/net/ 下，parent.parent 即 backend/）
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -55,7 +54,7 @@ class ProxyInfo:
         except (ValueError, TypeError):
             return True
 
-    def to_requests_proxies(self) -> Dict[str, str]:
+    def to_requests_proxies(self) -> dict[str, str]:
         """转为 requests 的 proxies 参数格式"""
         proxy_url = self.url
         return {
@@ -71,15 +70,15 @@ class ProxyInfo:
 class ProxyManager:
     """按需代理 IP 管理器 — 每次从 API 获取 1 个 IP"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.api_url: str = os.getenv("kuaidaili_api", "")
         self.api_url_backup: str = os.getenv("kuaidaili_api_backup", "")
         self._using_backup: bool = False  # 是否已切到备用链接
-        self.current_proxy: Optional[ProxyInfo] = None
+        self.current_proxy: ProxyInfo | None = None
         self.fetch_count: int = 0  # 累计请求 API 次数
         self.fail_count: int = 0   # 累计失效 IP 次数
 
-    def fetch_one_proxy(self) -> Optional[ProxyInfo]:
+    def fetch_one_proxy(self) -> ProxyInfo | None:
         """
         从快代理 API 获取 1 个代理 IP
 
@@ -141,7 +140,7 @@ class ProxyManager:
         logger.info("主链接额度用完，已切换到备用快代理链接")
         return True
 
-    def _parse_response(self, data) -> Optional[ProxyInfo]:
+    def _parse_response(self, data: Any) -> ProxyInfo | None:
         """
         解析 API 响应，提取单个 IP
 
@@ -175,7 +174,7 @@ class ProxyManager:
         item = ip_list[0]
         return self._parse_single_proxy(item)
 
-    def _parse_single_proxy(self, item) -> Optional[ProxyInfo]:
+    def _parse_single_proxy(self, item: Any) -> ProxyInfo | None:
         """解析单个代理 IP 条目（支持 ip:port 和 ip:port:username:password 格式）"""
         if isinstance(item, str):
             parts = item.strip().split(":")
@@ -227,7 +226,7 @@ class ProxyManager:
         """默认过期时间：5 分钟后"""
         return (datetime.now() + timedelta(minutes=5)).isoformat()
 
-    def _normalize_expire_time(self, raw) -> str:
+    def _normalize_expire_time(self, raw: Any) -> str:
         """统一过期时间为 ISO 格式"""
         if isinstance(raw, (int, float)):
             return datetime.fromtimestamp(raw).isoformat()
@@ -249,7 +248,7 @@ class ProxyManager:
 
         return self._default_expire_at()
 
-    def get_proxy(self) -> Optional[ProxyInfo]:
+    def get_proxy(self) -> ProxyInfo | None:
         """
         获取一个可用代理
 
@@ -262,7 +261,7 @@ class ProxyManager:
         # 请求新 IP
         return self.fetch_one_proxy()
 
-    def switch_proxy(self) -> Optional[ProxyInfo]:
+    def switch_proxy(self) -> ProxyInfo | None:
         """
         立即切换到新代理（当前 IP 失效时调用）
         """
@@ -274,7 +273,7 @@ class ProxyManager:
         self.current_proxy = None
         return self.fetch_one_proxy()
 
-    def _save_raw_response(self, data):
+    def _save_raw_response(self, data: Any) -> None:
         """保存 API 原始响应（默认关闭；PROXY_SAVE_RAW=1 时启用，
         代理池并发换 IP 场景下每次取 IP 都写盘太吵）"""
         if os.getenv("PROXY_SAVE_RAW", "0") != "1":
@@ -288,10 +287,10 @@ class ProxyManager:
 
         logger.debug(f"原始响应已保存: {filepath}")
 
-    def print_status(self):
+    def print_status(self) -> None:
         """打印状态"""
         logger.info(f"{'=' * 40}")
-        logger.info(f"代理管理器状态:")
+        logger.info("代理管理器状态:")
         logger.info(f"  API 请求次数: {self.fetch_count}")
         logger.info(f"  IP 失效次数: {self.fail_count}")
         if self.current_proxy:
@@ -299,7 +298,7 @@ class ProxyManager:
             logger.info(f"  过期时间: {self.current_proxy.expire_at}")
             logger.info(f"  已过期: {'是' if self.current_proxy.is_expired else '否'}")
         else:
-            logger.info(f"  当前代理: 无")
+            logger.info("  当前代理: 无")
         logger.info(f"{'=' * 40}")
 
 

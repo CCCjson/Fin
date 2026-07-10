@@ -8,8 +8,8 @@
   退出时**精确恢复**原值。给 domestic_akshare 注入/清除代理用。
 """
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator, Optional
 
 from net.clash import resolve_proxy
 
@@ -31,7 +31,7 @@ def apply_proxy_env() -> str | None:
 
 
 @contextmanager
-def proxy_env(url: Optional[str]) -> Iterator[None]:
+def proxy_env(url: str | None) -> Iterator[None]:
     """临时设置 HTTP(S)_PROXY 为 url（None=清空直连），退出时精确恢复原值。
 
     仅覆盖 http/https（大小写两种）；ALL_PROXY 不动。用于给自己读 env 代理的库

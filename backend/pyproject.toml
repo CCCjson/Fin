@@ -219,17 +219,11 @@ known-first-party = [
 "knowledge_engine/websearch/session.py" = ["I001", "UP045"]
 "limit_up_engine/candidate_pool.py" = ["I001", "UP006", "UP035", "UP045"]
 "limit_up_engine/ingest.py" = ["I001", "UP006", "UP035"]
-"limit_up_engine/limit_rules.py" = ["UP045"]
 "limit_up_engine/metrics.py" = ["I001", "UP006", "UP035"]
 "limit_up_engine/scoring.py" = ["E501", "UP006", "UP035", "UP045"]
 "limit_up_engine/service.py" = ["F401", "I001", "UP006", "UP035", "UP045"]
 "llm_client.py" = ["I001", "UP035", "UP045"]
-"net/__init__.py" = ["I001"]
 "net/domestic.py" = ["UP006", "UP035", "UP045"]
-"net/env.py" = ["UP035", "UP045"]
-"net/proxy_manager.py" = ["F541", "I001", "UP006", "UP035", "UP045"]
-"net/proxy_pool.py" = ["I001", "UP006", "UP035", "UP037", "UP045"]
-"net/session.py" = ["UP006", "UP035", "UP045"]
 "news_engine/__init__.py" = ["I001"]
 "news_engine/analyzer.py" = ["I001", "UP006", "UP035", "UP045"]
 "news_engine/fetcher.py" = ["F401", "I001", "UP006", "UP035", "UP045"]
@@ -266,16 +260,12 @@ known-first-party = [
 "report_engine/web_searcher.py" = ["E501", "F401", "I001", "N806", "UP006", "UP035", "UP045"]
 "review/service.py" = ["E501", "F401", "I001", "UP006", "UP035", "UP045"]
 "screener_engine/service.py" = ["B023", "F401", "I001", "UP006", "UP035", "UP045"]
-"scripts/backfill.py" = ["B007", "F401", "I001", "N806"]
 "scripts/backfill_financial.py" = ["E402", "I001", "UP015"]
 "scripts/backfill_review.py" = ["I001"]
-"scripts/backfill_signals_2023.py" = ["F401", "F841", "I001"]
 "scripts/backfill_valuation.py" = ["UP006", "UP035", "UP045"]
 "scripts/eastmoney_crawler.py" = ["B904", "E501", "E701", "F401", "F541", "F841", "I001", "UP006", "UP035", "UP045"]
 "scripts/fetch_all_a_shares.py" = ["F401", "F541", "I001", "N806", "UP006", "UP015", "UP035"]
-"scripts/generate_signals.py" = ["E402", "F401", "I001"]
 "scripts/insert_test_data.py" = ["F401", "I001"]
-"scripts/proxy_manager.py" = ["I001"]
 "services/backtest_cpp_client.py" = ["B904", "I001", "N814", "UP006", "UP035"]
 "services/benchmark_service.py" = ["F401", "I001", "UP006", "UP035", "UP045"]
 "services/settings_service.py" = ["E501"]
@@ -355,6 +345,8 @@ module = [
   "pandas.*", "numpy.*", "sqlalchemy_utils.*", "sqlite_vec.*",
   "trafilatura.*", "fitz.*", "playwright.*", "sentence_transformers.*",
   "apscheduler.*", "ta.*", "backtrader.*", "vectorbt.*",
+  # requests 其实有官方 stub（types-requests），装上就能从这儿摘掉
+  "requests.*",
 ]
 ignore_missing_imports = true
 
@@ -368,6 +360,11 @@ module = [
   "common.limit_rules",
   "common.scoring_utils",
   "common.db",
+  "net.clash",
+  "net.env",
+  "net.session",
+  "net.proxy_pool",
+  "net.proxy_manager",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true

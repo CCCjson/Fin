@@ -13,12 +13,17 @@ import os
 import socket
 import threading
 import time
+from typing import TypedDict
 
 _CLASH_HOST, _CLASH_PORT = "127.0.0.1", 7897
 _PROBE_TTL = 5.0  # 秒；探测结果缓存时长
 
-# {"alive": bool | None, "ts": monotonic 时间戳}
-_probe = {"alive": None, "ts": 0.0}
+class _Probe(TypedDict):
+    alive: bool | None      # None = 还没探过
+    ts: float               # monotonic 时间戳
+
+
+_probe: _Probe = {"alive": None, "ts": 0.0}
 _lock = threading.Lock()
 
 
@@ -34,7 +39,7 @@ def clash_alive() -> bool:
             except OSError:
                 _probe["alive"] = False
             _probe["ts"] = now
-        return _probe["alive"]
+        return bool(_probe["alive"])
 
 
 def reset_probe() -> None:

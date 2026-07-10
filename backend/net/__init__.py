@@ -6,16 +6,16 @@
 国外出网（OpenAI/websearch）：
     from net import clash_alive, resolve_proxy, make_httpx_client, apply_proxy_env
 """
-from net.clash import clash_alive, reset_probe, resolve_proxy, get_proxy_mode
-from net.env import apply_proxy_env, proxy_env
-from net.session import make_domestic_session, make_httpx_client
-from net.proxy_manager import ProxyManager, ProxyInfo
+from net.clash import clash_alive, get_proxy_mode, reset_probe, resolve_proxy
 from net.domestic import (
+    domestic_akshare,
     domestic_get,
     domestic_json,
-    domestic_akshare,
     get_proxy_manager,
 )
+from net.env import apply_proxy_env, proxy_env
+from net.proxy_manager import ProxyInfo, ProxyManager
+from net.session import make_domestic_session, make_httpx_client
 
 __all__ = [
     "clash_alive", "reset_probe", "resolve_proxy", "get_proxy_mode",
