@@ -115,8 +115,246 @@ class CallSpec:
     temperature: float = 0.5
 
 
+@dataclass
+class ChapterCall:
+    """一次章节 LLM 调用的规格（13.2 拆解后的原子单位）。
+
+    与 CallSpec 的区别：不带 call_index / needs_previous_outputs——章节工具之间
+    不再有「前章结论前置」的链式上下文，各章独立成稿。Ch8 内部的批次链式仍在。
+    """
+    chapter: int
+    label: str
+    system_prompt: str
+    user_prompt: str
+    temperature: float
+    batch_data: Optional[Dict] = None
+
+
+# 章节工具 → 覆盖的旧章节号。Ch1「纵览 & 操作计划」不做成工具：
+# 它天生需要全部前文，废掉全量报告后由 MoneyBill 主 agent 亲自撰写。
+SECTION_CHAPTERS: Dict[str, List[int]] = {
+    "market": [2, 4],       # 市场总览 + 板块热点与北向资金
+    "news": [3],            # 新闻深度分析与舆情研判
+    "positions": [5],       # 持仓诊断
+    "strategy": [6, 7],     # 上期推荐回顾 + 信号与策略表现
+    "picks": [8],           # 买入推荐（内部分批）
+}
+
+_CHAPTER_TEMPERATURE: Dict[int, float] = {2: 0.5, 3: 0.5, 4: 0.5, 5: 0.4, 6: 0.4, 7: 0.4, 8: 0.3, 1: 0.4}
+
+_CHAPTER_LABEL: Dict[int, str] = {
+    2: "正在生成第2章（市场总览与情绪研判）...",
+    3: "正在生成第3章（新闻深度分析与舆情研判）...",
+    4: "正在生成第4章（板块热点与北向资金）...",
+    5: "正在生成第5章（持仓诊断）...",
+    6: "正在生成第6章（上期推荐回顾）...",
+    7: "正在生成第7章（信号与策略表现）...",
+}
+
+CH8_BATCH_SIZE = 4
+
+
+def _period_label(report_type: str) -> str:
+    if report_type == "daily":
+        return "日度"
+    if report_type == "monthly":
+        return "月度"
+    return "周度"
+
+
 class ReportPromptBuilder:
     """构建AI报告的System/User Prompt"""
+
+    # ==================================================================
+    # 章节级原语（13.2）：章节工具与旧 build_multi 共用同一套 _sys_chN / _section_*
+    # ==================================================================
+    def system_prompt_for_chapter(
+        self, ch: int, data: Dict, report_type: str = "weekly",
+        batch_data: Optional[Dict] = None,
+    ) -> str:
+        """weekend / daily / 普通 三分支的唯一选择处。Ch8 另分首批 / 续批。"""
+        period_label = _period_label(report_type)
+        is_daily = (report_type == "daily")
+        is_weekend = data.get("is_weekend", False)
+
+        if ch == 8:
+            held_symbols = {p["symbol"] for p in data.get("portfolio", {}).get("positions", [])}
+            batch_count = len((batch_data or {}).get("stocks", []))
+            is_first = (batch_data or {}).get("is_first", True)
+            if is_first:
+                if is_weekend:
+                    return self._sys_ch8_weekend(held_symbols, batch_count)
+                if is_daily:
+                    return self._sys_ch8_daily(held_symbols, batch_count)
+                return self._sys_ch8(period_label, held_symbols, batch_count)
+            if is_weekend:
+                return self._sys_ch8_continuation_weekend(held_symbols, batch_count)
+            if is_daily:
+                return self._sys_ch8_continuation_daily(held_symbols, batch_count)
+            return self._sys_ch8_continuation(period_label, held_symbols, batch_count)
+
+        if is_weekend:
+            return getattr(self, f"_sys_ch{ch}_weekend")()
+        if is_daily:
+            return getattr(self, f"_sys_ch{ch}_daily")()
+        return getattr(self, f"_sys_ch{ch}")(period_label)
+
+    def build_chapter_call(
+        self, ch: int, data: Dict, report_type: str = "weekly",
+        batch_data: Optional[Dict] = None,
+    ) -> ChapterCall:
+        if ch == 8:
+            bd = batch_data or {"batch_index": 0, "total_batches": 1, "stocks": [],
+                                "is_first": True, "is_last": True}
+            if bd["stocks"]:
+                label = f"正在生成第8章（买入推荐 - 第{bd['batch_index'] + 1}/{bd['total_batches']}批）..."
+            else:
+                label = "正在生成第8章（今日无高质量买入信号）..."
+        else:
+            bd = None
+            label = _CHAPTER_LABEL[ch]
+
+        return ChapterCall(
+            chapter=ch,
+            label=label,
+            system_prompt=self.system_prompt_for_chapter(ch, data, report_type, bd),
+            user_prompt=self.build_user_prompt_for_chapter(ch, data, batch_data=bd),
+            temperature=_CHAPTER_TEMPERATURE[ch],
+            batch_data=bd,
+        )
+
+    def build_section_calls(
+        self, section: str, data: Dict, report_type: str = "weekly",
+    ) -> List[ChapterCall]:
+        """一个章节工具展开成 1~N 次 LLM 调用。仅 picks 会多于覆盖的章节数（Ch8 分批）。"""
+        if section not in SECTION_CHAPTERS:
+            raise ValueError(f"未知报告章节: {section!r}，可选: {sorted(SECTION_CHAPTERS)}")
+
+        calls: List[ChapterCall] = []
+        for ch in SECTION_CHAPTERS[section]:
+            if ch == 8:
+                calls.extend(self._build_ch8_calls(data, report_type))
+            else:
+                calls.append(self.build_chapter_call(ch, data, report_type))
+        return calls
+
+    def _build_ch8_calls(self, data: Dict, report_type: str) -> List[ChapterCall]:
+        top = data.get("top_stocks")
+        buy_recs = top.get("buy_recommendations", []) if isinstance(top, dict) else []
+        if not buy_recs:
+            # 无推荐标的：单次"观望"调用，如实告知 AI 本期无高质量信号
+            return [self.build_chapter_call(8, data, report_type, batch_data={
+                "batch_index": 0, "total_batches": 1, "stocks": [],
+                "is_first": True, "is_last": True,
+            })]
+
+        batches = [buy_recs[i:i + CH8_BATCH_SIZE] for i in range(0, len(buy_recs), CH8_BATCH_SIZE)]
+        total = len(batches)
+        return [
+            self.build_chapter_call(8, data, report_type, batch_data={
+                "batch_index": bi, "total_batches": total, "stocks": stocks,
+                "is_first": bi == 0, "is_last": bi == total - 1,
+            })
+            for bi, stocks in enumerate(batches)
+        ]
+
+    @classmethod
+    def build_ch8_supplement_prompt(cls, missing_stocks: List[Dict]) -> str:
+        """Ch8 补充调用的 user_prompt（纯构造，不打 LLM）。
+
+        构建与正常批次同等质量的数据（含技术指标、行情、基本面、新闻），
+        确保补充分析也能引用具体指标数值。
+        """
+        stock_list = "\n".join(
+            f"- {s.get('symbol', '')} ({s.get('name', '')})"
+            for s in missing_stocks
+        )
+        # 构建缺失标的的完整数据摘要（与 _section_buy_recommendations_batch 对齐）
+        data_parts = []
+        for stock in missing_stocks:
+            industry_str = f" | {stock.get('industry', '')}" if stock.get('industry') else ""
+            data_parts.append(f"--- {stock.get('symbol', '')} ({stock.get('name', '')}){industry_str} ---")
+            data_parts.append(f"综合评分: {stock.get('composite_score', 'N/A')}/100")
+
+            # 评分明细
+            breakdown = stock.get("score_breakdown", {})
+            if breakdown:
+                bd_parts = []
+                for dim, label in [("resonance", "共振"), ("risk_reward", "盈亏比"),
+                                   ("quality", "信号质量"), ("volume", "量能"), ("timeliness", "时效")]:
+                    info = breakdown.get(dim, {})
+                    bd_parts.append(f"{label}{info.get('score', 'N/A')}({info.get('detail', '')})")
+                data_parts.append(f"评分明细: {' | '.join(bd_parts)}")
+
+            # 策略共振
+            res_strats = stock.get("resonance_strategies", [])
+            res_count = stock.get("resonance_count", 0)
+            if res_count > 1:
+                data_parts.append(f"策略共振: {res_count}个策略同时看好 ({', '.join(res_strats)})")
+
+            data_parts.append(f"触发价格{stock.get('price', 'N/A')}, "
+                              f"建议止损{stock.get('stop_loss', 'N/A')}, "
+                              f"建议止盈{stock.get('take_profit', 'N/A')}")
+
+            # 信号原因
+            reasons = stock.get("reasons", [])
+            if reasons:
+                data_parts.append(f"信号原因: {ReportPromptBuilder._format_reasons(reasons)}")
+
+            # 基本面（完整）
+            fund = stock.get("fundamentals") or {}
+            if isinstance(fund, dict) and fund:
+                pe_ttm = fund.get('pe_ttm')
+                pb = fund.get('pb')
+                roe = fund.get('roe')
+                mcap = fund.get('total_market_cap')
+                fmcap = fund.get('float_market_cap')
+                pe_str = f"PE(TTM){pe_ttm:.1f}" if pe_ttm is not None else "PE(TTM) N/A"
+                pb_str = f"PB{pb:.2f}" if pb is not None else "PB N/A"
+                roe_str = f"ROE{roe:.1f}%" if roe is not None else "ROE N/A"
+                mcap_str = f"总市值{mcap/1e8:.0f}亿" if mcap else "总市值N/A"
+                fmcap_str = f"流通{fmcap/1e8:.0f}亿" if fmcap else ""
+                data_parts.append(f"基本面: {pe_str} | {pb_str} | {mcap_str} {fmcap_str} | {roe_str}")
+
+            # 20日价格统计
+            ps = stock.get("price_stats", {})
+            if ps:
+                data_parts.append(f"20日统计: 最高{ps.get('high_20d', 'N/A')}, "
+                                  f"最低{ps.get('low_20d', 'N/A')}, "
+                                  f"均价{ps.get('avg_20d', 'N/A')}, "
+                                  f"最新收盘{ps.get('latest_close', 'N/A')}")
+
+            # 近期行情
+            quotes = stock.get("recent_quotes", [])
+            if quotes:
+                data_parts.append("近期行情:")
+                for q in quotes:
+                    data_parts.append(f"  {q['date']}: O{q['open']} H{q['high']} L{q['low']} "
+                                      f"C{q['close']} V{q['volume']}")
+
+            # 技术指标快照
+            ind = stock.get("indicators")
+            if ind:
+                data_parts.append(ReportPromptBuilder._format_indicator_snapshot(ind))
+
+            # 个股新闻
+            news = stock.get("news", [])
+            if news:
+                data_parts.append("近期相关新闻:")
+                for n in news:
+                    data_parts.append(f"  - {n['title']} ({n.get('source', '')}, {n.get('published_at', '')[:10]})")
+                    if n.get("content"):
+                        data_parts.append(f"    摘要: {n['content']}")
+
+            data_parts.append("")
+
+        supplement_prompt = (
+            f"你在上面的分析中遗漏了以下标的，请立即补充分析，"
+            f"格式与前文一致（每只用 ### 三级标题）：\n\n"
+            f"{chr(10).join(data_parts)}\n\n"
+            f"⚠️ 必须分析的标的：\n{stock_list}"
+        )
+        return supplement_prompt
 
     # ==================================================================
     # 多次调用: 返回 9 个 CallSpec（每章独立调用，链式上下文）
@@ -278,11 +516,17 @@ class ReportPromptBuilder:
     def build_user_prompt_for_call(
         self, spec: CallSpec, data: Dict, previous_outputs: Optional[Dict[int, str]] = None
     ) -> str:
+        """旧全量路径入口（随 build_multi 退役）。薄委托到章节级原语，避免两份 switch。"""
+        return self.build_user_prompt_for_chapter(
+            spec.chapters[0], data, batch_data=spec.batch_data, previous_outputs=previous_outputs)
+
+    def build_user_prompt_for_chapter(
+        self, ch: int, data: Dict, batch_data: Optional[Dict] = None,
+        previous_outputs: Optional[Dict[int, str]] = None,
+    ) -> str:
+        """按章节号路由（而非 call_index），使 Ch8 多批次共享同一分支。"""
         held_symbols = {p["symbol"] for p in data.get("portfolio", {}).get("positions", []) if p.get("symbol")}
         period_str = f"报告期间：{data.get('period_start', 'N/A')} 至 {data.get('period_end', 'N/A')}"
-
-        # 按章节号路由（而非 call_index），使 Ch8 多批次共享同一分支
-        ch = spec.chapters[0]
 
         if ch == 2:
             # Ch2: 市场总览（新闻已移至 Ch3，这里只保留行情数据）
@@ -323,9 +567,9 @@ class ReportPromptBuilder:
             parts = [period_str, "",
                      self._section_market_context(data), "",
                      self._section_portfolio(data)]
-            if spec.batch_data:
+            if batch_data:
                 parts.append(self._section_buy_recommendations_batch(
-                    spec.batch_data, held_symbols
+                    batch_data, held_symbols
                 ))
             else:
                 parts.append(self._section_buy_recommendations(data, held_symbols))
