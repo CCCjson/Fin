@@ -1,8 +1,8 @@
 # ==================== 外置金融大脑 敏感物 / 数据 ====================
 # 站点配置本体（端点 / gate 头 / 字段样例）是逆向侦查的成果，进版本库；
 # 会话 cookie（CapitalIQ 付费订阅登录态、雪球 xq_a_token）剥离到 sidecar，绝不提交。
-# 剥离逻辑在 knowledge_engine/browser/registry.py，由 tests/test_scraper_secrets_split.py 守着。
-backend/configs/scrapers/*.secrets.json
+# 剥离逻辑在 acquisition/browser/registry.py，由 tests/test_scraper_secrets_split.py 守着。
+backend/acquisition/crawler/sites/*.secrets.json
 # Playwright 持久化浏览器会话（cookie/登录态）
 backend/data/browser_profile/
 # 知识库数据（向量/全文，本地数据不入库）

@@ -23,7 +23,7 @@ from typing import Optional
 
 from loguru import logger
 
-from knowledge_engine.config import get_scrapers_config_dir
+from acquisition.config import get_scrapers_config_dir
 
 
 def domain_of(url: str) -> str:

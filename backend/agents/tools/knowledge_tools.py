@@ -3,7 +3,7 @@ knowledge_engine 工具 — 注册进 agents.REGISTRY，供 MoneyBill 调用。
 
 从 knowledge_engine/tools.py 搬来（Phase 4 分层治理）：注册本该在工具层，
 不该让引擎层反向 import agents.registry。这里全是薄适配器，真正的业务逻辑
-（尤其 scrape 的侦查/取数/cookie 自愈编排）在 knowledge_engine.reverse_api。
+（尤其 scrape 的侦查/取数/cookie 自愈编排）在 acquisition.crawler.reverse_api。
 
 P0：search_knowledge（检索本地已沉淀知识库，带引用）。
 P1：web_search / sec_search / read_url（系统的真·联网层，移植自 Scrapper）。
@@ -12,8 +12,8 @@ from typing import Optional
 
 from loguru import logger
 
+from acquisition.crawler.reverse_api import scrape as _scrape
 from agents.registry import tool
-from knowledge_engine.reverse_api import scrape as _scrape
 
 
 @tool(
@@ -124,7 +124,7 @@ def read_url(url: str, max_chars: int = 8000) -> dict:
     from knowledge_engine.websearch import read_url as _ru
     doc = _ru(url, max_chars=max_chars)
     if not doc["text"]:
-        from knowledge_engine.browser.diagnose import diagnose
+        from acquisition.browser.diagnose import diagnose
         d = diagnose(url=url)  # 空正文 → 盾页/需cookie/非目标内容
         return {"summary": {"message": "无法读取该 URL 正文", "url": url,
                             "why": d["reason"], "how": d["suggestion"]}}
@@ -151,12 +151,12 @@ def read_url(url: str, max_chars: int = 8000) -> dict:
     group="knowledge_web",
 )
 def login_site(url: str, timeout_s: int = 300) -> dict:
-    from knowledge_engine.config import get_playwright_enabled
+    from acquisition.config import get_playwright_enabled
     if not get_playwright_enabled():
         return {"summary": {"saved": False,
                             "message": "浏览器爬虫未启用：请在 .env 设 KNOWLEDGE_PLAYWRIGHT_ENABLED=true"}}
-    from knowledge_engine.browser.launch import run_off_loop
-    from knowledge_engine.browser.manual_login import manual_login
+    from acquisition.browser.launch import run_off_loop
+    from acquisition.browser.manual_login import manual_login
     try:
         r = run_off_loop(manual_login, url, timeout_s)
     except Exception as e:  # noqa: BLE001

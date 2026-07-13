@@ -8,9 +8,9 @@
   - registry.py 站点配置持久化（configs/scrapers/<domain>.json + .md）
   - proxy_route 国内快代理池 / 海外 Shadowrocket 按域名路由
 
-discover_api / fetch_api 内核逻辑在 knowledge_engine/reverse_api.py，对外由
+discover_api / fetch_api 内核逻辑在 acquisition/crawler/reverse_api.py，对外由
 agents/tools/knowledge_tools.py 包成 scrape 这个 @tool 给 MoneyBill。
 """
-from knowledge_engine.browser.launch import BrowserSession, run_off_loop
+from acquisition.browser.launch import BrowserSession, run_off_loop
 
 __all__ = ["BrowserSession", "run_off_loop"]

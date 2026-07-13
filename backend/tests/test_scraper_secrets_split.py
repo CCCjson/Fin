@@ -12,7 +12,7 @@ import pathlib
 
 import pytest
 
-from knowledge_engine.browser import registry
+from acquisition.browser import registry
 
 
 @pytest.fixture()

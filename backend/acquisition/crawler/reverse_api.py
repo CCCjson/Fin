@@ -13,22 +13,22 @@ from typing import Callable, Optional
 
 from loguru import logger
 
-from knowledge_engine.browser import sessions
+from acquisition.browser import sessions
 
 
 def discover_api(url: str, session_id: Optional[str] = None,
                   on_progress: Optional[Callable[[str, dict], None]] = None) -> dict:
     """用浏览器过盾嗅探 JSON 接口 + 差分 gate 头 + 抓 cookie，存成站点复用配置（每站只侦查一次）。"""
-    from knowledge_engine.config import get_playwright_enabled
+    from acquisition.config import get_playwright_enabled
     if not get_playwright_enabled():
         return {"summary": {"count": 0,
                             "message": "浏览器爬虫未启用：请在 .env 设 KNOWLEDGE_PLAYWRIGHT_ENABLED=true"}}
-    from knowledge_engine.browser.launch import run_off_loop
-    from knowledge_engine.browser.discover import discover
-    from knowledge_engine.browser.proxy_route import playwright_proxy_for, domain_of
-    from knowledge_engine.browser.registry import save_site_config
+    from acquisition.browser.launch import run_off_loop
+    from acquisition.browser.discover import discover
+    from acquisition.browser.proxy_route import playwright_proxy_for, domain_of
+    from acquisition.browser.registry import save_site_config
 
-    from knowledge_engine.browser.diagnose import diagnose
+    from acquisition.browser.diagnose import diagnose
     proxy = playwright_proxy_for(url)
     try:
         res = run_off_loop(discover, url, proxy, session_id=session_id, on_progress=on_progress)
@@ -64,11 +64,11 @@ def fetch_api(site: str, endpoint: str = None, params: dict = None,
               session_id: Optional[str] = None,
               on_progress: Optional[Callable[[str, dict], None]] = None) -> dict:
     """逆向 API 复用取数（curl_cffi + cookie + 403 自愈）。"""
-    from knowledge_engine.browser.registry import (
+    from acquisition.browser.registry import (
         load_site_config, find_endpoint, save_site_config, domain_of,
     )
-    from knowledge_engine.browser.proxy_route import curl_proxy_for
-    from knowledge_engine.browser.reverse import fast_fetch
+    from acquisition.browser.proxy_route import curl_proxy_for
+    from acquisition.browser.reverse import fast_fetch
 
     domain = domain_of(site) or site
     cfg = load_site_config(domain)
@@ -91,9 +91,9 @@ def fetch_api(site: str, endpoint: str = None, params: dict = None,
 
     def on_403():
         """re-discover 刷新该端点的 gate 头 + cookie。返回 {gate_headers, cookies}。"""
-        from knowledge_engine.browser.launch import run_off_loop
-        from knowledge_engine.browser.discover import discover
-        from knowledge_engine.browser.proxy_route import playwright_proxy_for
+        from acquisition.browser.launch import run_off_loop
+        from acquisition.browser.discover import discover
+        from acquisition.browser.proxy_route import playwright_proxy_for
         try:
             fresh = run_off_loop(discover, cfg["page_url"], playwright_proxy_for(cfg["page_url"]))
         except Exception:
@@ -116,7 +116,7 @@ def fetch_api(site: str, endpoint: str = None, params: dict = None,
         session_id=session_id, on_progress=on_progress,
     )
     if data is None:
-        from knowledge_engine.browser.diagnose import diagnose
+        from acquisition.browser.diagnose import diagnose
         d = diagnose(status=diag.get("status"), error=diag.get("error"),
                      body=diag.get("body"), url=target)
         return {"summary": {"count": 0, "message": "拉取失败",
@@ -157,7 +157,7 @@ def scrape(url: str, want: str = None, endpoint: str = None, params: dict = None
            session_id: Optional[str] = None,
            on_progress: Optional[Callable[[str, dict], None]] = None) -> dict:
     """一句话拿网站数据：侦查+取数+cookie 自愈串成一步。见 agents/tools/knowledge_tools.py::scrape 的工具描述。"""
-    from knowledge_engine.browser.registry import load_site_config, domain_of
+    from acquisition.browser.registry import load_site_config, domain_of
 
     # session_id 不传（如 LLM 工具调用）时自动生成，让每次 scrape（含聊天里触发的）
     # 都自动进注册表、自动获得独立浏览器 profile，不局限于走新流式端点手动发起的那次。
@@ -171,6 +171,8 @@ def scrape(url: str, want: str = None, endpoint: str = None, params: dict = None
             if _looks_like_domain(page_url):
                 page_url = "https://" + page_url
             else:
+                # TODO(13.4-2 websearch 迁入后收口)：Scope A 下 websearch 暂留 knowledge_engine，
+                # 这是本栈唯一一条容许的临时上行边（函数体内延迟 import，仅 URL 兜底才触发）。
                 from knowledge_engine.websearch import web_search as _ws
                 hits = _ws(f"{url} {want or ''}".strip(), max_results=3)
                 if not hits:

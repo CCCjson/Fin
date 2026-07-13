@@ -268,11 +268,11 @@ async def scrape_stream(req: ScrapeStreamRequest):
 
     第一行先给 session_created 带上 session_id；之后每个 stage 一行；
     最后一行是 done/error。session_id 也会自动登记进
-    knowledge_engine.browser.sessions 的内存注册表，可用 GET /scrape/sessions 查询，
+    acquisition.browser.sessions 的内存注册表，可用 GET /scrape/sessions 查询，
     不局限于本次连接——MoneyBill 聊天里触发的 scrape 同样会出现在那份列表里。
     """
-    from knowledge_engine.reverse_api import scrape
-    from knowledge_engine.browser import sessions
+    from acquisition.crawler.reverse_api import scrape
+    from acquisition.browser import sessions
 
     session_id = sessions.new_session_id()
 
@@ -315,5 +315,5 @@ async def scrape_stream(req: ScrapeStreamRequest):
 
 @router.get("/scrape/sessions", summary="抓取会话列表（含聊天里触发的）")
 async def list_scrape_sessions(limit: int = 50):
-    from knowledge_engine.browser import sessions
+    from acquisition.browser import sessions
     return sessions.list_sessions(limit=limit)

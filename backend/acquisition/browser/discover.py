@@ -12,10 +12,10 @@ from typing import Callable, Optional
 
 from loguru import logger
 
-from knowledge_engine.browser.launch import BrowserSession
-from knowledge_engine.browser.sniff import diff_gate_headers
-from knowledge_engine.browser.reverse import evaluate_fetch
-from knowledge_engine.browser import sessions
+from acquisition.browser.launch import BrowserSession
+from acquisition.browser.sniff import diff_gate_headers
+from acquisition.browser.reverse import evaluate_fetch
+from acquisition.browser import sessions
 
 
 def _split_url(url: str) -> tuple[str, dict]:

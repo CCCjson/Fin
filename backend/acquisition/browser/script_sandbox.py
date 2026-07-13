@@ -10,7 +10,7 @@ common/sandbox_ast.py 的检查核心。
 设计要点：生成脚本不允许自己 import 网络库发请求（SCRAPE_ALLOWED_IMPORTS 里
 故意不放 requests/httpx/urllib/socket，AST 检查会直接拦掉这些 import）。需要
 网络出口时，脚本只能通过注入进沙箱命名空间的 ScrapeContext 实例调用
-fetch_json()，内部委托给已加固的 knowledge_engine.browser.reverse.fast_fetch，
+fetch_json()，内部委托给已加固的 acquisition.browser.reverse.fast_fetch，
 让脚本的网络出口可审计、可限速，而不是给它裸 socket。
 """
 import os

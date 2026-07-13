@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 from loguru import logger
 
-from knowledge_engine.config import get_playwright_user_data_dir
+from acquisition.config import get_playwright_user_data_dir
 
 _MAX_SESSIONS_KEPT = 200  # 内存注册表上限，超过丢最老的（进程内展示用，非持久化审计）
 

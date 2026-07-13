@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from typing import Optional
 
 
-from knowledge_engine.config import (
+from acquisition.config import (
     get_domestic_domains,
     get_scraper_proxy_enabled, get_proxy_fetch_timeout,
 )

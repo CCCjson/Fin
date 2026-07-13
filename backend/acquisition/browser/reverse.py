@@ -17,8 +17,8 @@ from typing import Callable, Optional
 
 from loguru import logger
 
-from knowledge_engine.browser import sessions
-from knowledge_engine.websearch.session import bounded_get, MAX_RESPONSE_BYTES
+from acquisition.browser import sessions
+from net.bounded import bounded_get, MAX_RESPONSE_BYTES
 
 
 # cookie 过期时，部分站返回 200 + "登录失效" body（不是 403），需照样 re-discover 刷 cookie。
@@ -116,7 +116,7 @@ def fast_fetch(
     on_403: 遇 403 调用（re-discover 刷新），返回 {gate_headers, cookies} 则用之重试一次。
     proxy : 单串代理 url（curl_cffi proxies），None 直连；国内站由 proxy_route 传入快代理。
     diag  : 出参 dict，失败时填 {status, error, body} 供上层诊断反馈（为什么/怎么办）。
-    session_id/on_progress: 可选，抓取进度上报（见 knowledge_engine/browser/sessions.py）。
+    session_id/on_progress: 可选，抓取进度上报（见 acquisition/browser/sessions.py）。
     返回解析后的 JSON dict，失败 None。
     """
     from curl_cffi import requests as cffi

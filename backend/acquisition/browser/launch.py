@@ -17,13 +17,12 @@ from typing import Any, Callable, Optional
 
 from loguru import logger
 
-from knowledge_engine.config import (
+from acquisition.config import (
     get_playwright_channel,
     get_playwright_headed_on_challenge,
     get_playwright_timeout,
-    get_playwright_user_data_dir,
 )
-from knowledge_engine.browser import sessions
+from acquisition.browser import sessions
 
 # 反检测启动参数（各项目通用，藏 navigator.webdriver 等自动化特征）
 LAUNCH_ARGS = [

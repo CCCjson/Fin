@@ -13,7 +13,7 @@ from typing import Optional
 
 from loguru import logger
 
-from knowledge_engine.browser.launch import BrowserSession
+from acquisition.browser.launch import BrowserSession
 
 # 差分基线：裸 curl 默认也会发的常规头（这些不是 gate 头）
 BASELINE_HEADERS = {

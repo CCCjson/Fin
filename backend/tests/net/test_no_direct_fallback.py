@@ -391,7 +391,7 @@ class _FakeProxyInfo:
 
 @pytest.fixture
 def _reset_proxy_route(monkeypatch):
-    import knowledge_engine.browser.proxy_route as pr
+    import acquisition.browser.proxy_route as pr
     monkeypatch.setattr(pr, "_manager", None)
     return pr
 
@@ -430,7 +430,7 @@ def test_proxy_enabled_defaults_to_true():
     """默认关（旧行为）意味着逆向爬虫默认直连——与铁律相背。"""
     import os
 
-    from knowledge_engine.config import get_scraper_proxy_enabled
+    from acquisition.config import get_scraper_proxy_enabled
     os.environ.pop("KNOWLEDGE_SCRAPER_PROXY_ENABLED", None)
     assert get_scraper_proxy_enabled() is True
 
