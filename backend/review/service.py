@@ -9,7 +9,6 @@ from datetime import date, datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-import requests
 from loguru import logger
 from dotenv import load_dotenv
 
@@ -63,23 +62,6 @@ BEGINNER_TEMPLATE = """## 今日复盘
 - 计划操作:
 - 需要注意:
 """
-
-
-def _get_proxy_manager():
-    """延迟创建 ProxyManager（统一走 net 层）"""
-    from net import get_proxy_manager
-    return get_proxy_manager()
-
-
-def _make_session(proxies=None):
-    """创建绕过系统代理的 Session（复用 net.make_domestic_session + 东财 headers）"""
-    from net import make_domestic_session
-    s = make_domestic_session(proxies)
-    s.headers.update({
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Referer": "https://finance.eastmoney.com/",
-    })
-    return s
 
 
 class ReviewService:
@@ -524,102 +506,62 @@ class ReviewService:
         return {"symbol": code, "name": self.INDEX_NAMES[code], "price": None, "change_pct": None}
 
     def _fetch_indices_from_history(self, review_date: date, max_retries: int = 3) -> List[Dict[str, Any]]:
-        """从东方财富历史 K 线接口并发获取指定日期的 5 个指数（超时换代理重试）"""
+        """从东财历史 K 线并发获取指定日期的 5 个指数。
+
+        5 个 K 线请求**共享一个快代理 IP**（`domestic_rotate`）：任一请求失败就整批换 IP
+        重来，先直连失败才换代理（铁律）。此前手写代理循环，取不到 IP 时 proxies=None
+        静默直连——已消除。
+        """
+        from net import ProxyExhaustedError, domestic_rotate, make_domestic_session
         date_str = review_date.strftime("%Y%m%d")
-        proxy_mgr = _get_proxy_manager()
 
-        for attempt in range(max_retries):
-            proxies = None
-            if proxy_mgr:
-                # 首轮复用当前 IP（没过期不扣额度）；失败才 switch 换新的
-                p = proxy_mgr.get_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
-                if p:
-                    proxies = p.to_requests_proxies()
-            sess = _make_session(proxies)
-
+        def _batch(proxies: Optional[Dict[str, str]]) -> Dict[str, Dict[str, Any]]:
+            sess = make_domestic_session(proxies)
             try:
                 results_map: Dict[str, Dict[str, Any]] = {}
-                failed = False
                 with ThreadPoolExecutor(max_workers=5) as pool:
                     futures = {
                         pool.submit(self._fetch_one_index_kline, sess, code, date_str): code
                         for code in self.INDEX_ORDER
                     }
                     for fut in as_completed(futures):
-                        code = futures[fut]
-                        try:
-                            results_map[code] = fut.result()
-                        except Exception as e:
-                            logger.warning(f"历史K线获取失败 {code} (第{attempt+1}轮): {e}")
-                            failed = True
-
-                result = [results_map.get(c, {"symbol": c, "name": self.INDEX_NAMES[c], "price": None, "change_pct": None})
-                          for c in self.INDEX_ORDER]
-
-                if not failed and any(r["price"] is not None for r in result):
-                    return result
-                if not failed:
-                    return []  # 全部成功但无数据 → 休市
-                logger.info(f"第{attempt+1}轮代理超时，换 IP 重试...")
+                        # 任一请求抛异常 → 整批失败 → domestic_rotate 换 IP 重来
+                        results_map[futures[fut]] = fut.result()
+                return results_map
             finally:
                 sess.close()
 
-        return []
+        try:
+            results_map = domestic_rotate(_batch, what="复盘指数历史K线",
+                                          prefer_direct=True, max_rounds=max_retries)
+        except ProxyExhaustedError:
+            return []
+
+        result = [results_map.get(c, {"symbol": c, "name": self.INDEX_NAMES[c],
+                                      "price": None, "change_pct": None})
+                  for c in self.INDEX_ORDER]
+        if any(r["price"] is not None for r in result):
+            return result
+        return []  # 全部成功但无数据 → 休市
 
     def _fetch_indices_realtime(self, max_retries: int = 3) -> List[Dict[str, Any]]:
-        """从东方财富实时接口获取当前指数数据（降级方案，超时换代理重试）"""
-        proxy_mgr = _get_proxy_manager()
-        secids = ",".join(self.INDEX_SECIDS[c] for c in self.INDEX_ORDER)
+        """从东财实时快照获取当前指数（历史 K 线取不到时的降级方案）。
 
-        for attempt in range(max_retries):
-            proxies = None
-            if proxy_mgr:
-                # 首轮复用当前 IP（没过期不扣额度）；失败才 switch 换新的
-                p = proxy_mgr.get_proxy() if attempt == 0 else proxy_mgr.switch_proxy()
-                if p:
-                    proxies = p.to_requests_proxies()
-            sess = _make_session(proxies)
-
-            url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
-            params = {
-                "fltt": 2,
-                "invt": 2,
-                "fields": "f2,f3,f4,f6,f12,f14",
-                "secids": secids,
-                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-                "_": str(int(time.time() * 1000)),
-            }
-            try:
-                resp = sess.get(url, params=params, timeout=10)
-                data = resp.json()
-                if data.get("rc") != 0 or not data.get("data"):
-                    sess.close()
-                    continue
-
-                fetched = {}
-                for item in data["data"].get("diff", []):
-                    code = item.get("f12", "")
-                    fetched[code] = {
-                        "symbol": code,
-                        "name": self.INDEX_NAMES.get(code, item.get("f14", code)),
-                        "price": item.get("f2"),
-                        "change_pct": item.get("f3"),
-                    }
-
-                result = []
-                for code in self.INDEX_ORDER:
-                    if code in fetched:
-                        result.append(fetched[code])
-                    else:
-                        result.append({"symbol": code, "name": self.INDEX_NAMES[code], "price": None, "change_pct": None})
-                sess.close()
-                return result
-
-            except requests.RequestException as e:
-                logger.warning(f"实时指数请求失败 (第{attempt+1}轮): {e}")
-                sess.close()
-
-        return []
+        取数收口在 `quote_router.fetch_index_snapshot`（先直连失败才换快代理，铁律）。
+        `max_retries` 保留仅为签名兼容，换 IP 轮次现由收口内部管。
+        """
+        del max_retries
+        from acquisition.markets.quote_router import fetch_index_snapshot
+        rows = fetch_index_snapshot([self.INDEX_SECIDS[c] for c in self.INDEX_ORDER])
+        if not rows:
+            return []
+        by_code = {r["code"]: r for r in rows}
+        return [{
+            "symbol": code,
+            "name": self.INDEX_NAMES[code],
+            "price": by_code[code]["price"] if code in by_code else None,
+            "change_pct": by_code[code]["change_pct"] if code in by_code else None,
+        } for code in self.INDEX_ORDER]
 
     @staticmethod
     def _empty_indices(name_map: Dict[str, str]) -> List[Dict[str, Any]]:
