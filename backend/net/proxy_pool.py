@@ -185,12 +185,28 @@ class ProxyPool:
             self._queue.put(ProxySlot(i, min_delay, max_delay))
 
     def acquire(self, timeout: float = 30) -> ProxySlot:
-        """取一个槽（阻塞直到有空槽）；确保槽内 IP 可用或已降级直连"""
+        """取一个槽（阻塞直到有空槽）。
+
+        - `direct_mode`（未配快代理）：返回直连槽，合法。
+        - 配了快代理：确保槽内有可用 IP；**取不到 IP 就抛 `ProxyExhaustedError`**，
+          绝不交出一个 `proxy=None` 的槽让调用方拿去直连（铁律）。取不到 IP 已在
+          `_refresh_slot` 里计入熔断计数，消费方据 `breaker_state=="dead"` 决定整体
+          中止还是逐项失败。
+
+        Raises:
+            ProxyExhaustedError: 非 direct_mode 却取不到 IP（额度尽 / 已 dead）。
+        """
         slot = self._queue.get(timeout=timeout)
         if not self.direct_mode and (
             slot.proxy is None or slot.failed or slot.proxy.is_expired
         ):
             self._refresh_slot(slot)
+        if not self.direct_mode and slot.proxy is None:
+            # 非直连模式却没 IP：归还槽再抛，绝不把会直连的空槽交出去。
+            self.release(slot)
+            from net.domestic import ProxyExhaustedError
+            raise ProxyExhaustedError(
+                f"代理槽 {slot.slot_id} 无可用快代理 IP，拒绝降级直连")
         return slot
 
     def release(self, slot: ProxySlot) -> None:

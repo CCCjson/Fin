@@ -25,7 +25,7 @@ from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo, DailyQuote
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, klines_to_records
 from data_engine.liveness import LivenessTracker
-from net import ProxyManager, get_proxy_manager
+from net import ProxyExhaustedError, ProxyManager, get_proxy_manager
 from net.proxy_pool import ProxyPool, is_proxy_connect_error
 
 from acquisition.markets.eastmoney_crawler import (
@@ -261,7 +261,13 @@ class AShareDeepHistoryJob:
                     min_delay=0.3, max_delay=1.5, max_retries=0,
                     retry_delay=0, timeout=10, rate_limit_pause=30.0,
                 ))
-                slot = pool.acquire()
+                try:
+                    slot = pool.acquire()
+                except ProxyExhaustedError:
+                    # 启动即无可用 IP：退出，绝不直连。主循环据 futures 全退 + stall/
+                    # 熔断兜底收尾（把未处理的计为失败）。
+                    logger.warning("深历史 worker 启动即无可用快代理 IP，退出")
+                    return
                 crawler._warm_up(proxies=slot.to_requests_proxies())
                 on_ip = 0
                 try:
@@ -274,6 +280,10 @@ class AShareDeepHistoryJob:
                             if slot.proxy is not None and slot.proxy.is_expired:
                                 pool.refresh(slot)
                                 crawler.reset_session(proxies=slot.to_requests_proxies())
+                            # 轮换后仍没 IP（额度尽）→ 不直连，走 ProxyTimeoutError
+                            # 失败路径（换 IP + 记失败），熔断随换 IP 失败收敛。
+                            if not pool.direct_mode and slot.proxy is None:
+                                raise ProxyTimeoutError("代理槽无可用 IP，拒绝降级直连")
 
                             secid_mkt = None
                             if item["stock_type"] in ("index", "etf"):

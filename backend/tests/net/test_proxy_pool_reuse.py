@@ -26,6 +26,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from net import ProxyExhaustedError
 from net.proxy_manager import ProxyInfo
 
 pytestmark = pytest.mark.baseline
@@ -195,8 +196,12 @@ def test_breaker_can_be_reset_for_a_new_run():
 
     pm = _DeadPM()
     pool = ProxyPool(size=1, mgr=pm, dead_after=2, min_delay=0, max_delay=0)
+    # 取不到 IP 时 acquire 抛（绝不交出直连槽）；但每次尝试都已计入熔断，攒够即 dead。
     for _ in range(3):
-        pool.release(pool.acquire())
+        try:
+            pool.release(pool.acquire())
+        except ProxyExhaustedError:
+            pass
     assert pool.breaker_state == "dead"
 
     pool.reset_breaker()
@@ -248,3 +253,49 @@ def test_quote_pool_survives_three_market_sweeps():
             f"三轮 162 页买了 {pm.api_calls} 个 IP，应该只有 {rt.CONCURRENT_POOL_SIZE} 个"
     finally:
         rt._QUOTE_POOL = None
+
+
+# ── 铁律门禁：非 direct_mode 取不到 IP 绝不降级直连（S4b） ──────────────────
+
+def test_acquire_raises_instead_of_going_direct_when_no_ip():
+    """配了快代理却取不到 IP → acquire 抛 ProxyExhaustedError，绝不交出会直连的空槽。"""
+    from net.proxy_pool import ProxyPool
+
+    class _NoIP(_CountingPM):
+        def fetch_one_proxy(self):
+            self.api_calls += 1
+            return None
+
+    pool = ProxyPool(size=1, mgr=_NoIP(), min_delay=0, max_delay=0)
+    assert pool.direct_mode is False
+    with pytest.raises(ProxyExhaustedError):
+        pool.acquire()
+
+
+def test_acquire_returns_direct_slot_in_direct_mode():
+    """未配快代理（direct_mode）时 acquire 照常返回直连槽，不抛——直连是唯一合法选项。"""
+    from net.proxy_pool import ProxyPool
+
+    class _NoApiMgr:
+        api_url = ""
+
+        def fetch_one_proxy(self):
+            raise AssertionError("direct_mode 下不该买 IP")
+
+    pool = ProxyPool(size=1, mgr=_NoApiMgr())
+    assert pool.direct_mode is True
+    slot = pool.acquire()
+    assert slot.is_direct
+    pool.release(slot)
+
+
+def test_no_none_proxy_slot_ever_escapes_acquire():
+    """acquire 交出的槽，非 direct_mode 下必有 IP（proxy 非 None）。"""
+    from net.proxy_pool import ProxyPool
+
+    pm = _CountingPM()
+    pool = ProxyPool(size=2, mgr=pm, min_delay=0, max_delay=0)
+    for _ in range(4):
+        slot = pool.acquire()
+        assert slot.proxy is not None
+        pool.release(slot)

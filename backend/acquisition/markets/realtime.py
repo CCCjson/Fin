@@ -240,8 +240,14 @@ def _fetch_all_concurrent(
 
     def _fetch_page_via_pool(page: int, max_attempts: int = 2,
                              retries: int = 0) -> Tuple[List[Dict[str, Any]], int]:
+        from net import ProxyExhaustedError
         for _ in range(max_attempts):
-            slot = pool.acquire()
+            try:
+                slot = pool.acquire()
+            except ProxyExhaustedError:
+                # 取不到 IP 就不发请求（绝不直连东财）；本页记失败，最终交给
+                # 腾讯/新浪备源（_maybe_fill_from_fallback）兜底。
+                return [], 0
             try:
                 slot.rate_limiter.wait()
                 items, total = _fetch_one_page(
