@@ -1,5 +1,6 @@
 """
-站点配置持久化 — 逆向侦查产出存 configs/scrapers/<domain>.json + 人读 <domain>.md。
+站点配置真源 + 持久化 — 逆向侦查产出存 acquisition/crawler/sites/<domain>.json
++ 人读 <domain>.md（本包目录即配置真源，get_scrapers_config_dir 指向这里）。
 
 配置 schema：
   {

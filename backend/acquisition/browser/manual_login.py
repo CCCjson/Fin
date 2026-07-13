@@ -15,9 +15,9 @@ from typing import Dict, Any
 from loguru import logger
 
 from acquisition.browser.launch import BrowserSession
-from acquisition.browser.discover import _capture_cookies
+from acquisition.crawler.discover import _capture_cookies
 from acquisition.browser.proxy_route import playwright_proxy_for, domain_of
-from acquisition.browser.registry import load_site_config, save_site_config
+from acquisition.crawler.sites import load_site_config, save_site_config
 
 
 def manual_login(url: str, timeout_s: int = 300) -> Dict[str, Any]:

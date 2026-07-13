@@ -3,7 +3,7 @@ knowledge_engine 工具 — 注册进 agents.REGISTRY，供 MoneyBill 调用。
 
 从 knowledge_engine/tools.py 搬来（Phase 4 分层治理）：注册本该在工具层，
 不该让引擎层反向 import agents.registry。这里全是薄适配器，真正的业务逻辑
-（尤其 scrape 的侦查/取数/cookie 自愈编排）在 acquisition.crawler.reverse_api。
+（尤其 scrape 的侦查/取数/cookie 自愈编排）在 acquisition.crawler.reverse。
 
 P0：search_knowledge（检索本地已沉淀知识库，带引用）。
 P1：web_search / sec_search / read_url（系统的真·联网层，移植自 Scrapper）。
@@ -12,7 +12,7 @@ from typing import Optional
 
 from loguru import logger
 
-from acquisition.crawler.reverse_api import scrape as _scrape
+from acquisition.crawler.reverse import scrape as _scrape
 from agents.registry import tool
 
 

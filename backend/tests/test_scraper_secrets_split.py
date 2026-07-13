@@ -12,7 +12,7 @@ import pathlib
 
 import pytest
 
-from acquisition.browser import registry
+from acquisition.crawler import sites as registry
 
 
 @pytest.fixture()

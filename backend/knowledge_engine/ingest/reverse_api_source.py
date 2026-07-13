@@ -35,7 +35,7 @@ def ingest_reverse_api(
     text_fn/title_fn/id_fn 接收 (fetched_data, params)；text_fn 返回 None/空则跳过。
     pre_chunked=True：短文本整段一片；False：交给 chunk_text 多片切（长文用）。
     """
-    from acquisition.crawler.reverse_api import fetch_api
+    from acquisition.crawler.reverse import fetch_api
 
     pipeline = IngestPipeline()
     ingested = skipped = failed = 0

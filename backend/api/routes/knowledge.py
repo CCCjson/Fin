@@ -271,7 +271,7 @@ async def scrape_stream(req: ScrapeStreamRequest):
     acquisition.browser.sessions 的内存注册表，可用 GET /scrape/sessions 查询，
     不局限于本次连接——MoneyBill 聊天里触发的 scrape 同样会出现在那份列表里。
     """
-    from acquisition.crawler.reverse_api import scrape
+    from acquisition.crawler.reverse import scrape
     from acquisition.browser import sessions
 
     session_id = sessions.new_session_id()
