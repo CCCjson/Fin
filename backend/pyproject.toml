@@ -368,6 +368,7 @@ module = [
   "acquisition",
   "acquisition.channels",
   "acquisition.crawler.base",
+  "acquisition.markets.quote_router",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
