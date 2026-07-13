@@ -77,8 +77,12 @@ class MarketWebSearcher:
             "source": "web_search",
         }
 
-        # 1. 实时指数（带重试）
-        result["indices"] = self._fetch_with_retry(self._fetch_realtime_indices)
+        # 1. 实时指数（收口 quote_router：先直连失败才换快代理，铁律）
+        from acquisition.markets.quote_router import fetch_index_snapshot
+        # 上证/深证成指/创业板/沪深300/中证500/科创50
+        result["indices"] = fetch_index_snapshot([
+            "1.000001", "0.399001", "0.399006", "1.000300", "1.000905", "1.000688",
+        ])
 
         # 2. 指数近10日K线走势（带重试）
         result["index_klines"] = self._fetch_with_retry(self._fetch_index_klines)
@@ -144,37 +148,6 @@ class MarketWebSearcher:
     # ------------------------------------------------------------------
     # 已有数据源
     # ------------------------------------------------------------------
-
-    def _fetch_realtime_indices(self, proxies: Optional[Dict]) -> List[Dict]:
-        """直接调用 eastmoney API + 代理获取6大指数实时行情"""
-        import requests
-
-        url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
-        params = {
-            "fltt": "2",
-            "invt": "2",
-            "fields": "f2,f3,f4,f6,f12,f14",
-            # 上证指数、深证成指、创业板指、沪深300、中证500、科创50
-            "secids": "1.000001,0.399001,0.399006,1.000300,1.000905,1.000688",
-        }
-
-        resp = requests.get(url, params=params, proxies=proxies, timeout=15)
-        diff = resp.json().get("data", {}).get("diff", [])
-        if not diff:
-            return []
-
-        indices = []
-        for item in diff:
-            indices.append({
-                "name": item.get("f14", ""),
-                "price": item.get("f2"),
-                "change_pct": item.get("f3"),
-                "change_amount": item.get("f4"),
-                "amount": item.get("f6"),
-            })
-
-        logger.info(f"获取实时指数成功: {len(indices)} 个")
-        return indices
 
     def _fetch_index_klines(self, proxies: Optional[Dict]) -> List[Dict]:
         """

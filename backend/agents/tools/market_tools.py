@@ -17,23 +17,13 @@ _EM_UT = "bd1d9ddb04089700cf9c27f6f7426281"
 
 
 def _fetch_indices() -> List[Dict]:
-    """主要指数实时（东财 ulist，走 net 层：失败只换快代理 IP 重试，绝不降级直连）。"""
-    from net import domestic_json
-    data = domestic_json(
-        "https://push2.eastmoney.com/api/qt/ulist.np/get",
-        params={
-            "fltt": 2, "invt": 2, "fields": "f2,f3,f4,f6,f12,f14", "ut": _EM_UT,
-            # 上证/深证成指/创业板/沪深300/中证500/科创50/恒生
-            "secids": ("1.000001,0.399001,0.399006,1.000300,"
-                       "1.000905,1.000688,100.HSI"),
-        },
-        timeout=10,
-    )
-    diff = ((data or {}).get("data") or {}).get("diff") or []
-    return [{"code": it.get("f12"), "name": it.get("f14"),
-             "price": it.get("f2"), "change_pct": it.get("f3"),
-             "change_amount": it.get("f4"), "amount": it.get("f6")}
-            for it in diff]
+    """主要指数实时（收口 quote_router.fetch_index_snapshot：先直连失败才换快代理）。"""
+    from acquisition.markets.quote_router import fetch_index_snapshot
+    # 上证/深证成指/创业板/沪深300/中证500/科创50/恒生
+    return fetch_index_snapshot([
+        "1.000001", "0.399001", "0.399006", "1.000300",
+        "1.000905", "1.000688", "100.HSI",
+    ])
 
 
 def _fetch_sector_boards(fid: str) -> List[Dict]:

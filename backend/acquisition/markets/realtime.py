@@ -548,79 +548,32 @@ def fetch_a_share_realtime_cached(
     return list(data) if data else []
 
 
+# 上证指数, 深证成指, 创业板指, 科创50, 恒生指数（东财 secid，前缀自带市场）
+_INDEX_SECIDS = ["1.000001", "0.399001", "0.399006", "1.000688", "100.HSI"]
+
+
 def fetch_index_realtime(
     proxies: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
+    """获取大盘指数实时数据（上证/深证成指/创业板/科创50/恒生 + 纳斯达克）。
+
+    取数收口在 `quote_router.fetch_index_snapshot`（东财 ulist，先直连失败才换快代理，
+    铁律）；纳斯达克东财不支持，另用 yfinance 补。此前本函数手写代理且取不到 IP 会
+    **静默直连**——已随收口消除。`proxies` 参数保留仅为签名兼容，代理现由收口内部管。
     """
-    获取大盘指数实时数据（通过快代理访问东财）
+    del proxies
+    from acquisition.markets.quote_router import fetch_index_snapshot
+    result = fetch_index_snapshot(_INDEX_SECIDS)
 
-    Returns:
-        指数列表（上证指数、深证成指、创业板指、科创50）
-    """
-    url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
-
-    # 上证指数, 深证成指, 创业板指, 科创50, 恒生指数
-    secids = "1.000001,0.399001,0.399006,1.000688,100.HSI"
-
-    params = {
-        "fltt": 2,
-        "invt": 2,
-        "fields": "f2,f3,f4,f6,f12,f14",
-        "secids": secids,
-        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-        "_": str(int(time.time() * 1000)),
-    }
-
-    # 如果没传代理，通过快代理获取（国内网站不走 Clash）。
-    # get_proxy() 而非 fetch_one_proxy()：没过期就复用，别每次调用都买新 IP。
-    if not proxies:
-        proxy_mgr = _get_proxy_manager()
-        if proxy_mgr:
-            p = proxy_mgr.get_proxy()
-            if p:
-                proxies = p.to_requests_proxies()
-
+    # 补充纳斯达克（东财不支持，用 yfinance）
     try:
-        session = _make_session(proxies)
-        try:
-            resp = session.get(
-                url,
-                params=params,
-                headers=_build_headers(),
-                timeout=10,
-            )
-        finally:
-            session.close()
-        data = resp.json()
+        nasdaq = _fetch_nasdaq()
+        if nasdaq:
+            result.append(nasdaq)
+    except Exception as e:  # noqa: BLE001 — 纳斯达克是锦上添花，挂了不影响 A 股指数
+        logger.warning(f"纳斯达克数据获取失败: {e}")
 
-        if data.get("rc") != 0 or not data.get("data"):
-            logger.warning(f"指数行情请求失败: rc={data.get('rc')}")
-            return []
-
-        result = []
-        for item in data["data"].get("diff", []):
-            result.append({
-                "code": item.get("f12", ""),
-                "name": item.get("f14", ""),
-                "price": item.get("f2"),
-                "change_pct": item.get("f3"),
-                "change_amount": item.get("f4"),
-                "amount": item.get("f6"),
-            })
-
-        # 补充纳斯达克（东财不支持，用 yfinance）
-        try:
-            nasdaq = _fetch_nasdaq()
-            if nasdaq:
-                result.append(nasdaq)
-        except Exception as e:
-            logger.warning(f"纳斯达克数据获取失败: {e}")
-
-        return result
-
-    except requests.RequestException as e:
-        logger.error(f"指数行情请求异常: {e}")
-        return []
+    return result
 
 
 def fetch_quotes_by_symbols(symbols: List[str], max_rounds: int = 3) -> List[Dict[str, Any]]:

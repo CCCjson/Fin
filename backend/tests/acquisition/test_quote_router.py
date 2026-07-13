@@ -145,6 +145,25 @@ def test_baidu_network_error_propagates(monkeypatch):
         qr._run_baidu(["600519.SH"], None)
 
 
+# ---------------- 指数快照（四胞胎合一） ----------------
+
+_ULIST_OK = {"rc": 0, "data": {"diff": [
+    {"f12": "000001", "f14": "上证指数", "f2": 3964.71, "f3": -0.79,
+     "f4": -31.45, "f6": 3.8e11},
+]}}
+
+
+def test_index_snapshot_parses_canonical_row(monkeypatch):
+    _patch_session(monkeypatch, [_FakeResp(json_data=_ULIST_OK)])
+    rows = qr.fetch_index_snapshot(["1.000001"])
+    assert rows == [{"code": "000001", "name": "上证指数", "price": 3964.71,
+                     "change_pct": -0.79, "change_amount": -31.45, "amount": 3.8e11}]
+
+
+def test_index_snapshot_empty_secids_no_request():
+    assert qr.fetch_index_snapshot([]) == []
+
+
 # ---------------- 阶梯：逐 symbol 补缺口 ----------------
 
 def _fake_rotate_direct(run, **kwargs):

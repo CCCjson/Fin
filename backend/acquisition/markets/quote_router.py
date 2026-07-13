@@ -49,6 +49,11 @@ _HEADERS = {
                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
 }
 
+# 东财匿名公开 token（非密钥，全网通用）
+_EM_UT = "bd1d9ddb04089700cf9c27f6f7426281"
+_INDEX_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+_INDEX_FIELDS = "f2,f3,f4,f6,f12,f14"
+
 
 def _num(v: Any, cast: Callable = float, default: Any = None) -> Any:
     if v is None or v == "" or v == "-":
@@ -260,3 +265,43 @@ def fetch_quotes(symbols: list[str]) -> list[dict[str, Any]]:
     if missing:
         logger.warning(f"实时行情：{len(missing)} 只全源未取到（例 {sorted(missing)[:5]}）")
     return list(result.values())
+
+
+def fetch_index_snapshot(secids: list[str]) -> list[dict[str, Any]]:
+    """一处取东财指数快照（ulist.np），四方（market_tools/realtime/review/web_searcher）共用。
+
+    `secids` 用东财「市场.代码」前缀，如 `1.000001`（上证）、`100.HSI`（恒生）。前缀
+    自带市场，指数不与个股串号。先直连、失败才换快代理随机 IP（铁律，同 S3）。
+
+    Returns:
+        `[{code, name, price, change_pct, change_amount, amount}]`；全轮失败或代理耗尽
+        返回空列表（调用方按空=稍后重试）。
+    """
+    if not secids:
+        return []
+
+    def _run(proxies: dict[str, str] | None) -> list[dict[str, Any]]:
+        session = make_domestic_session(proxies)
+        try:
+            resp = session.get(_INDEX_URL, params={
+                "fltt": 2, "invt": 2, "fields": _INDEX_FIELDS,
+                "secids": ",".join(secids), "ut": _EM_UT,
+            }, headers=_HEADERS, timeout=10)
+            data = resp.json()
+        finally:
+            session.close()
+        # rc!=0 = 被东财挡了（HTTP 200 但业务失败）：抛出去换 IP，别当空结果。
+        if data.get("rc") != 0 or not data.get("data"):
+            raise RuntimeError(f"东财指数 rc={data.get('rc')}")
+        return [{"code": it.get("f12"), "name": it.get("f14"), "price": it.get("f2"),
+                 "change_pct": it.get("f3"), "change_amount": it.get("f4"),
+                 "amount": it.get("f6")}
+                for it in data["data"].get("diff", [])]
+
+    try:
+        rows = domestic_rotate(_run, what="指数快照", prefer_direct=True,
+                               max_rounds=_MAX_ROUNDS_PER_SOURCE)
+    except ProxyExhaustedError:
+        logger.warning("指数快照：直连失败且代理耗尽")
+        return []
+    return rows or []
