@@ -110,3 +110,24 @@ def fetch_yf_realtime_batch(symbols: List[str]) -> List[Dict]:
 
     logger.info(f"yfinance 批量实时行情: {len(result)}/{len(symbols)} 只")
     return result
+
+
+# ── 海外日线历史（深度回补用）─────────────────────────────────────────────
+# 13.4-2 S8a：从 data_engine/deep_history/overseas_job.py 下沉——引擎层不该直接
+# import yfinance 出网。出网仍走 yfinance（海外代理策略待后续单独处理），但调用点
+# 收进 acquisition，引擎层改调这两个门面。返回原始 DataFrame，编排/落库留调用方。
+
+def download_daily_history(yf_symbols: List[str], start: str):
+    """批量下载海外日线历史（yf.download），返回原始 DataFrame。"""
+    import yfinance as yf
+    return yf.download(
+        tickers=yf_symbols, start=start, interval="1d",
+        group_by="ticker", threads=True, auto_adjust=False, progress=False,
+    )
+
+
+def fetch_daily_history(yf_sym: str, start: str):
+    """单只海外日线历史兜底（yf.Ticker().history()），返回去空后的 DataFrame（或 None）。"""
+    import yfinance as yf
+    df = yf.Ticker(yf_sym).history(start=start, interval="1d", auto_adjust=False)
+    return df.dropna(how="all") if df is not None else None

@@ -225,15 +225,12 @@ class OverseasDeepHistoryJob:
 
     def _fetch_batch(self, market: str, batch: List[str], fetch_start: str):
         """返回 {symbol: DataFrame}；异常向上抛出由调用方重试"""
-        import yfinance as yf
+        from acquisition.markets.yf_batch import download_daily_history
 
         yf_symbols = [to_yf_symbol(s) if market == "hk_stock" else s for s in batch]
         restore = dict(zip(yf_symbols, batch))
 
-        df = yf.download(
-            tickers=yf_symbols, start=fetch_start, interval="1d",
-            group_by="ticker", threads=True, auto_adjust=False, progress=False,
-        )
+        df = download_daily_history(yf_symbols, fetch_start)
 
         result: Dict[str, "object"] = {}
         for yf_sym in yf_symbols:
@@ -248,11 +245,10 @@ class OverseasDeepHistoryJob:
 
     def _fetch_single(self, market: str, symbol: str, fetch_start: str):
         """单只兜底（排除批量下载的假阴性）"""
-        import yfinance as yf
+        from acquisition.markets.yf_batch import fetch_daily_history
 
         yf_sym = to_yf_symbol(symbol) if market == "hk_stock" else symbol
-        df = yf.Ticker(yf_sym).history(start=fetch_start, interval="1d", auto_adjust=False)
-        return df.dropna(how="all") if df is not None else None
+        return fetch_daily_history(yf_sym, fetch_start)
 
     @staticmethod
     def _df_to_records(symbol: str, market: str, df) -> List[Dict]:
