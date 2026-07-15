@@ -70,6 +70,7 @@ def run_signals(
     start_date: str = "",
     end_date: str = "",
     slippage_pct: float | None = None,
+    risk_config: dict | None = None,
     timeout: float | None = None,
 ) -> Dict[str, Any]:
     """信号驱动回测：把外部信号序列发给 C++ /api/backtest/run_signals 拿全套指标。
@@ -86,6 +87,8 @@ def run_signals(
         symbol: 标的代码（仅用于结果标注）
         start_date/end_date: 可选日期过滤
         slippage_pct: 可选滑点覆盖（>=0 生效）
+        risk_config: 可选风控（引擎侧强制止损），如
+            {"enabled": True, "stop_loss_pct": 0.08}
 
     Returns:
         C++ 服务返回的原始 dict（metrics/equity_curve/trades/dropped_last_bar_orders）
@@ -103,6 +106,8 @@ def run_signals(
     }
     if slippage_pct is not None:
         body["slippage_pct"] = slippage_pct
+    if risk_config is not None:
+        body["risk_config"] = risk_config
 
     return proxy_sync("POST", "/api/backtest/run_signals", body, timeout=timeout or BATCH_TIMEOUT)
 
