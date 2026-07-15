@@ -49,6 +49,9 @@ class AnalysisEngine:
             logger.warning("数据为空，无法计算技术指标")
             return df
 
+        # 复制一份再算，避免就地污染调用方传入的 df（子指标器都是原地写列）
+        df = df.copy()
+
         logger.info(f"开始计算技术指标: {len(df)} 行数据")
 
         try:

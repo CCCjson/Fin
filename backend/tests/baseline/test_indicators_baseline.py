@@ -49,7 +49,7 @@ def _synthetic_ohlc(n: int = 120) -> pd.DataFrame:
 
 @pytest.fixture()
 def ohlc() -> pd.DataFrame:
-    """函数级，不能共享 —— analysis_engine.add_indicators 会就地改入参（见文末 xfail）。"""
+    """函数级，不共享，避免任一用例就地改入参串到别的用例。"""
     return _synthetic_ohlc()
 
 
@@ -106,14 +106,8 @@ def test_strategy_indicators_do_not_mutate_input(ohlc):
     pd.testing.assert_frame_equal(ohlc, before)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="analysis_engine.add_indicators 不 copy，会就地给调用方的 df 加 39 列。"
-           "现有 3 个调用方都接了返回值，故是潜在隐患而非活 bug；13.4-4 修（加一行 df.copy()）。"
-           "修好后本条会 XPASS，届时删掉这个 xfail 标记。",
-)
 def test_analysis_engine_indicators_do_not_mutate_input(ohlc):
-    """真源模块反而会污染入参。锁住这个缺陷，逼 13.4-4 显式处理它。"""
+    """真源 add_indicators 不得污染入参（13.4-4 加了 df.copy() 后此契约成立）。"""
     before = ohlc.copy()
     AnalysisEngine().add_indicators(ohlc)
     pd.testing.assert_frame_equal(ohlc, before)
