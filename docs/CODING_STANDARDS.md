@@ -141,11 +141,11 @@ common / net / data_engine.storage（基础层）
 
    `KNOWLEDGE_SCRAPER_PROXY_ENABLED=false` 是逆向爬虫栈的**明示直连开关**（等价于「没配代理」），不是静默降级。
 
-   `prefer_direct=True`（2026-07-10 拍板）给低频接口省额度用，目前只有**新闻**路径在用（`news_engine/fetcher.py`、`report_engine/web_searcher.py`）。它和铁律不冲突：铁律禁的是「取不到 IP 就悄悄 `proxies=None`」，而这里直连是调用方显式点头的第一次尝试，且**默认 False**——忘了传参不会偷偷变成直连。
+   `prefer_direct=True`（2026-07-10 拍板）给低频接口省额度用：新闻（`news_engine/fetcher.py::collect_market_news`）+ acquisition/markets 的低频报告接口（北向 `northbound.py`、指数K线 `index_klines.py`、估值快照 `financial.fetch_fundamentals`）。它和铁律不冲突：铁律禁的是「取不到 IP 就悄悄 `proxies=None`」，而这里直连是调用方显式点头的第一次尝试，且**默认 False**——忘了传参不会偷偷变成直连。
 
-   ⚠️ 仍在绕过铁律的平行栈（13.4-2 `acquisition/` 收编时一并消灭）：`acquisition/markets/realtime.py`、`review/service.py`、`acquisition/markets/eastmoney_crawler.py` —— 它们各自手写重试，取不到 IP 时仍会静默直连。（`report_engine/web_searcher.py` 已改用 `get_proxy_manager()` 单例 + `prefer_direct` 语义。）
+   ✅ 13.4-2 收编完成：原平行栈（realtime 全市场翻页 S4、review/service S5、web_searcher 9 处 S7）已全部收进 acquisition + 铁律；`eastmoney_crawler` 是被动 crawler（proxies 由 ProxyPool 驱动），非平行栈。
 
-   门禁：`tests/net/test_no_direct_fallback.py`。
+   门禁：`tests/net/test_no_direct_fallback.py`（铁律行为）+ `tests/net/test_egress_single_entry.py`（**出网唯一入口**：acquisition/net 之外禁止散写 requests/httpx/yfinance/finnhub/curl_cffi，例外仅本节硬规矩 6 的三类；存量债走 ratcheting 白名单只减不增）。
 
 3. **一个 IP 服务所有国内抓取**（2026-07-10 拍板并实测）。三件事各司其职，别搞混：
 
@@ -213,6 +213,7 @@ common / net / data_engine.storage（基础层）
 | **ruff** | 全仓开 | 规则集：`E,F,W,I(isort),N(命名),UP(pyupgrade),B(bugbear)`；`line-length=120`。存量豁免用 `per-file-ignores` 白名单，只减不增 |
 | **mypy** | 渐进强检 | `pyproject.toml` 维护**强检名单**：迁完一个域就把该域加入名单（`disallow_untyped_defs=true`）；名单外模块仅基础检查。新文件默认强检 |
 | **pytest** | 基线必过 | `tests/agents/`（21 个 harness 测试）+ 13.1 新增行为基线；迁移 commit 前必须全绿 |
+| **AST 防复发门禁** | 结构强制 | `test_egress_single_entry`（出网唯一入口=acquisition，白名单只减不增）、`test_proxy_singleton_gate`（买 IP 收口 net）、`test_no_direct_fallback`（铁律不静默直连）、`test_lint_baseline_guard`（ruff 豁免只减、mypy 强检只增） |
 | **commit** | 限定路径 | 一律 `git commit -- <path>`（仓库常有 Jason 预先 staged 的在制品，禁止全量提交） |
 
 配置统一放 `backend/pyproject.toml`（13.0 落地，含 pytest 根配置——现状没有任何 pytest 配置文件，要补）。

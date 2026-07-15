@@ -61,16 +61,16 @@ def fetch_northbound_history() -> list[dict]:
     if not s2n_lines:
         return []
 
-    def _parse_val(s):
+    def _parse_val(s: object) -> float | None:
         if s in ("-", "", None):
             return None
         try:
-            return float(s)
+            return float(s)  # type: ignore[arg-type]
         except (ValueError, TypeError):
             return None
 
-    def _to_map(lines):
-        m = {}
+    def _to_map(lines: list) -> dict:
+        m: dict = {}
         for line in lines:
             if isinstance(line, str):
                 parts = line.split(",")

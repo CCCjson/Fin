@@ -364,8 +364,13 @@ module = [
   "net.bounded",
   "acquisition",
   "acquisition.channels",
+  "acquisition.config",
   "acquisition.crawler.base",
   "acquisition.markets.quote_router",
+  "acquisition.markets.sectors",
+  "acquisition.markets.northbound",
+  "acquisition.markets.index_klines",
+  "acquisition.markets.stock_news",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
