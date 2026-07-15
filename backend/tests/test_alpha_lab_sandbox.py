@@ -49,27 +49,22 @@ def test_escape_blocked(sb, name, code):
 
 # ──────────────────── 合法策略不能误伤 ────────────────────
 
+# 域5 阶段②新契约：AI 只写 on_bar(history) 产信号，纯 pandas，不 import backtest_engine
 LEGIT_STRATEGY = '''
-from backtest_engine.strategies.base import BaseStrategy, StrategyContext
 import pandas as pd
 import numpy as np
 
 
-class GeneratedStrategy(BaseStrategy):
-    def __init__(self):
-        super().__init__()
-        self.name = "ma_cross"
-        self.fast, self.slow = 5, 20
-
-    def on_bar(self, ctx: StrategyContext):
-        close = ctx.data["close"]
-        fast = close.rolling(self.fast).mean()
-        slow = close.rolling(self.slow).mean()
-        if fast.iloc[-1] > slow.iloc[-1]:
-            return 1
-        elif fast.iloc[-1] < slow.iloc[-1]:
-            return -1
-        return 0
+def on_bar(history: pd.DataFrame):
+    if len(history) < 20:
+        return None
+    fast = history["close"].rolling(5).mean()
+    slow = history["close"].rolling(20).mean()
+    if fast.iloc[-1] > slow.iloc[-1]:
+        return "buy"
+    elif fast.iloc[-1] < slow.iloc[-1]:
+        return "sell"
+    return None
 '''
 
 
@@ -78,9 +73,17 @@ def test_legit_strategy_passes(sb):
     assert safe, f"合法策略被误伤！violations={violations}"
 
 
+def test_old_framework_import_now_rejected(sb):
+    """域5 阶段②：AI 不再 import backtest_engine，旧契约代码应被白名单挡下。"""
+    old_code = "from backtest_engine.strategies.base import BaseStrategy\n"
+    safe, violations = sb.ast_check(old_code)
+    assert not safe, "去掉白名单后，import backtest_engine 应被拦截"
+    assert violations
+
+
 def test_super_init_allowed(sb):
     """super().__init__() 用到 __init__ 属性，必须放行（不能被 dunder 拦）。"""
-    code = ("class GeneratedStrategy:\n"
+    code = ("class Foo:\n"
             "    def __init__(self):\n"
             "        super().__init__()\n")
     safe, _ = sb.ast_check(code)
