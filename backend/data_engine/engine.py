@@ -141,8 +141,8 @@ class DataEngine:
             # 获取数据
             request = MarketDataRequest(
                 symbol=symbol,
-                start_date=start_date,
-                end_date=end_date,
+                start_date=start_date.strftime("%Y-%m-%d"),
+                end_date=end_date.strftime("%Y-%m-%d"),
                 adjust=adjust
             )
 

@@ -3,7 +3,6 @@
 """
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
-from datetime import datetime
 from pydantic import BaseModel
 import pandas as pd
 
@@ -11,8 +10,8 @@ import pandas as pd
 class MarketDataRequest(BaseModel):
     """数据请求模型"""
     symbol: str
-    start_date: datetime
-    end_date: datetime
+    start_date: str  # YYYY-MM-DD
+    end_date: str  # YYYY-MM-DD
     frequency: str = "1d"
     adjust: str = "qfq"  # qfq: 前复权, hfq: 后复权, none: 不复权
 

@@ -47,8 +47,8 @@ class AShareFetcher(BaseFetcher):
                 ak.stock_zh_a_hist,
                 symbol=symbol_code,
                 period="daily",
-                start_date=request.start_date.strftime("%Y%m%d"),
-                end_date=request.end_date.strftime("%Y%m%d"),
+                start_date=request.start_date.replace("-", ""),
+                end_date=request.end_date.replace("-", ""),
                 adjust=request.adjust
             )
 

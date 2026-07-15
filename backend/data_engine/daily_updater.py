@@ -16,6 +16,7 @@ from typing import Generator, Optional, Dict, List, Tuple
 
 from loguru import logger
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from net.proxy_pool import ProxyPool, is_proxy_connect_error
 
@@ -56,7 +57,7 @@ class DailyUpdater:
     # pytdx 指数成交量单位是百手，东财是手
     PYTDX_INDEX_VOLUME_FACTOR = 100
 
-    def __init__(self):
+    def __init__(self) -> None:
         # 进程单例：自建实例会多一份谁也看不见的 IP 缓存
         self.proxy_mgr = get_proxy_manager() or ProxyManager()
         self.crawler: Optional[EastMoneyCrawler] = None
@@ -64,7 +65,7 @@ class DailyUpdater:
         self.proxy_switch_count = 0
         self._consec_proxy_fail = 0
 
-    def _init_crawler(self):
+    def _init_crawler(self) -> None:
         """初始化爬虫和第一个代理"""
         self._consec_proxy_fail = 0
         self.current_proxy = self.proxy_mgr.get_proxy()   # 没过期就复用，不扣额度
@@ -127,7 +128,7 @@ class DailyUpdater:
             )
         return None
 
-    def _switch_proxy_on_error(self):
+    def _switch_proxy_on_error(self) -> None:
         """请求失败时切换代理（可能抛出 ProxyServiceUnavailable 中止本次更新）"""
         proxies = self._switch_proxy_or_abort()
         if self.crawler:
@@ -150,7 +151,7 @@ class DailyUpdater:
 
     def _update_indices_via_pytdx(
         self,
-        session,
+        session: Session,
         index_stocks: List,
         latest_dates: Dict[str, Optional[date]],
         target_date: date,
@@ -316,7 +317,7 @@ class DailyUpdater:
         return result
 
     @staticmethod
-    def _bulk_upsert(session, records: List[Dict]) -> int:
+    def _bulk_upsert(session: Session, records: List[Dict]) -> int:
         """用 INSERT OR REPLACE 批量写入日线数据（委托给 deep_history.bulk_upsert 共用实现）"""
         return bulk_upsert_quotes(session, records)
 
@@ -740,7 +741,7 @@ class DailyUpdater:
                              min_delay=0.3, max_delay=1.5,
                              initial_success=success_count)
 
-            def _worker():
+            def _worker() -> None:
                 crawler = EastMoneyCrawler(CrawlerConfig(
                     min_delay=0.3, max_delay=1.5, max_retries=0,
                     retry_delay=0, timeout=8, rate_limit_pause=30.0,
@@ -755,7 +756,7 @@ class DailyUpdater:
                 crawler._warm_up(proxies=slot.to_requests_proxies())
                 on_ip = 0
 
-                def _rotate():
+                def _rotate() -> None:
                     nonlocal on_ip
                     try:
                         pool.refresh(slot)
@@ -1028,7 +1029,7 @@ class DailyUpdater:
         """K 线 dict 列表转为 _bulk_upsert 所需的记录格式（委托给共用实现）"""
         return klines_to_records(symbol, "a_share", klines)
 
-    def _save_klines(self, session, symbol: str, klines: List[Dict]) -> int:
+    def _save_klines(self, session: Session, symbol: str, klines: List[Dict]) -> int:
         """保存 K 线数据到 DB（INSERT OR REPLACE，无需逐行 SELECT）"""
         if not klines:
             return 0
