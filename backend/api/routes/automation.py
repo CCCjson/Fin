@@ -392,8 +392,7 @@ async def get_broker_status():
         logger.error(f"获取 PaperBroker 状态失败: {e}")
         results["paper"] = {"online": False, "name": "模拟交易", "error": str(e)}
 
-    # QMT / EasyTrader — 尚未接入，直接标记离线（后续接入后改为实际探测）
-    results["qmt"] = {"online": False, "name": "QMT 国金证券"}
+    # EasyTrader — 尚未接入，直接标记离线（后续接入后改为实际探测）
     results["easytrader"] = {"online": False, "name": "EasyTrader"}
 
     # 汇总
@@ -414,7 +413,7 @@ async def get_broker_status():
 
 @router.get("/broker-positions")
 async def get_broker_positions(
-    broker_type: str = Query("paper", description="券商类型: paper/qmt/easytrader"),
+    broker_type: str = Query("paper", description="券商类型: paper/easytrader"),
 ):
     """获取指定 broker 的持仓"""
     try:
@@ -434,24 +433,6 @@ async def get_broker_positions(
                     "unrealized_pnl_pct": round(pos.unrealized_pnl_pct, 2),
                     "available": pos.available,
                     "broker": "paper",
-                })
-
-        elif broker_type == "qmt":
-            from trading_engine.brokers.qmt_broker import QMTBroker
-            broker = QMTBroker()
-            if not broker.connect():
-                return {"success": False, "message": "QMT Bridge 未连接"}
-            for pos in broker.get_positions():
-                positions.append({
-                    "symbol": pos.symbol,
-                    "quantity": pos.quantity,
-                    "avg_cost": round(pos.avg_cost, 3),
-                    "current_price": round(pos.current_price, 3),
-                    "market_value": round(pos.market_value, 2),
-                    "unrealized_pnl": round(pos.unrealized_pnl, 2),
-                    "unrealized_pnl_pct": round(pos.unrealized_pnl_pct, 2),
-                    "available": pos.available,
-                    "broker": "qmt",
                 })
 
         elif broker_type == "easytrader":
@@ -529,13 +510,6 @@ async def submit_broker_order(
             broker = get_paper_broker()
             if price:
                 broker.update_market_price(symbol, price)
-            broker_order = broker.submit_order(symbol, action, quantity, price)
-
-        elif broker_type == "qmt":
-            from trading_engine.brokers.qmt_broker import QMTBroker
-            broker = QMTBroker()
-            if not broker.connect():
-                return {"success": False, "message": "QMT Bridge 未连接"}
             broker_order = broker.submit_order(symbol, action, quantity, price)
 
         elif broker_type == "easytrader":

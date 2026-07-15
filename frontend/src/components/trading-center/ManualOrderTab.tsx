@@ -58,7 +58,6 @@ export const ManualOrderTab: React.FC = () => {
 
   const brokerOptions = [
     { value: 'paper', label: '模拟交易 (Paper)' },
-    { value: 'qmt', label: 'QMT 国金证券' },
     { value: 'easytrader', label: 'EasyTrader' },
   ];
 

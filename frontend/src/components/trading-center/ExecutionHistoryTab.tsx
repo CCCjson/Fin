@@ -15,7 +15,6 @@ const statusLabels: Record<string, { text: string; color: string }> = {
 
 const brokerLabels: Record<string, string> = {
   paper: 'Paper',
-  qmt: 'QMT',
   easytrader: 'EasyTrader',
 };
 
@@ -42,7 +41,6 @@ export const ExecutionHistoryTab: React.FC = () => {
   const brokerFilters = [
     { label: '全部', value: '' },
     { label: 'Paper', value: 'paper' },
-    { label: 'QMT', value: 'qmt' },
     { label: 'EasyTrader', value: 'easytrader' },
   ];
 

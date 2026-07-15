@@ -292,8 +292,6 @@ class PendingOrderManager:
                     broker_order = self._execute_paper(pending.symbol, pending.signal_type, exec_qty, exec_price)
                 elif exec_broker == "easytrader":
                     broker_order = self._execute_easytrader(pending.symbol, pending.signal_type, exec_qty, exec_price)
-                elif exec_broker == "qmt":
-                    broker_order = self._execute_qmt(pending.symbol, pending.signal_type, exec_qty, exec_price)
                 else:
                     raise ValueError(f"不支持的券商类型: {exec_broker}")
 
@@ -485,22 +483,6 @@ class PendingOrderManager:
                 quantity=quantity,
                 status=OrderStatus.FAILED,
                 error_msg="EasyTrader 连接失败",
-            )
-        return broker.submit_order(symbol, action, quantity, price)
-
-    def _execute_qmt(self, symbol: str, action: str, quantity: int, price: float):
-        """通过 QMT (国金证券 miniQMT) 执行"""
-        from trading_engine.brokers.qmt_broker import QMTBroker
-        broker = QMTBroker()
-        if not broker.connect():
-            from trading_engine.brokers.base import BrokerOrder
-            return BrokerOrder(
-                order_id="",
-                symbol=symbol,
-                action=action,
-                quantity=quantity,
-                status=OrderStatus.FAILED,
-                error_msg="QMT Bridge 连接失败，请确认 bridge_server 已启动",
             )
         return broker.submit_order(symbol, action, quantity, price)
 

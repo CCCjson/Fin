@@ -298,7 +298,6 @@ export const ConfigModal: React.FC<{
                 >
                   <option value="paper">模拟交易</option>
                   <option value="easytrader">实盘 (EasyTrader)</option>
-                  <option value="qmt">实盘 (QMT 国金证券)</option>
                 </select>
               </div>
               <div>

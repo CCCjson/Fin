@@ -10,7 +10,6 @@ import type { PositionItem } from '../../stores/automationStore';
 const brokerFilters = [
   { label: '全部', value: '' },
   { label: 'Paper', value: 'paper' },
-  { label: 'QMT', value: 'qmt' },
   { label: 'EasyTrader', value: 'easytrader' },
 ];
 

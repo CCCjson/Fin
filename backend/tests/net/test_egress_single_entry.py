@@ -50,7 +50,6 @@ _PENDING_DEBT = {
     "news_engine/fetcher.py",                             # finnhub SDK（海外，待海外铁律课题）
     "knowledge_engine/ingest/cninfo_source.py",           # curl_cffi（sources 迁移 acquisition 待做）
     "knowledge_engine/ingest/research_report_source.py",  # curl_cffi（sources 迁移 acquisition 待做）
-    "trading_engine/brokers/qmt_broker.py",               # requests（QMT 通道计划整删，§6.1）
 }
 
 _ALLOWLIST = _LEGAL_EXCEPTIONS | _PENDING_DEBT

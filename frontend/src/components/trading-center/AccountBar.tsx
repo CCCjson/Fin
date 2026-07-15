@@ -7,7 +7,6 @@ import type { BrokerStatusItem } from '../../stores/automationStore';
 
 const brokerLabels: Record<string, string> = {
   paper: 'Paper',
-  qmt: 'QMT',
   easytrader: 'EasyTrader',
 };
 
