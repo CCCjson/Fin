@@ -5,19 +5,8 @@ import type { BatchBacktestConfig, BatchProgressEvent, BatchBacktestSummary } fr
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 export const backtestService = {
-  // 运行回测
-  runBacktest: async (params: {
-    task_id?: string;
-    name: string;
-    strategy_type: string;
-    strategy_params?: Record<string, any>;
-    symbols: string[];
-    start_date: string;
-    end_date: string;
-    initial_capital?: number;
-  }) => {
-    return api.post('/history/backtests', params);
-  },
+  // 注：新建回测统一走 C++（runCppBacktest / runBatchBacktest）。
+  // 域5 阶段④退役 Python 引擎后，POST /history/backtests 已下线，runBacktest 移除。
 
   // 获取回测任务列表
   getBacktestTasks: async (params?: {
