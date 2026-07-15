@@ -13,8 +13,6 @@ from pydantic import BaseModel
 from agents.registry import tool
 from agents.tool_envelope import ToolEnvelope
 
-_EM_UT = "bd1d9ddb04089700cf9c27f6f7426281"
-
 
 def _fetch_indices() -> List[Dict]:
     """主要指数实时（收口 quote_router.fetch_index_snapshot：先直连失败才换快代理）。"""
@@ -24,23 +22,6 @@ def _fetch_indices() -> List[Dict]:
         "1.000001", "0.399001", "0.399006", "1.000300",
         "1.000905", "1.000688", "100.HSI",
     ])
-
-
-def _fetch_sector_boards(fid: str) -> List[Dict]:
-    """行业板块榜（fid=f3 涨跌排序 / f62 主力净流入排序），东财 clist 走 net 层。"""
-    from net import domestic_json
-    data = domestic_json(
-        "https://push2.eastmoney.com/api/qt/clist/get",
-        params={"pn": 1, "pz": 100, "po": 1, "np": 1, "ut": _EM_UT,
-                "fltt": 2, "invt": 2, "fid": fid, "fs": "m:90+t:2+f:!50",
-                "fields": "f3,f14,f62,f128,f136,f184"},
-        timeout=15,
-    )
-    diff = ((data or {}).get("data") or {}).get("diff") or []
-    return [{"name": it.get("f14"), "change_pct": it.get("f3"),
-             "leader": it.get("f128"), "leader_pct": it.get("f136"),
-             "net_inflow": it.get("f62"), "net_inflow_pct": it.get("f184")}
-            for it in diff]
 
 
 def _top_bottom(rows: List[Dict], top_n: int, bottom_n: int,
@@ -116,14 +97,15 @@ def get_market_pulse() -> ToolEnvelope:
     summary["breadth"] = stats
 
     # 3+4) 行业板块涨跌 Top / 板块主力资金流 Top（失败优雅降级为空）
+    from acquisition.markets.sectors import fetch_boards
     try:
-        summary["sectors"] = _top_bottom(_fetch_sector_boards("f3"),
+        summary["sectors"] = _top_bottom(fetch_boards("f3"),
                                          5, 3, "top", "bottom")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"get_market_pulse 板块涨跌失败: {e}")
         summary["sectors"] = []
     try:
-        summary["money_flow"] = _top_bottom(_fetch_sector_boards("f62"),
+        summary["money_flow"] = _top_bottom(fetch_boards("f62"),
                                             5, 3, "inflow", "outflow",
                                             drop=("leader", "leader_pct"))
     except Exception as e:  # noqa: BLE001
