@@ -8,8 +8,8 @@ websearch — 系统的「真·联网层」（移植 Scrapper 的搜索+读正�
 
 一鱼两吃：被 agents/tools/knowledge_tools.py 包成 @tool 给 MoneyBill；被各引擎直接 import 共享。
 """
-from knowledge_engine.websearch.ddg import web_search
-from knowledge_engine.websearch.sec_edgar import sec_search
-from knowledge_engine.websearch.fetch import read_url
+from acquisition.websearch.ddg import web_search
+from acquisition.websearch.sec_edgar import sec_search
+from acquisition.websearch.fetch import read_url
 
 __all__ = ["web_search", "sec_search", "read_url"]

@@ -40,7 +40,7 @@ def _fetch_cninfo_pdf_text(announcement_id: str, date: str, max_pages: int = 60)
         import os
         import fitz
         from curl_cffi import requests as cffi
-        from knowledge_engine.websearch.session import bounded_get
+        from acquisition.websearch.session import bounded_get
         s = cffi.Session(impersonate="chrome120")
         # 切块落盘（内存恒定），不把整份 PDF 读进内存
         cap = bounded_get(s, url, mode="file", file_suffix=".pdf",

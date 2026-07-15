@@ -192,7 +192,7 @@ class AdvisorContextCollector:
             # 个股新闻：真·DuckDuckGo 通用搜索（外置金融大脑 websearch）。
             # 失败降级到东财站内搜索兜底（DDG 有 202 限速风险，东财是国内可用兜底）。
             try:
-                from knowledge_engine.websearch import web_search
+                from acquisition.websearch import web_search
                 hits = web_search(f"{search_keyword} 股票 最新 消息 公告", max_results=10)
                 # 适配回 web_news 契约（prompt_builder 读 title/source/time/body，全 .get 容错）
                 result["web_news"] = [{

@@ -212,7 +212,7 @@ class ReportDataCollector:
         # category='global' 自动并入 Ch3「全球财经」块渲染，下游零改。
         if enable_web_search:
             try:
-                from knowledge_engine.websearch import web_search as _ws
+                from acquisition.websearch import web_search as _ws
                 ws = db_data.setdefault("web_search", {})
                 ws.setdefault("news", [])
                 hits = _ws("A股 市场 最新 解读 机构观点", max_results=8)

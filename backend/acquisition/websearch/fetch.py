@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from loguru import logger
 
-from knowledge_engine.websearch.session import (
+from acquisition.websearch.session import (
     make_plain_session, make_cffi_session, USER_AGENT, DOWNLOAD_TIMEOUT,
     bounded_get, Capped,
 )

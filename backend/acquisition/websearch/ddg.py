@@ -13,7 +13,7 @@ import time
 import threading
 from urllib.parse import urlparse, parse_qs, unquote
 
-from knowledge_engine.websearch.session import (
+from acquisition.websearch.session import (
     make_cffi_session, resolve_proxy, USER_AGENT, HTTP_TIMEOUT, bounded_get,
 )
 

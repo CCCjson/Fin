@@ -71,9 +71,8 @@ def get_search_queries() -> list[str]:
     return [q.strip() for q in raw.split(",") if q.strip()]
 
 
-def get_edgar_ua() -> str:
-    """SEC EDGAR 要求带邮箱标识的合规 User-Agent。"""
-    return os.getenv("KNOWLEDGE_EDGAR_UA", "Fin Research Tool cccjson0828@gmail.com")
+# 13.4-2 S7：`get_edgar_ua` 随 websearch（sec_edgar）一并迁入 `acquisition/config.py`
+# ——它是出网取数的配置，跟着 acquisition/websearch 走。
 
 
 # 13.4-2：`get_scraper_proxy` 已下沉 `net/overseas.py`（网络层配置不该住在引擎层，

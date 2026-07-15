@@ -12,7 +12,7 @@ from typing import List, Optional, Dict, Any
 from loguru import logger
 
 from knowledge_engine.ingest import IngestPipeline
-from knowledge_engine.websearch import web_search, sec_search, read_url
+from acquisition.websearch import web_search, sec_search, read_url
 from knowledge_engine.config import get_search_queries
 
 

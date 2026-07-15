@@ -71,7 +71,7 @@ def search_knowledge(query: str, top_k: int = 5, source_type: str = "all") -> di
     group="knowledge_web",
 )
 def web_search(query: str, max_results: int = 8, site: str = None) -> dict:
-    from knowledge_engine.websearch import web_search as _ws
+    from acquisition.websearch import web_search as _ws
     res = _ws(query, max_results=max_results, site=site or None)
     items = [{"title": r["title"], "snippet": r["snippet"][:200], "url": r["url"]} for r in res]
     return {"summary": {"count": len(items), "results": items}}
@@ -97,7 +97,7 @@ def web_search(query: str, max_results: int = 8, site: str = None) -> dict:
     group="knowledge_web",
 )
 def sec_search(query: str, max_results: int = 10, forms: str = None) -> dict:
-    from knowledge_engine.websearch import sec_search as _ss
+    from acquisition.websearch import sec_search as _ss
     res = _ss(query, max_results=max_results, forms=forms or None)
     filings = [{"title": r["title"], "url": r["url"]} for r in res]
     return {"summary": {"count": len(filings), "filings": filings}}
@@ -121,7 +121,7 @@ def sec_search(query: str, max_results: int = 10, forms: str = None) -> dict:
     group="knowledge_web",
 )
 def read_url(url: str, max_chars: int = 8000) -> dict:
-    from knowledge_engine.websearch import read_url as _ru
+    from acquisition.websearch import read_url as _ru
     doc = _ru(url, max_chars=max_chars)
     if not doc["text"]:
         from acquisition.browser.diagnose import diagnose

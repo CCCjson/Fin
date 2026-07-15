@@ -450,7 +450,7 @@ class MarketWebSearcher:
         与 _collect_all_news 同构 [{title, body, source, time, category, lang, url}]，可直接并入同一 list。
         失败返回 []，不影响东财/Finnhub 三路。
         """
-        from knowledge_engine.websearch import web_search
+        from acquisition.websearch import web_search
 
         out: List[Dict] = []
         seen = set()

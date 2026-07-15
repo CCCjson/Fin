@@ -4,7 +4,7 @@ bounded_get 单测 —— 验证响应封顶 + 大文件切块落盘，杜绝无
 """
 import os
 
-from knowledge_engine.websearch.session import bounded_get, Capped
+from acquisition.websearch.session import bounded_get, Capped
 
 
 class _FakeResp:

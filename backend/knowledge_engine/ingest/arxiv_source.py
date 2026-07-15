@@ -6,7 +6,7 @@ arXiv 官方 API 摄入源 → 知识文档（source_type=paper）。
 可靠拿到 published_at（DDG 方式根本拿不到），查全率/精准度都远好于搜索引擎命中。
 
 ★ arXiv 官方限速要求：请求间隔 ≥3 秒，写死不做成可调参数，避免误改违反使用条款。
-★ 走 knowledge_engine.websearch.session 里已有的海外代理策略（resolve_overseas：
+★ 走 acquisition.websearch.session 里已有的海外代理策略（resolve_overseas：
   先探本地直连，不通走 Shadowrocket），跟 read_url/DDG 同一套连接方式，不新起。
 """
 import time
@@ -18,8 +18,8 @@ from loguru import logger
 from lxml import etree
 
 from knowledge_engine.ingest import IngestPipeline
-from knowledge_engine.websearch.session import make_plain_session, bounded_get
-from knowledge_engine.websearch.fetch import read_url
+from acquisition.websearch.session import make_plain_session, bounded_get
+from acquisition.websearch.fetch import read_url
 
 ARXIV_API = "http://export.arxiv.org/api/query"
 ARXIV_RATE_LIMIT_SECONDS = 3.0  # arXiv 官方要求，不做成配置项

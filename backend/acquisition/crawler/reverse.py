@@ -179,9 +179,8 @@ def scrape(url: str, want: str = None, endpoint: str = None, params: dict = None
             if _looks_like_domain(page_url):
                 page_url = "https://" + page_url
             else:
-                # TODO(13.4-2 websearch 迁入后收口)：Scope A 下 websearch 暂留 knowledge_engine，
-                # 这是本栈唯一一条容许的临时上行边（函数体内延迟 import，仅 URL 兜底才触发）。
-                from knowledge_engine.websearch import web_search as _ws
+                # URL 兜底：域名解析不出时用通用网页检索找入口（同栈 acquisition/websearch）。
+                from acquisition.websearch import web_search as _ws
                 hits = _ws(f"{url} {want or ''}".strip(), max_results=3)
                 if not hits:
                     sessions.finish(session_id, "error", error="未找到对应网页")

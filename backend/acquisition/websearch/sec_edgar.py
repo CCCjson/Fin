@@ -3,7 +3,7 @@ SEC EDGAR 全文检索 — 零密钥，仅需带邮箱的合规 User-Agent。
 
 移植自 Scrapper missing_data/searchers/sec_edgar.py 的 `_hit_url` / `_hit_title` /
 `_hit_doctype` / `_throttle` / `_http_search`，绕过其矿业 QueryContext / search。
-UA 用 knowledge_engine config.get_edgar_ua()（EDGAR fair-use 要求带邮箱标识）。
+UA 用 acquisition config.get_edgar_ua()（EDGAR fair-use 要求带邮箱标识）。
 
 EDGAR FTS 不返回正文 snippet → 命中即合成诚实 snippet（query 词保证在文中）；
 要正文须把返回的 url 喂给 read_url。用 plain requests（EDGAR 不挑 TLS）。
@@ -12,8 +12,8 @@ import json
 import time
 import threading
 
-from knowledge_engine.config import get_edgar_ua
-from knowledge_engine.websearch.session import (
+from acquisition.config import get_edgar_ua
+from acquisition.websearch.session import (
     make_plain_session, resolve_proxy, HTTP_TIMEOUT, bounded_get,
 )
 

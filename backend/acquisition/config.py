@@ -83,3 +83,10 @@ def get_scraper_proxy_enabled() -> bool:
 def get_proxy_fetch_timeout() -> float:
     """取快代理 IP 的硬超时（秒）。超时即抛 ProxyExhaustedError，绝不无限等。"""
     return float(os.getenv("KNOWLEDGE_PROXY_FETCH_TIMEOUT", "8"))
+
+
+# ---------- 通用网页检索（websearch：SEC EDGAR 合规 UA） ----------
+
+def get_edgar_ua() -> str:
+    """SEC EDGAR 要求带邮箱标识的合规 User-Agent（13.4-2 S7 随 websearch 迁入）。"""
+    return os.getenv("KNOWLEDGE_EDGAR_UA", "Fin Research Tool cccjson0828@gmail.com")
