@@ -16,7 +16,7 @@ from backtest_engine.strategies import (
 )
 from data_engine import DataEngine
 from data_engine.storage.history_repository import HistoryRepository
-from strategy.indicators import TechnicalIndicators
+from analysis_engine import AnalysisEngine
 
 
 class BacktestExecutor:
@@ -24,7 +24,7 @@ class BacktestExecutor:
 
     def __init__(self):
         self.data_engine = DataEngine()
-        self.indicators = TechnicalIndicators()
+        self.indicators = AnalysisEngine()
 
     def execute_task(self, task_id: str):
         """
@@ -82,7 +82,7 @@ class BacktestExecutor:
                         continue
 
                     # 计算技术指标
-                    df = self.indicators.calculate_all_indicators(df)
+                    df = self.indicators.add_indicators(df)
 
                     # 创建策略
                     strategy = self._create_strategy(task.strategy_type, strategy_params)

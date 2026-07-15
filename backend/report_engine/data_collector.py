@@ -29,7 +29,7 @@ from report_engine import picks_log
 from report_engine.scorer import SignalScorer
 from report_engine.stock_analyzer import StockAnalyzer
 from portfolio.calculator import PortfolioCalculator
-from strategy.indicators import TechnicalIndicators
+from analysis_engine import AnalysisEngine
 
 
 _COMMON_CACHE_TTL_SECONDS = 300
@@ -906,7 +906,7 @@ class ReportDataCollector:
             return None
 
         df = pd.DataFrame(rows)
-        df = TechnicalIndicators.calculate_all_indicators(df)
+        df = AnalysisEngine().add_indicators(df)
         latest = df.iloc[-1]
 
         def _safe(val):

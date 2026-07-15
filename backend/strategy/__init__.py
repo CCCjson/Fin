@@ -1,7 +1,6 @@
 """
 策略引擎模块
 """
-from .indicators import TechnicalIndicators
 from .base_strategy import BaseStrategy, Signal
 from .strategies import (
     MACrossStrategy,
@@ -12,7 +11,6 @@ from .strategies import (
 from .signal_generator import SignalGenerator
 
 __all__ = [
-    'TechnicalIndicators',
     'BaseStrategy',
     'Signal',
     'MACrossStrategy',

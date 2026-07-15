@@ -147,10 +147,10 @@ def _intraday_buy_map(symbols: list[str], period: int = 15, count: int = 64) -> 
         return {}
     import pandas as pd
     from acquisition.markets.pytdx_fetcher import PytdxFetcher
-    from strategy.indicators import TechnicalIndicators
+    from analysis_engine import AnalysisEngine
     from strategy.strategies import MACrossStrategy, MACDStrategy, KDJStrategy, RSIStrategy
 
-    indicators = TechnicalIndicators()
+    indicators = AnalysisEngine()
     strategies = [
         MACrossStrategy(fast_period=5, slow_period=20),
         MACDStrategy(), KDJStrategy(), RSIStrategy(),
@@ -172,7 +172,7 @@ def _intraday_buy_map(symbols: list[str], period: int = 15, count: int = 64) -> 
         if df is None or df.empty:
             continue
         try:
-            df = indicators.calculate_all_indicators(df)
+            df = indicators.add_indicators(df)
             recent_dates = (
                 set(pd.to_datetime(df["date"]).dt.date.iloc[-3:])
                 if "date" in df.columns else set()

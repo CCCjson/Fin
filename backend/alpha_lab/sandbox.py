@@ -149,7 +149,6 @@ sys.path.insert(0, {json.dumps(backend_root)})
 
 import pandas as pd
 from backtest_engine.engine import BacktestEngine
-from strategy.indicators import TechnicalIndicators
 
 result = {{"success": True, "error": None, "train_metrics": {{}}, "val_metrics": {{}}}}
 

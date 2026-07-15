@@ -17,7 +17,7 @@ from alpha_lab.session_manager import SessionManager, SessionState, IterationRec
 from alpha_lab.strategy_store import StrategyStore
 
 from data_engine.engine import DataEngine
-from strategy.indicators import TechnicalIndicators
+from analysis_engine import AnalysisEngine
 
 
 class AlphaLabEngine:
@@ -422,7 +422,7 @@ class AlphaLabEngine:
                 raise ValueError(f"{symbol} 在 {data_start}~{data_end} 期间无数据")
 
             # 计算技术指标
-            df = TechnicalIndicators.calculate_all_indicators(df)
+            df = AnalysisEngine().add_indicators(df)
 
             # 时序分割：前 70% 训练，后 30% 验证
             split_idx = int(len(df) * 0.7)

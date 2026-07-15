@@ -13,7 +13,6 @@ from data_engine.engine import DataEngine
 from data_engine.storage.database import get_session
 from data_engine.storage.repository import StockRepository
 from data_engine.storage.history_repository import HistoryRepository
-from strategy.indicators import TechnicalIndicators
 from strategy.signal_generator import SignalGenerator
 from analysis_engine.engine import AnalysisEngine
 
@@ -99,7 +98,7 @@ class AdvisorContextCollector:
 
         # 计算技术指标
         try:
-            df_ind = TechnicalIndicators.calculate_all_indicators(df)
+            df_ind = AnalysisEngine().add_indicators(df)
             result["indicators"] = self._extract_indicators(df_ind)
         except Exception:
             logger.warning(f"计算技术指标失败: {symbol}\n{traceback.format_exc()}")

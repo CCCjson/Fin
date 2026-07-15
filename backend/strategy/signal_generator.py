@@ -9,7 +9,7 @@ from loguru import logger
 
 from data_engine.storage.history_repository import HistoryRepository
 from data_engine.engine import DataEngine
-from .indicators import TechnicalIndicators
+from analysis_engine import AnalysisEngine
 from .strategies import (
     MACrossStrategy,
     MACDStrategy,
@@ -34,7 +34,7 @@ def _process_symbol(symbol: str,
         (symbol, signals_list, error_msg_or_None)
     """
     engine = DataEngine()
-    indicators = TechnicalIndicators()
+    indicators = AnalysisEngine()
     strategies = [
         MACrossStrategy(fast_period=5, slow_period=20),
         MACDStrategy(),
@@ -55,7 +55,7 @@ def _process_symbol(symbol: str,
         if 'date' not in df.columns:
             df = df.reset_index()
 
-        df = indicators.calculate_all_indicators(df)
+        df = indicators.add_indicators(df)
 
         all_signals: List[Signal] = []
         for strategy in strategies:
@@ -89,7 +89,7 @@ class SignalGenerator:
     def __init__(self):
         self.repo = HistoryRepository()
         self.engine = DataEngine()
-        self.indicators = TechnicalIndicators()
+        self.indicators = AnalysisEngine()
 
         # 初始化策略列表
         self.strategies = [
@@ -140,7 +140,7 @@ class SignalGenerator:
                 df = df.reset_index()
 
             # 计算技术指标
-            df = self.indicators.calculate_all_indicators(df)
+            df = self.indicators.add_indicators(df)
             logger.info("技术指标计算完成")
 
             # 使用所有策略生成信号
@@ -275,7 +275,7 @@ class SignalGenerator:
                 continue
 
             try:
-                df = self.indicators.calculate_all_indicators(df)
+                df = self.indicators.add_indicators(df)
 
                 all_signals: List[Signal] = []
                 for strategy in self.strategies:
