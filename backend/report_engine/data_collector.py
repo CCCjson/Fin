@@ -5,8 +5,8 @@
 五个章节 subagent。想只看板块轮动就只采市场那片，不必把整套跑一遍。
 
 分片之间共享 `collect_common()`（行情总览 + 持仓），它是全流程最贵的一步——一次
-`MarketWebSearcher` 出网 + 逐持仓抓新闻，且 `_section_market_context` 让五个章节
-全都要用它。故加进程内 TTL 缓存，否则 MoneyBill 连调四个章节工具会出网抓四次指数。
+`market_overview.collect_market_overview()` 出网 + 逐持仓抓新闻，且 `_section_market_context`
+让五个章节全都要用它。故加进程内 TTL 缓存，否则 MoneyBill 连调四个章节工具会出网抓四次指数。
 """
 import copy
 import json
@@ -194,9 +194,8 @@ class ReportDataCollector:
         # 始终执行 web search：数据库只有个股快照，没有大盘指数和板块排行
         logger.info("启动 Web 搜索获取大盘指数和板块数据...")
         try:
-            from report_engine.web_searcher import MarketWebSearcher
-            searcher = MarketWebSearcher()
-            web_data = searcher.search_market_overview()
+            from report_engine.market_overview import collect_market_overview
+            web_data = collect_market_overview()
             db_data["web_search"] = web_data
             db_data["data_source"] = "db + web_search"
             logger.info(f"Web 搜索完成: {len(web_data.get('indices', []))} 个指数, "
@@ -671,9 +670,8 @@ class ReportDataCollector:
             fundamentals: Dict = {}
             if all_symbols:
                 try:
-                    from report_engine.web_searcher import MarketWebSearcher
-                    searcher = MarketWebSearcher()
-                    fundamentals = searcher.fetch_stock_fundamentals(all_symbols)
+                    from acquisition.markets.financial import fetch_fundamentals
+                    fundamentals = fetch_fundamentals(all_symbols)
                     logger.info(f"基本面数据: 获取 {len(fundamentals)}/{len(all_symbols)} 只")
                 except Exception as e:
                     logger.warning(f"获取基本面数据失败: {e}")
@@ -1042,9 +1040,8 @@ class ReportDataCollector:
             port_symbols = [p["symbol"] for p in positions if p.get("symbol")]
             if port_symbols:
                 try:
-                    from report_engine.web_searcher import MarketWebSearcher
-                    searcher = MarketWebSearcher()
-                    fundamentals = searcher.fetch_stock_fundamentals(port_symbols)
+                    from acquisition.markets.financial import fetch_fundamentals
+                    fundamentals = fetch_fundamentals(port_symbols)
                     for p in positions:
                         fund = fundamentals.get(p.get("symbol", ""), {})
                         if fund:

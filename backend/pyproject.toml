@@ -255,7 +255,6 @@ known-first-party = [
 "report_engine/prompt_builder.py" = ["E501", "F401", "I001", "UP006", "UP035", "UP045"]
 "report_engine/scorer.py" = ["I001", "UP006", "UP035", "UP045"]
 "report_engine/stock_analyzer.py" = ["E741", "F401", "F841", "I001", "UP006", "UP035", "UP045"]
-"report_engine/web_searcher.py" = ["E501", "F401", "I001", "N806", "UP006", "UP035", "UP045"]
 "review/service.py" = ["E501", "F401", "I001", "UP006", "UP035", "UP045"]
 "screener_engine/service.py" = ["B023", "F401", "I001", "UP006", "UP035", "UP045"]
 "scripts/backfill_financial.py" = ["E402", "I001", "UP015"]

@@ -205,17 +205,16 @@ class AdvisorContextCollector:
             except Exception:
                 logger.warning(f"web_search 个股新闻失败，降级东财搜索: {symbol}\n{traceback.format_exc()}")
                 try:
-                    from report_engine.web_searcher import MarketWebSearcher
-                    news = MarketWebSearcher(random_ip=True).search_stock_news(search_keyword, limit=10)
+                    from acquisition.markets.stock_news import search_stock_news
+                    news = search_stock_news(search_keyword, limit=10)
                     result["web_news"] = news if news else None
                 except Exception:
                     logger.warning(f"东财兜底搜索也失败: {symbol}\n{traceback.format_exc()}")
 
             # 基本面数据（PE/PB/市值/ROE）：保留东财结构化拉取，DDG 替不了精确数值，不动
             try:
-                from report_engine.web_searcher import MarketWebSearcher
-                searcher = MarketWebSearcher(random_ip=True)
-                fundamentals = searcher.fetch_stock_fundamentals([symbol])
+                from acquisition.markets.financial import fetch_fundamentals
+                fundamentals = fetch_fundamentals([symbol])
                 if fundamentals and symbol in fundamentals:
                     result["fundamentals"] = fundamentals[symbol]
             except Exception:
