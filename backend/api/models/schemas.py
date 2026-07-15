@@ -88,17 +88,6 @@ class BacktestRequest(BaseModel):
     strategy_params: Optional[Dict[str, Any]] = Field(default={}, description="策略参数")
 
 
-class CreateBacktestTaskRequest(BaseModel):
-    """创建回测任务请求"""
-    name: str = Field(..., description="任务名称", example="MA策略回测")
-    strategy_type: str = Field(..., description="策略类型", example="MA_CROSS")
-    symbols: List[str] = Field(..., description="股票代码列表", example=["000001.SZ", "600000.SH"])
-    start_date: str = Field(..., description="开始日期", example="2025-01-01")
-    end_date: str = Field(..., description="结束日期", example="2025-12-31")
-    initial_capital: float = Field(default=1000000.0, description="初始资金")
-    strategy_params: Optional[Dict[str, Any]] = Field(default=None, description="策略参数")
-
-
 class BacktestResponse(BaseModel):
     """回测响应"""
     strategy_name: str

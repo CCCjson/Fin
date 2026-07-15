@@ -1,13 +1,11 @@
 """
 历史记录API - 信号、回测、订单、成交记录
 """
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 from datetime import datetime, date
 
 from data_engine.storage.history_repository import HistoryRepository
-from api.models.schemas import CreateBacktestTaskRequest
-from backtest_engine.backtest_executor import BacktestExecutor
 
 router = APIRouter(prefix="/history", tags=["历史记录"])
 
@@ -113,63 +111,8 @@ async def get_signal_statistics(
 
 
 # ==================== 回测历史 ====================
-
-@router.post("/backtests")
-async def create_backtest_task(
-    request: CreateBacktestTaskRequest,
-    background_tasks: BackgroundTasks
-):
-    """
-    创建回测任务并自动执行
-
-    Args:
-        request: 回测任务创建请求
-        background_tasks: FastAPI 后台任务
-    """
-    try:
-        from datetime import datetime
-        import uuid
-
-        # 生成任务ID
-        task_id = f"bt_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-
-        # 保存任务
-        repo = HistoryRepository()
-        task = repo.save_backtest_task(
-            task_id=task_id,
-            name=request.name,
-            strategy_type=request.strategy_type,
-            symbols=request.symbols,
-            start_date=datetime.strptime(request.start_date, '%Y-%m-%d').date(),
-            end_date=datetime.strptime(request.end_date, '%Y-%m-%d').date(),
-            initial_capital=request.initial_capital,
-            strategy_params=request.strategy_params
-        )
-
-        # 在关闭 session 前提取所有需要的数据
-        result = {
-            "task_id": task.task_id,
-            "name": task.name,
-            "status": task.status,
-            "strategy_type": task.strategy_type,
-            "symbols": request.symbols,
-            "start_date": str(task.start_date),
-            "end_date": str(task.end_date),
-            "initial_capital": task.initial_capital,
-            "created_at": task.created_at.isoformat() if task.created_at else None,
-            "message": "回测任务已创建，正在后台执行..."
-        }
-
-        repo.close()
-
-        # 添加后台任务：自动执行回测
-        executor = BacktestExecutor()
-        background_tasks.add_task(executor.execute_task, task_id)
-
-        return result
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# 注：新建回测已统一走 C++ 引擎（POST /backtest_cpp/run_and_save 与 /batch），
+# 域5 阶段④退役 Python 引擎后，这里只保留回测结果的查询/删除/对比读接口。
 
 
 @router.get("/backtests")
