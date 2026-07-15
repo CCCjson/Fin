@@ -374,3 +374,69 @@ class FinancialFetcher:
 
         logger.info(f"财务批量完成: {len(results)}/{total} 只成功 (workers={workers})")
         return results
+
+
+# ── 东财估值快照（PE/PB/市值/ROE）──────────────────────────────────────────
+# 13.4-2 S7d：从 report_engine/web_searcher.py 迁入。与上面「新浪财务报表」不同，
+# 这是东财 ulist.np 的实时估值快照，走 net.domestic_json 铁律（内部轮换换 IP，
+# 替代原手写 MAX_RETRIES + _switch_proxy 循环）。
+
+def fetch_fundamentals(symbols: List[str]) -> Dict[str, Dict]:
+    """批量取个股估值快照。symbols 如 ["600519.SH", "000001.SZ"]。
+
+    Returns:
+        {symbol: {price, pe, pe_ttm, pb, total_market_cap, float_market_cap, roe}}
+    """
+    from net import domestic_json
+
+    secids, symbol_map = [], {}
+    for sym in symbols:
+        code = sym.split(".")[0]
+        suffix = sym.split(".")[-1].upper() if "." in sym else ""
+        if suffix == "SH":
+            secids.append(f"1.{code}")
+        elif suffix == "SZ":
+            secids.append(f"0.{code}")
+        else:
+            continue
+        symbol_map[code] = sym
+    if not secids:
+        return {}
+
+    data = domestic_json(
+        "https://push2.eastmoney.com/api/qt/ulist.np/get",
+        params={"fltt": "2", "invt": "2",
+                "fields": "f2,f9,f12,f14,f20,f21,f23,f37,f115",
+                "secids": ",".join(secids),
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                "_": str(int(datetime.now().timestamp() * 1000))},
+        timeout=15, prefer_direct=True,
+    )
+    diff = ((data or {}).get("data") or {}).get("diff") or []
+    if not diff:
+        return {}
+
+    def _safe_float(val):
+        if val is None or val in ("-", ""):
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
+    result: Dict[str, Dict] = {}
+    for item in diff:
+        sym = symbol_map.get(str(item.get("f12", "")))
+        if not sym:
+            continue
+        result[sym] = {
+            "price": _safe_float(item.get("f2")),
+            "pe": _safe_float(item.get("f9")),
+            "pe_ttm": _safe_float(item.get("f115")),
+            "pb": _safe_float(item.get("f23")),
+            "total_market_cap": _safe_float(item.get("f20")),
+            "float_market_cap": _safe_float(item.get("f21")),
+            "roe": _safe_float(item.get("f37")),
+        }
+    logger.info(f"获取个股基本面成功: {len(result)}/{len(secids)} 只")
+    return result
