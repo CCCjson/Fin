@@ -112,8 +112,13 @@ class MarketWebSearcher:
         nb["top_stocks"] = northbound_stocks if isinstance(northbound_stocks, list) else []
         result["northbound"] = nb
 
-        # 8. 多源新闻聚合（国内+全球+Finnhub）
-        result["news"] = self._fetch_with_retry(self._collect_all_news)
+        # 8. 多源新闻聚合（国内+全球+Finnhub）—— 13.4-2 S7b 迁入 news_engine
+        from news_engine.fetcher import NewsFetcher
+        try:
+            result["news"] = NewsFetcher().collect_market_news()
+        except Exception as e:  # noqa: BLE001 — 新闻失败不拖垮市场纵览其它桶
+            logger.warning(f"市场纵览新闻聚合失败: {e}")
+            result["news"] = []
 
         return result
 
@@ -401,186 +406,6 @@ class MarketWebSearcher:
 
         logger.info(f"获取资金流向成功: {len(flows)} 个")
         return flows
-
-    # ------------------------------------------------------------------
-    # 多源新闻聚合
-    # ------------------------------------------------------------------
-
-    def _collect_all_news(self, proxies: Optional[Dict]) -> List[Dict]:
-        """
-        多源新闻聚合：国内财经 + 全球财经 + Finnhub 英文新闻
-        返回统一格式，按 category 分组，自动去重。
-        """
-        all_news: List[Dict] = []
-
-        # 1. 东财 A 股财经要闻 (column=350)
-        domestic = self._fetch_eastmoney_news_by_column("350", "domestic", proxies)
-        all_news.extend(domestic)
-
-        # 2. 东财全球财经 (column=356: 外汇/大宗/特朗普/美联储等)
-        global_finance = self._fetch_eastmoney_news_by_column("356", "global", proxies)
-        all_news.extend(global_finance)
-
-        # 3. 东财国际时事 (column=351: 地缘政治/国际大事)
-        intl_affairs = self._fetch_eastmoney_news_by_column("351", "global", proxies)
-        all_news.extend(intl_affairs)
-
-        # 4. Finnhub 英文财经新闻
-        finnhub_news = self._fetch_finnhub_news()
-        all_news.extend(finnhub_news)
-
-        # 去重（按标题前20字符）
-        seen = set()
-        deduped = []
-        for n in all_news:
-            key = n["title"][:20]
-            if key not in seen:
-                seen.add(key)
-                deduped.append(n)
-
-        domestic_count = sum(1 for n in deduped if n["category"] == "domestic")
-        global_count = sum(1 for n in deduped if n["category"] == "global")
-        finnhub_count = sum(1 for n in deduped if n["category"] == "finnhub")
-        logger.info(f"新闻聚合完成: 国内{domestic_count} + 全球{global_count} + Finnhub{finnhub_count} = {len(deduped)} 条")
-        return deduped
-
-    def search_global_headlines(self, queries: List[str], max_results: int = 5) -> List[Dict]:
-        """
-        用真·联网搜索（DuckDuckGo）补充外部头条，产出 category='websearch' 的条目。
-        与 _collect_all_news 同构 [{title, body, source, time, category, lang, url}]，可直接并入同一 list。
-        失败返回 []，不影响东财/Finnhub 三路。
-        """
-        from acquisition.websearch import web_search
-
-        out: List[Dict] = []
-        seen = set()
-        for q in queries:
-            try:
-                hits = web_search(q, max_results=max_results)
-            except Exception:
-                logger.warning(f"search_global_headlines 搜索失败: {q}")
-                continue
-            for h in hits:
-                key = (h.get("title") or "")[:20]
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                out.append({
-                    "title": h.get("title", ""),
-                    "body": (h.get("snippet") or h.get("text") or "")[:300],
-                    "source": (h.get("source", "") or "").replace("ddg_", "") or "web",
-                    "time": "",
-                    "category": "websearch",
-                    "lang": "en",
-                    "url": h.get("url", ""),
-                })
-        logger.info(f"联网头条补充: {len(out)} 条")
-        return out
-
-    def _fetch_eastmoney_news_by_column(
-        self, column: str, category: str, proxies: Optional[Dict], limit: int = 10
-    ) -> List[Dict]:
-        """从东方财富指定频道获取新闻（走统一网络层：快代理→轮换重试，绝不直连兜底，不依赖 Clash）"""
-        from net import domestic_json
-
-        url = "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns"
-        params = {
-            "client": "web",
-            "biz": "web_news_col",
-            "column": column,
-            "page_size": str(limit),
-            "req_trace": str(int(time.time() * 1000)),
-        }
-
-        try:
-            data = domestic_json(url, params=params, timeout=15, prefer_direct=True)
-            raw = (data or {}).get("data")
-            if not raw:
-                return []
-            news_list = raw.get("list", [])
-        except Exception as e:
-            logger.warning(f"东财新闻 column={column} 失败: {e}")
-            return []
-
-        results = []
-        for item in news_list:
-            title = item.get("title", "")
-            if not title:
-                continue
-            results.append({
-                "title": title,
-                "body": (item.get("summary") or item.get("digest") or "")[:200],
-                "source": item.get("mediaName") or "",
-                "time": item.get("showTime") or "",
-                "category": category,
-                "lang": "zh",
-                # 之前漏读了这个字段——实测 getNewsByColumns 原始响应本就带 url/uniqueUrl，
-                # 不是数据源没有链接，是代码没取（uniqueUrl 兜底，两者实测都指向同一篇文章页）
-                "url": item.get("url") or item.get("uniqueUrl") or "",
-            })
-
-        logger.info(f"东财新闻 column={column}: {len(results)} 条")
-        return results[:limit]
-
-    def _fetch_finnhub_news(self) -> List[Dict]:
-        """从 Finnhub 获取英文市场新闻（需要 FINNHUB_API_KEY 环境变量）"""
-        import os
-        import requests
-
-        api_key = os.environ.get("FINNHUB_API_KEY", "")
-        if not api_key:
-            logger.info("未配置 FINNHUB_API_KEY，跳过 Finnhub 新闻")
-            return []
-
-        url = "https://finnhub.io/api/v1/news"
-        params = {
-            "category": "general",
-            "token": api_key,
-        }
-
-        try:
-            resp = requests.get(url, params=params, timeout=15)
-            if resp.status_code == 401:
-                logger.warning("Finnhub API key 无效")
-                return []
-            if resp.status_code == 429:
-                logger.warning("Finnhub 请求频率超限")
-                return []
-            items = resp.json()
-            if not isinstance(items, list):
-                return []
-        except Exception as e:
-            logger.warning(f"Finnhub 新闻获取失败: {e}")
-            return []
-
-        results = []
-        for item in items[:10]:
-            headline = item.get("headline", "")
-            if not headline:
-                continue
-            # 将 UNIX 时间戳转为可读时间
-            ts = item.get("datetime")
-            time_str = ""
-            if ts:
-                from datetime import datetime
-                try:
-                    time_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
-                except (ValueError, OSError):
-                    pass
-            results.append({
-                "title": headline,
-                "body": (item.get("summary") or "")[:300],
-                "source": item.get("source") or "",
-                "time": time_str,
-                "category": "finnhub",
-                "lang": "en",
-                # 之前漏读了这个字段——Finnhub /api/v1/news 本就带 url
-                # （news_engine/fetcher.py::fetch_general_news 对同一数据源已验证过字段名）
-                "url": item.get("url") or "",
-            })
-
-        logger.info(f"Finnhub 新闻: {len(results)} 条")
-        return results
 
     # ------------------------------------------------------------------
     # 个股新闻搜索

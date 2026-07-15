@@ -38,9 +38,9 @@ class NewsSubagent(SubagentRunner):
             # 而不是重新造一个抓取轮子。聚合新闻没有逐条情绪打分，sentiment
             # 留空即可，report_stream_from_articles 的 prompt 构建对缺失字段
             # 本就是 .get() 兜底，不需要编造假数据。
-            from report_engine.web_searcher import MarketWebSearcher
+            from news_engine.fetcher import NewsFetcher
             try:
-                raw_news = MarketWebSearcher(random_ip=False)._collect_all_news(None)
+                raw_news = NewsFetcher().collect_market_news()
             except Exception as e:  # noqa: BLE001 — 聚合失败按"没抓到"处理，不让异常炸主流程
                 raw_news = []
             articles = [

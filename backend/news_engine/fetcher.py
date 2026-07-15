@@ -227,6 +227,117 @@ class NewsFetcher:
         logger.info(f"全球新闻抓取完成: {len(articles)} 条")
         return articles
 
+    # ==================== 大盘综合新闻（展示态，不入库） ====================
+    # 13.4-2 S7b：从 report_engine/web_searcher.py 迁入。这几路产出「展示态」dict
+    # （title/body/source/time/category/lang/url），供晨报/新闻子 agent/报告市场纵览
+    # 直接消费，**不写库**（写库走 fetch_*+store_articles 那套入库态）。
+
+    def collect_market_news(self, limit: int = 10) -> List[Dict]:
+        """大盘综合新闻聚合：东财 A股要闻(350)+全球财经(356)+国际时事(351)+Finnhub 英文，
+        按标题前 20 字去重。返回展示态 [{title,body,source,time,category,lang,url}]。"""
+        all_news: List[Dict] = []
+        all_news += self._fetch_em_column_news("350", "domestic", limit)
+        all_news += self._fetch_em_column_news("356", "global", limit)
+        all_news += self._fetch_em_column_news("351", "global", limit)
+        all_news += self._finnhub_general_display(limit)
+
+        seen: set = set()
+        deduped: List[Dict] = []
+        for n in all_news:
+            key = n["title"][:20]
+            if key not in seen:
+                seen.add(key)
+                deduped.append(n)
+
+        by_cat = {c: sum(1 for n in deduped if n["category"] == c)
+                  for c in ("domestic", "global", "finnhub")}
+        logger.info(f"大盘综合新闻聚合: 国内{by_cat['domestic']} + 全球{by_cat['global']} "
+                    f"+ Finnhub{by_cat['finnhub']} = {len(deduped)} 条")
+        return deduped
+
+    def _fetch_em_column_news(self, column: str, category: str, limit: int = 10) -> List[Dict]:
+        """东财指定频道新闻（getNewsByColumns，走 net.domestic_json 铁律：快代理→轮换重试，
+        绝不静默直连）。column: 350=A股要闻 / 356=全球财经 / 351=国际时事。"""
+        import time
+
+        from net import domestic_json
+
+        url = "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns"
+        params = {
+            "client": "web", "biz": "web_news_col", "column": column,
+            "page_size": str(limit), "req_trace": str(int(time.time() * 1000)),
+        }
+        try:
+            data = domestic_json(url, params=params, timeout=15, prefer_direct=True)
+            news_list = ((data or {}).get("data") or {}).get("list", [])
+        except Exception as e:  # noqa: BLE001 — 单频道失败按空处理，不拖垮其它路
+            logger.warning(f"东财新闻 column={column} 失败: {e}")
+            return []
+
+        results: List[Dict] = []
+        for item in news_list:
+            title = item.get("title", "")
+            if not title:
+                continue
+            results.append({
+                "title": title,
+                "body": (item.get("summary") or item.get("digest") or "")[:200],
+                "source": item.get("mediaName") or "",
+                "time": item.get("showTime") or "",
+                "category": category,
+                "lang": "zh",
+                "url": item.get("url") or item.get("uniqueUrl") or "",
+            })
+        logger.info(f"东财新闻 column={column}: {len(results)} 条")
+        return results[:limit]
+
+    def _finnhub_general_display(self, limit: int = 10) -> List[Dict]:
+        """Finnhub 全球新闻的展示态视图——复用 fetch_general_news（SDK，海外直连安全），
+        映射成展示 dict，避免第二份裸 Finnhub 实现。"""
+        out: List[Dict] = []
+        for a in self.fetch_general_news()[:limit]:
+            pub = a.get("published_at")
+            out.append({
+                "title": a.get("title", ""),
+                "body": (a.get("summary") or "")[:300],
+                "source": a.get("source") or "",
+                "time": pub.strftime("%Y-%m-%d %H:%M") if pub else "",
+                "category": "finnhub",
+                "lang": "en",
+                "url": a.get("url") or "",
+            })
+        return out
+
+    def search_global_headlines(self, queries: List[str], max_results: int = 5) -> List[Dict]:
+        """用真·联网搜索（DuckDuckGo）补充外部头条，产出 category='websearch' 条目，
+        与 collect_market_news 同构、可直接并入。失败返回 []，不拖垮其它路。"""
+        from acquisition.websearch import web_search
+
+        out: List[Dict] = []
+        seen: set = set()
+        for q in queries:
+            try:
+                hits = web_search(q, max_results=max_results)
+            except Exception:  # noqa: BLE001
+                logger.warning(f"search_global_headlines 搜索失败: {q}")
+                continue
+            for h in hits:
+                key = (h.get("title") or "")[:20]
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                out.append({
+                    "title": h.get("title", ""),
+                    "body": (h.get("snippet") or h.get("text") or "")[:300],
+                    "source": (h.get("source", "") or "").replace("ddg_", "") or "web",
+                    "time": "",
+                    "category": "websearch",
+                    "lang": "en",
+                    "url": h.get("url", ""),
+                })
+        logger.info(f"联网头条补充: {len(out)} 条")
+        return out
+
     # ==================== 去重存库 ====================
 
     def store_articles(self, articles: List[Dict]) -> "tuple[int, List[str]]":

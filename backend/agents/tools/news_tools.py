@@ -2,7 +2,7 @@
 新闻/舆情类工具 —— 无状态实时抓取 + BERT 情绪打分 + 盘前聚合简报。
 
 复用 news_engine.realtime.get_realtime_sentiment（不入库）与
-report_engine.web_searcher.MarketWebSearcher（同 /news/morning-briefing）。
+news_engine.fetcher.NewsFetcher.collect_market_news（同 /news/morning-briefing）。
 """
 from typing import Literal
 
@@ -84,11 +84,10 @@ class GetMorningBriefArgs(BaseModel):
     group="news",
 )
 def get_morning_brief(limit_per_source: int = 8) -> ToolEnvelope:
-    from report_engine.web_searcher import MarketWebSearcher
+    from news_engine.fetcher import NewsFetcher
 
     lim = max(3, min(int(limit_per_source or 8), 20))
-    searcher = MarketWebSearcher(random_ip=False)
-    all_news = searcher._collect_all_news(None)
+    all_news = NewsFetcher().collect_market_news()
     if not all_news:
         return ToolEnvelope(business_result="negative", message="暂时没抓到隔夜新闻，稍后再试。")
 

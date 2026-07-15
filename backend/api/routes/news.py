@@ -315,14 +315,14 @@ async def morning_briefing(request: MorningBriefingRequest):
     - finnhub: 英文金融新闻
     - total: 总条数
     """
-    from report_engine.web_searcher import MarketWebSearcher
+    from news_engine.fetcher import NewsFetcher
 
     loop = asyncio.get_event_loop()
 
     try:
-        searcher = MarketWebSearcher(random_ip=False)
+        fetcher = NewsFetcher()
         all_news = await loop.run_in_executor(
-            None, searcher._collect_all_news, None
+            None, fetcher.collect_market_news
         )
     except Exception as e:
         logger.error(f"盘前新闻聚合失败: {e}")
@@ -339,7 +339,7 @@ async def morning_briefing(request: MorningBriefingRequest):
         try:
             queries = request.queries or ["global financial markets today", "A股 市场 隔夜 外盘"]
             web = await loop.run_in_executor(
-                None, lambda: MarketWebSearcher(random_ip=False).search_global_headlines(queries)
+                None, lambda: NewsFetcher().search_global_headlines(queries)
             )
         except Exception as e:
             logger.warning(f"联网头条补充失败，跳过: {e}")

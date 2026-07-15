@@ -329,23 +329,24 @@ class NewsScheduler:
     # ---------- 子步骤 ----------
 
     def _fetch_general_market_news(self) -> List[Dict]:
-        """综合国内外新闻：MarketWebSearcher 三路聚合（东财A股要闻+全球财经+Finnhub英文
+        """综合国内外新闻：NewsFetcher.collect_market_news 三路聚合（东财A股要闻+全球财经+Finnhub英文
         新闻）+ 第四路 DuckDuckGo 真联网搜索补充头条，映射成 NewsArticle 字段。
         三路聚合与 NewsSubagent 无 symbol 分支同源；第四路查询词跟 /news/morning-briefing
         默认查询词保持一致（api/routes/news.py），独立 try——DDG 失败/限速不拖垮前三路。"""
         import hashlib
-        from report_engine.web_searcher import MarketWebSearcher
 
-        searcher = MarketWebSearcher(random_ip=False)
+        from news_engine.fetcher import NewsFetcher
+
+        fetcher = NewsFetcher()
         try:
-            raw_news = searcher._collect_all_news(None)
+            raw_news = fetcher.collect_market_news()
         except Exception as e:  # noqa: BLE001 — 聚合失败按"没抓到"处理
             logger.warning(f"综合新闻聚合抓取失败: {e}")
             raw_news = []
 
         if _env_bool("NEWS_ENABLE_WEBSEARCH", True):
             try:
-                web_news = searcher.search_global_headlines(_WEBSEARCH_QUERIES)
+                web_news = fetcher.search_global_headlines(_WEBSEARCH_QUERIES)
                 raw_news = raw_news + web_news
             except Exception as e:  # noqa: BLE001 — DDG 限速/失败不影响前三路
                 logger.warning(f"联网头条补充失败，跳过: {e}")

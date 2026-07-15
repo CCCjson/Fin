@@ -67,7 +67,7 @@ def test_us_stock_routes_market_through_to_get_realtime_sentiment(monkeypatch):
 
 
 def test_no_symbol_uses_market_web_searcher_aggregation(monkeypatch):
-    """不填 symbol 时应该走 MarketWebSearcher._collect_all_news，而不是永远
+    """不填 symbol 时应该走 NewsFetcher.collect_market_news，而不是永远
     返回"未抓到新闻"（这是修复前 not-symbol 分支的唯一行为）。"""
     fake_news = [
         {"title": "A股早盘冲高回落", "source": "东方财富", "time": "2026-07-06 09:30", "category": "domestic"},
@@ -75,10 +75,7 @@ def test_no_symbol_uses_market_web_searcher_aggregation(monkeypatch):
     ]
 
     class _FakeSearcher:
-        def __init__(self, random_ip=False):
-            pass
-
-        def _collect_all_news(self, proxies):
+        def collect_market_news(self, limit=10):
             return fake_news
 
     captured_articles = {}
@@ -88,7 +85,7 @@ def test_no_symbol_uses_market_web_searcher_aggregation(monkeypatch):
             captured_articles["value"] = articles
             return iter([])
 
-    monkeypatch.setattr("report_engine.web_searcher.MarketWebSearcher", _FakeSearcher)
+    monkeypatch.setattr("news_engine.fetcher.NewsFetcher", _FakeSearcher)
     monkeypatch.setattr("news_engine.analyzer.NewsAnalyzer", lambda: _FakeAnalyzer())
 
     list(NewsSubagent().run({}))  # 不填 symbol
@@ -103,13 +100,10 @@ def test_no_symbol_uses_market_web_searcher_aggregation(monkeypatch):
 
 def test_no_symbol_aggregation_failure_is_negative_not_crash(monkeypatch):
     class _BrokenSearcher:
-        def __init__(self, random_ip=False):
-            pass
-
-        def _collect_all_news(self, proxies):
+        def collect_market_news(self, limit=10):
             raise RuntimeError("网络挂了")
 
-    monkeypatch.setattr("report_engine.web_searcher.MarketWebSearcher", _BrokenSearcher)
+    monkeypatch.setattr("news_engine.fetcher.NewsFetcher", _BrokenSearcher)
 
     result = _drain_and_get_done_result(NewsSubagent().run({}))
     assert result["ok"] is True
