@@ -18,8 +18,7 @@ from common.sandbox_ast import ast_check as _shared_ast_check
 ALLOWED_IMPORTS = {
     "pandas", "numpy", "math", "datetime", "collections",
     "dataclasses", "typing", "enum",
-    # 策略框架（在沙箱 runner 中已注入，允许 AI 代码 import）
-    "backtest_engine",
+    # 注：域5 阶段②起，AI 只写 on_bar(history) 产信号，不再 import backtest_engine
 }
 
 
@@ -138,87 +137,39 @@ class Sandbox:
         val_data_path: str,
         initial_capital: float,
     ) -> str:
-        """生成回测运行器脚本"""
+        """生成回测运行器脚本（域5 阶段②：AI 只产信号，执行/指标走 C++）"""
         return f'''# -*- coding: utf-8 -*-
-"""Alpha Lab 沙箱回测运行器（自动生成，勿手动编辑）"""
+"""Alpha Lab 沙箱回测运行器（自动生成，勿手动编辑）。
+
+AI 代码只暴露 on_bar(history)->'buy'/'sell'/None；本 runner 把它交给
+alpha_lab.signal_runner，逐 bar 只喂历史产信号 → C++ run_signals 执行+算指标。
+"""
 import sys
 import json
 import traceback
 
 sys.path.insert(0, {json.dumps(backend_root)})
 
-import pandas as pd
-from backtest_engine.engine import BacktestEngine
-
 result = {{"success": True, "error": None, "train_metrics": {{}}, "val_metrics": {{}}}}
 
 try:
-    # 动态导入 AI 生成的策略
     import importlib.util
+    from alpha_lab.signal_runner import backtest_via_cpp
+
+    # 动态导入 AI 生成的策略模块（只需 on_bar 函数）
     spec = importlib.util.spec_from_file_location("gen_strategy", {json.dumps(strategy_path)})
     mod = importlib.util.module_from_spec(spec)
-
-    # 注入依赖让 AI 代码能 import
-    sys.modules["backtest_engine"] = __import__("backtest_engine")
-    sys.modules["backtest_engine.strategies"] = __import__("backtest_engine.strategies", fromlist=["base"])
-    sys.modules["backtest_engine.strategies.base"] = __import__("backtest_engine.strategies.base", fromlist=["BaseStrategy", "StrategyContext"])
-    sys.modules["backtest_engine.portfolio"] = __import__("backtest_engine.portfolio", fromlist=["order"])
-    sys.modules["backtest_engine.portfolio.order"] = __import__("backtest_engine.portfolio.order", fromlist=["Order", "OrderType"])
-
-    # 直接注入 base 类到模块命名空间（防止 AI 未正确 import）
-    from backtest_engine.strategies.base import BaseStrategy, StrategyContext
-    from backtest_engine.portfolio.order import Order, OrderType
-    mod.BaseStrategy = BaseStrategy
-    mod.StrategyContext = StrategyContext
-    mod.Order = Order
-    mod.OrderType = OrderType
-
     spec.loader.exec_module(mod)
 
-    if not hasattr(mod, "GeneratedStrategy"):
-        result["success"] = False
-        result["error"] = "代码中未找到 GeneratedStrategy 类"
-    else:
-        symbol = {json.dumps(symbol)}
+    result = backtest_via_cpp(
+        strategy_module=mod,
+        train_csv={json.dumps(train_data_path)},
+        val_csv={json.dumps(val_data_path)},
+        symbol={json.dumps(symbol)},
+        capital={initial_capital},
+    )
 
-        # ====== 训练集回测 ======
-        train_df = pd.read_csv({json.dumps(train_data_path)}, index_col=0, parse_dates=True)
-        strategy_train = mod.GeneratedStrategy()
-        engine_train = BacktestEngine(initial_capital={initial_capital})
-        train_result = engine_train.run(symbol=symbol, data=train_df, strategy=strategy_train)
-
-        if train_result:
-            metrics = train_result["metrics"]
-            # 序列化 metrics（处理不可序列化的值）
-            clean = {{}}
-            for k, v in metrics.items():
-                if isinstance(v, dict):
-                    clean[k] = {{kk: float(vv) if isinstance(vv, (int, float)) else str(vv) for kk, vv in v.items()}}
-                elif isinstance(v, (int, float)):
-                    clean[k] = v
-                else:
-                    clean[k] = str(v)
-            result["train_metrics"] = clean
-
-        # ====== 验证集回测 ======
-        val_df = pd.read_csv({json.dumps(val_data_path)}, index_col=0, parse_dates=True)
-        strategy_val = mod.GeneratedStrategy()
-        engine_val = BacktestEngine(initial_capital={initial_capital})
-        val_result = engine_val.run(symbol=symbol, data=val_df, strategy=strategy_val)
-
-        if val_result:
-            metrics = val_result["metrics"]
-            clean = {{}}
-            for k, v in metrics.items():
-                if isinstance(v, dict):
-                    clean[k] = {{kk: float(vv) if isinstance(vv, (int, float)) else str(vv) for kk, vv in v.items()}}
-                elif isinstance(v, (int, float)):
-                    clean[k] = v
-                else:
-                    clean[k] = str(v)
-            result["val_metrics"] = clean
-
-except Exception as e:
+except Exception:
     result["success"] = False
     result["error"] = traceback.format_exc()[-1500:]
 
