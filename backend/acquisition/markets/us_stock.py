@@ -22,6 +22,9 @@ class USStockFetcher(BaseFetcher):
         try:
             import yfinance as yf
 
+            from acquisition.markets.yf_batch import configure_yf_proxy
+            configure_yf_proxy()
+
             logger.info(f"正在获取 {request.symbol} 的日线数据...")
 
             ticker = yf.Ticker(request.symbol)

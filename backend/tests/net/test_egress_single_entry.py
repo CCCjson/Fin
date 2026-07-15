@@ -45,10 +45,10 @@ _LEGAL_EXCEPTIONS = {
     "remote_scripts/predict_train.py",  # yfinance → 远端训练 worker（独立环境）
 }
 
-# 待还债（ratcheting，**只减不增**）：13.4-2 收尾遗留，后续切片消除后从这里删。
-_PENDING_DEBT = {
-    "news_engine/fetcher.py",                             # finnhub SDK（海外，待海外铁律课题）
-}
+# 待还债（ratcheting，**只减不增**）：13.4-2 收尾遗留三笔债已全部收编（S8→债务清理）：
+# QMT 整删、ingest curl_cffi 下沉 acquisition、finnhub/yfinance 海外出网收进 acquisition
+# 并按 net.overseas 注入代理。现已清零——新违规一律走 acquisition，不许在此新增。
+_PENDING_DEBT: set[str] = set()
 
 _ALLOWLIST = _LEGAL_EXCEPTIONS | _PENDING_DEBT
 

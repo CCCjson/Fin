@@ -13,6 +13,33 @@ from typing import Dict, List
 
 from loguru import logger
 
+_yf_proxy_configured = False
+
+
+def configure_yf_proxy() -> None:
+    """按 net.overseas 策略给 yfinance 注入海外代理（进程级一次，幂等）。
+
+    13.4-2 债1：yfinance 1.x 出网底层是 curl_cffi 单例（YfData），代理只在首次建
+    session 时从 YfConfig.network.proxy 读一次——必须赶在任何 yf 调用前设好，故每个
+    yf 出网入口先调本函数。本仓库 yfinance 只服务海外（美股/港股/纳指），全局代理=
+    海外代理无冲突。resolve_overseas_proxy() 返 None（auto 探到可直连 / 显式 direct）
+    时保持 yfinance 默认直连。配置失败不阻断取数（退回默认直连）。
+    """
+    global _yf_proxy_configured
+    if _yf_proxy_configured:
+        return
+    try:
+        from yfinance.config import YfConfig
+
+        from acquisition.channels import resolve_overseas_proxy
+        proxy = resolve_overseas_proxy()
+        if proxy:
+            # YfConfig.network.proxy 直接赋给 curl_cffi session.proxies，用 dict 形态
+            YfConfig.network.proxy = {"http": proxy, "https": proxy}
+        _yf_proxy_configured = True
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"configure_yf_proxy 跳过（退回默认直连）: {e}")
+
 
 def _row_from_closes(symbol: str, closes, volumes) -> Dict:
     """由最近两根日线收盘价计算行情行"""
@@ -70,6 +97,8 @@ def fetch_yf_realtime_batch(symbols: List[str]) -> List[Dict]:
     if not symbols:
         return []
 
+    configure_yf_proxy()
+
     result: List[Dict] = []
     done: set = set()
 
@@ -114,12 +143,14 @@ def fetch_yf_realtime_batch(symbols: List[str]) -> List[Dict]:
 
 # ── 海外日线历史（深度回补用）─────────────────────────────────────────────
 # 13.4-2 S8a：从 data_engine/deep_history/overseas_job.py 下沉——引擎层不该直接
-# import yfinance 出网。出网仍走 yfinance（海外代理策略待后续单独处理），但调用点
-# 收进 acquisition，引擎层改调这两个门面。返回原始 DataFrame，编排/落库留调用方。
+# import yfinance 出网。调用点收进 acquisition，引擎层改调这两个门面。海外代理已按
+# net.overseas 策略经 configure_yf_proxy() 注入（13.4-2 债1）。返回原始 DataFrame，
+# 编排/落库留调用方。
 
 def download_daily_history(yf_symbols: List[str], start: str):
     """批量下载海外日线历史（yf.download），返回原始 DataFrame。"""
     import yfinance as yf
+    configure_yf_proxy()
     return yf.download(
         tickers=yf_symbols, start=start, interval="1d",
         group_by="ticker", threads=True, auto_adjust=False, progress=False,
@@ -129,5 +160,6 @@ def download_daily_history(yf_symbols: List[str], start: str):
 def fetch_daily_history(yf_sym: str, start: str):
     """单只海外日线历史兜底（yf.Ticker().history()），返回去空后的 DataFrame（或 None）。"""
     import yfinance as yf
+    configure_yf_proxy()
     df = yf.Ticker(yf_sym).history(start=start, interval="1d", auto_adjust=False)
     return df.dropna(how="all") if df is not None else None

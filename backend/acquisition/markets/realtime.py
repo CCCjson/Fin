@@ -601,6 +601,9 @@ def fetch_quotes_by_symbols(symbols: List[str], max_rounds: int = 3) -> List[Dic
 def _fetch_nasdaq() -> Optional[Dict[str, Any]]:
     """用 yfinance 获取纳斯达克综合指数"""
     import yfinance as yf
+
+    from acquisition.markets.yf_batch import configure_yf_proxy
+    configure_yf_proxy()
     ticker = yf.Ticker("^IXIC")
     hist = ticker.history(period="2d")
     if hist.empty or len(hist) < 1:

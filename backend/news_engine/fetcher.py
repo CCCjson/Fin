@@ -6,12 +6,15 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, Generator, List, Optional
 
-import finnhub
 from dotenv import load_dotenv
 from common.market import to_bare_code
 from loguru import logger
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from acquisition.markets.finnhub_news import (
+    fetch_company_news,
+    fetch_general_news as _finnhub_general_news,
+)
 from data_engine.storage.database import get_session
 from data_engine.storage.models import NewsArticle
 
@@ -29,14 +32,8 @@ class NewsFetcher:
     def __init__(self) -> None:
         self._finnhub_key = os.getenv("FINNHUB_API_KEY", "")
 
-    def _finnhub_client(self) -> "finnhub.Client":
-        """Finnhub 是海外接口，不需要走 .env 里配的国内代理（该代理专为
-        eastmoney 等国内数据源准备，常态是没启动 Clash 就没监听，会导致
-        请求瞬间 ECONNREFUSED）。显式关掉 session.trust_env 让它无视
-        ambient HTTP_PROXY/HTTPS_PROXY，直连。"""
-        client = finnhub.Client(api_key=self._finnhub_key)
-        client._session.trust_env = False
-        return client
+    # Finnhub 出网（company_news/general_news + 海外代理注入）已收进
+    # acquisition.markets.finnhub_news（13.4-2 债1）；本类只做业务映射，不再自持 SDK。
 
     # ==================== A 股个股新闻 ====================
 
@@ -127,18 +124,13 @@ class NewsFetcher:
         raw_symbol = to_bare_code(symbol).strip().upper()  # 美股 ticker 可带点（BRK.B），裸 split 会砍成 BRK
         logger.info(f"正在抓取美股个股新闻: {raw_symbol}")
 
-        try:
-            client = self._finnhub_client()
-            end = datetime.now()
-            start = end - timedelta(days=days)
-            news_list = client.company_news(
-                raw_symbol,
-                _from=start.strftime("%Y-%m-%d"),
-                to=end.strftime("%Y-%m-%d"),
-            )
-        except Exception as e:
-            logger.error(f"Finnhub 美股个股新闻抓取失败 {raw_symbol}: {e}")
-            return []
+        end = datetime.now()
+        start = end - timedelta(days=days)
+        news_list = fetch_company_news(
+            raw_symbol,
+            date_from=start.strftime("%Y-%m-%d"),
+            date_to=end.strftime("%Y-%m-%d"),
+        )
 
         articles: List[Dict] = []
         for item in news_list:
@@ -185,12 +177,7 @@ class NewsFetcher:
 
         logger.info("正在抓取全球市场新闻 (Finnhub)...")
 
-        try:
-            client = self._finnhub_client()
-            news_list = client.general_news("general", min_id=0)
-        except Exception as e:
-            logger.error(f"Finnhub 新闻抓取失败: {e}")
-            return []
+        news_list = _finnhub_general_news()
 
         articles: List[Dict] = []
         for item in news_list:

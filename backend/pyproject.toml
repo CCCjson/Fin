@@ -335,7 +335,7 @@ check_untyped_defs = false
 # 无类型 stub 的第三方库，局部放行缺 import
 [[tool.mypy.overrides]]
 module = [
-  "akshare.*", "yfinance.*", "pytdx.*", "curl_cffi.*", "tushare.*",
+  "akshare.*", "yfinance.*", "pytdx.*", "curl_cffi.*", "tushare.*", "finnhub.*",
   "pandas.*", "numpy.*", "sqlalchemy_utils.*", "sqlite_vec.*",
   "trafilatura.*", "fitz.*", "playwright.*", "sentence_transformers.*",
   "apscheduler.*", "ta.*", "backtrader.*", "vectorbt.*",
@@ -369,6 +369,7 @@ module = [
   "acquisition.markets.northbound",
   "acquisition.markets.index_klines",
   "acquisition.markets.stock_news",
+  "acquisition.markets.finnhub_news",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
