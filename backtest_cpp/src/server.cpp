@@ -29,11 +29,14 @@
 #include "strategies/bollinger_strategy.h"
 #include "strategies/combo_strategy.h"
 #include "strategies/pairs_strategy.h"
+#include "strategies/external_signal_strategy.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <memory>      // make_unique
+#include <cctype>      // std::tolower
+#include <map>
 
 using json = nlohmann::json;
 
@@ -410,6 +413,108 @@ void Server::setup_routes() {
             auto result = engine.run(start_date, end_date);
 
             // 返回结果
+            res.set_content(result_to_json(result).dump(), "application/json");
+
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(
+                json({{"error", std::string(e.what())}}).dump(),
+                "application/json");
+        }
+    });
+
+    // ── POST /api/backtest/run_signals — 外部信号驱动回测 ──
+    /*
+     * 请求格式（与 /run 相同，但用 signals 取代 strategy/params）：
+     * {
+     *   "symbol": "AAPL",
+     *   "signals": [ {"date": "2025-01-15", "action": "buy", "weight": 0.9, "price": 12.3}, ... ],
+     *   "bars": [ {"date": "...", "open": ..., ...}, ... ],   // 必填
+     *   "initial_capital": 100000,
+     *   "market": "us" | "hk" | "a_share",
+     *   "slippage_pct": 0.001,     // 可选
+     *   "risk_config": { ... },    // 可选
+     *   "start_date": "...", "end_date": "..."   // 可选
+     * }
+     * action 大小写不敏感；weight 缺省 0.95；price 缺省=市价单。
+     * 成交与 /run 一致：信号日次日开盘成交（防未来函数）、T+1、滑点、费用。
+     */
+    svr.Post("/api/backtest/run_signals", [](const httplib::Request& req, httplib::Response& res) {
+        try {
+            auto body = json::parse(req.body);
+
+            std::string symbol = body.value("symbol", "TEST");
+            double initial_capital = body.value("initial_capital", 100000.0);
+            std::string market = body.value("market", "a_share");
+            std::string start_date = body.value("start_date", "");
+            std::string end_date = body.value("end_date", "");
+
+            // 加载 K 线（信号回测必须显式提供 bars，不生成模拟数据）
+            std::vector<Bar> bars;
+            if (body.contains("bars") && body["bars"].is_array()) {
+                bars = DataLoader::from_json(body["bars"]);
+            }
+            if (bars.empty()) {
+                res.status = 400;
+                res.set_content(json({{"error", "run_signals requires non-empty 'bars'"}}).dump(),
+                                "application/json");
+                return;
+            }
+
+            // 解析信号序列 → date→SignalEntry（同一天后者覆盖前者）
+            std::map<std::string, SignalEntry> signals;
+            if (body.contains("signals") && body["signals"].is_array()) {
+                for (const auto& s : body["signals"]) {
+                    std::string date = s.value("date", "");
+                    std::string action = s.value("action", "");
+                    // action 大小写归一
+                    for (auto& c : action) c = static_cast<char>(std::tolower(c));
+                    if (date.empty() || (action != "buy" && action != "sell")) {
+                        continue;   // 跳过非法条目
+                    }
+                    SignalEntry entry;
+                    entry.side = (action == "buy") ? Side::BUY : Side::SELL;
+                    entry.weight = s.value("weight", 0.95);
+                    if (s.contains("price") && s["price"].is_number()) {
+                        entry.price = s["price"].get<double>();
+                        entry.has_price = true;
+                    }
+                    signals[date] = entry;
+                }
+            }
+
+            // 手续费配置
+            CommissionConfig comm;
+            if (market == "us") {
+                comm = CommissionConfig::us_stock();
+            } else if (market == "hk") {
+                comm = CommissionConfig::hk_stock();
+            } else {
+                comm = CommissionConfig::a_share();
+            }
+            double custom_slippage = body.value("slippage_pct", -1.0);
+            if (custom_slippage >= 0.0) {
+                comm.slippage_pct = custom_slippage;
+            }
+
+            // 风控配置
+            RiskConfig risk_cfg;
+            if (body.contains("risk_config")) {
+                auto rc = body["risk_config"];
+                risk_cfg.enabled = rc.value("enabled", false);
+                risk_cfg.stop_loss_pct = rc.value("stop_loss_pct", 0.05);
+                risk_cfg.trailing_stop = rc.value("trailing_stop", false);
+                risk_cfg.trailing_stop_pct = rc.value("trailing_stop_pct", 0.08);
+                risk_cfg.max_position_pct = rc.value("max_position_pct", 1.0);
+            }
+
+            // 运行回测（策略换成信号回放，引擎/撮合/指标全复用）
+            BacktestEngine engine(initial_capital, comm, risk_cfg);
+            engine.set_strategy(std::make_unique<ExternalSignalStrategy>(std::move(signals)));
+            engine.load_data(symbol, std::move(bars));
+
+            auto result = engine.run(start_date, end_date);
+
             res.set_content(result_to_json(result).dump(), "application/json");
 
         } catch (const std::exception& e) {

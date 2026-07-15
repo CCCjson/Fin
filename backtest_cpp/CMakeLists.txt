@@ -72,6 +72,7 @@ set(LIB_SOURCES
     src/strategies/bollinger_strategy.cpp
     src/strategies/combo_strategy.cpp
     src/strategies/pairs_strategy.cpp
+    src/strategies/external_signal_strategy.cpp
 )
 
 # ── 主程序：backtest_server ──
@@ -95,6 +96,7 @@ set(TEST_SOURCES
     tests/test_metrics.cpp
     tests/test_engine.cpp
     tests/test_strategies.cpp
+    tests/test_external_signal.cpp
 )
 
 add_executable(backtest_tests
