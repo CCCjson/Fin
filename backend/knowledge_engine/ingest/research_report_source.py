@@ -20,6 +20,7 @@ from typing import List, Optional, Dict, Any
 import pandas as pd
 from loguru import logger
 
+from acquisition.websearch import fetch_pdf_text
 from knowledge_engine.ingest import IngestPipeline
 from knowledge_engine.store import KnowledgeStore, make_doc_id
 
@@ -69,43 +70,12 @@ def _fetch_pdf_text(url: str, max_pages: int = 20) -> str:
     """
     取东财研报全文 PDF 正文。先探站结论：`pdf.dfcfw.com` 的"JS 盾"用
     curl_cffi(chrome120 指纹) + referer 头即可过，**不用浏览器**，很快。
+    curl_cffi 出网已收进 acquisition.websearch.fetch_pdf_text（本模块不再自持）。
     """
-    if not url:
-        return ""
-    try:
-        import os
-        import fitz
-        from curl_cffi import requests as cffi
-        from acquisition.websearch.session import bounded_get
-        s = cffi.Session(impersonate="chrome120")
-        # 切块落盘（内存恒定），不把整份 PDF 读进内存
-        cap = bounded_get(s, url, mode="file", file_suffix=".pdf",
-                          headers={"referer": "https://data.eastmoney.com/"},
-                          timeout=30, proxies={"http": "", "https": ""})
-        if cap.status != 200 or not cap.path:
-            if cap.path:
-                try:
-                    os.unlink(cap.path)
-                except OSError:
-                    pass
-            return ""
-        try:
-            with open(cap.path, "rb") as _f:
-                if _f.read(4) != b"%PDF":
-                    return ""
-            doc = fitz.open(filename=cap.path)
-            n = min(max_pages, doc.page_count)
-            text = "\n".join(doc[i].get_text() for i in range(n))
-            doc.close()
-            return text
-        finally:
-            try:
-                os.unlink(cap.path)
-            except OSError:
-                pass
-    except Exception as e:  # noqa: BLE001
-        logger.debug(f"研报 PDF 抽全文失败 {url}: {e}")
-        return ""
+    return fetch_pdf_text(
+        url, max_pages=max_pages,
+        headers={"referer": "https://data.eastmoney.com/"},
+    )
 
 
 def ingest_research_reports(

@@ -48,8 +48,6 @@ _LEGAL_EXCEPTIONS = {
 # 待还债（ratcheting，**只减不增**）：13.4-2 收尾遗留，后续切片消除后从这里删。
 _PENDING_DEBT = {
     "news_engine/fetcher.py",                             # finnhub SDK（海外，待海外铁律课题）
-    "knowledge_engine/ingest/cninfo_source.py",           # curl_cffi（sources 迁移 acquisition 待做）
-    "knowledge_engine/ingest/research_report_source.py",  # curl_cffi（sources 迁移 acquisition 待做）
 }
 
 _ALLOWLIST = _LEGAL_EXCEPTIONS | _PENDING_DEBT

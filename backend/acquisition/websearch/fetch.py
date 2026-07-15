@@ -171,3 +171,48 @@ def read_url(url: str, max_chars: int | None = None, pdf_pages: int = 8) -> dict
         "title": title, "url": url, "snippet": "",
         "text": (text or "")[:max_chars], "source": f"url:{_domain(url)}",
     }
+
+
+def fetch_pdf_text(
+    url: str,
+    *,
+    max_pages: int = 20,
+    headers: dict | None = None,
+    timeout: int = 30,
+) -> str:
+    """curl_cffi(chrome120 指纹) 强制直连抓 PDF 直链，抽前 max_pages 页正文。
+
+    给「已探明无盾、直连即取」的国内财务 PDF 直链用（cninfo static 法定披露 /
+    dfcfw 研报全文）。force_direct=True：这些是国内站，既不走海外代理也不走快代理池，
+    显式空串直连（curl_cffi 的 trust_env 不够可靠，见 session.make_cffi_session）。
+    切块落盘（内存恒定）+ 校验 %PDF 头，抓取/解析失败一律返回 ""，调用方按空判失败。
+
+    Args:
+        url: PDF 直链。空串直接返回 ""。
+        max_pages: 抽前 N 页（法定披露年报几百页，取精华避免库爆）。
+        headers: 附加请求头（如 dfcfw 需 referer；curl_cffi impersonate 已带浏览器头，
+            别在此覆盖 UA）。
+        timeout: 单请求超时秒。
+
+    Returns:
+        前 max_pages 页拼接的纯文本；抓取/解析失败或非 PDF 返回 ""。
+    """
+    if not url:
+        return ""
+    cap: Capped | None = None
+    try:
+        session = make_cffi_session(force_direct=True)
+        cap = bounded_get(url=url, session=session, mode="file", file_suffix=".pdf",
+                          headers=headers, timeout=timeout)
+        if cap.status != 200 or not cap.path:
+            return ""
+        with open(cap.path, "rb") as f:
+            if f.read(4) != b"%PDF":
+                return ""
+        text, _ = _extract_pdf(cap.path, max_pages)
+        return text
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"fetch_pdf_text 抓取失败 {url}: {e}")
+        return ""
+    finally:
+        _cleanup(cap)

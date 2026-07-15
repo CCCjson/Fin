@@ -12,7 +12,8 @@ cninfo 巨潮资讯 A股法定披露原文源 → 知识文档（source_type=fin
 国内源：公告列表查询走 net.domestic.domestic_akshare 包一层（快代理轮换重试，绝不
 直连兜底），不依赖 apply_proxy_env——那个只在判定为「direct 模式」时清代理 env，Clash 存活时
 不会覆盖 .env 里可能配错端口的残留代理值，会导致 ProxyError（已现场验证过这个坑）。
-PDF 直取本身走 curl_cffi 显式 `proxies={"http": "", "https": ""}`，不受影响。
+PDF 直取本身走 acquisition.websearch.fetch_pdf_text（curl_cffi 出网已收进 acquisition
+出网层，本模块不再自持 curl_cffi；该原语强制直连、无盾无 cookie，不受代理 env 影响）。
 """
 import re
 from datetime import datetime
@@ -20,6 +21,7 @@ from typing import List, Optional, Dict, Any
 
 from loguru import logger
 
+from acquisition.websearch import fetch_pdf_text
 from knowledge_engine.ingest import IngestPipeline
 
 
@@ -36,39 +38,7 @@ def _fetch_cninfo_pdf_text(announcement_id: str, date: str, max_pages: int = 60)
     if not announcement_id or not date:
         return ""
     url = f"http://static.cninfo.com.cn/finalpage/{date}/{announcement_id}.PDF"
-    try:
-        import os
-        import fitz
-        from curl_cffi import requests as cffi
-        from acquisition.websearch.session import bounded_get
-        s = cffi.Session(impersonate="chrome120")
-        # 切块落盘（内存恒定），不把整份 PDF 读进内存
-        cap = bounded_get(s, url, mode="file", file_suffix=".pdf",
-                          timeout=40, proxies={"http": "", "https": ""})
-        if cap.status != 200 or not cap.path:
-            if cap.path:
-                try:
-                    os.unlink(cap.path)
-                except OSError:
-                    pass
-            return ""
-        try:
-            with open(cap.path, "rb") as _f:
-                if _f.read(4) != b"%PDF":
-                    return ""
-            doc = fitz.open(filename=cap.path)
-            n = min(max_pages, doc.page_count)
-            text = "\n".join(doc[i].get_text() for i in range(n))
-            doc.close()
-            return text
-        finally:
-            try:
-                os.unlink(cap.path)
-            except OSError:
-                pass
-    except Exception as e:  # noqa: BLE001
-        logger.debug(f"cninfo PDF 抽文失败 {url}: {e}")
-        return ""
+    return fetch_pdf_text(url, max_pages=max_pages, timeout=40)
 
 
 def ingest_cninfo_filings(
