@@ -12,7 +12,7 @@ import json
 import math
 import uuid
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import requests
 from fastapi import HTTPException
@@ -26,7 +26,7 @@ TIMEOUT = 10.0
 BATCH_TIMEOUT = 60.0  # 批量模式超时更长（C++ 服务可能排队）
 
 
-def proxy_sync(method: str, path: str, body: dict = None, timeout: float = None) -> dict:
+def proxy_sync(method: str, path: str, body: dict | None = None, timeout: float | None = None) -> dict:
     """转发请求到 C++ 服务（同步版本，运行在线程池）"""
     url = f"{CPP_SERVICE_URL}{path}"
     _timeout = timeout or TIMEOUT
@@ -45,7 +45,8 @@ def proxy_sync(method: str, path: str, body: dict = None, timeout: float = None)
                 detail = resp.text or f"C++ 服务返回 {resp.status_code}"
             raise HTTPException(status_code=resp.status_code, detail=detail)
 
-        return resp.json()
+        data: dict = resp.json()
+        return data
     except requests.ConnectionError:
         raise HTTPException(
             status_code=503,
@@ -55,12 +56,58 @@ def proxy_sync(method: str, path: str, body: dict = None, timeout: float = None)
         raise HTTPException(status_code=504, detail="C++ 回测服务响应超时")
 
 
-async def proxy(method: str, path: str, body: dict = None) -> dict:
+async def proxy(method: str, path: str, body: dict | None = None) -> dict:
     """转发请求到 C++ 服务（线程池隔离，不受事件循环阻塞影响）"""
     return await asyncio.to_thread(proxy_sync, method, path, body)
 
 
-def safe_float(val, default=0.0):
+def run_signals(
+    bars: List[Dict[str, Any]],
+    signals: List[Dict[str, Any]],
+    initial_capital: float = 100000.0,
+    market: str = "a_share",
+    symbol: str = "SIGNAL",
+    start_date: str = "",
+    end_date: str = "",
+    slippage_pct: float | None = None,
+    timeout: float | None = None,
+) -> Dict[str, Any]:
+    """信号驱动回测：把外部信号序列发给 C++ /api/backtest/run_signals 拿全套指标。
+
+    与 run_single_backtest 不同：不落库、不取数，bars/signals 由调用方直接提供
+    （给 alpha_lab 沙箱等「AI 只产信号」的场景用）。返回 C++ 原始结果
+    （metrics 为小数口径，量纲换算由调用方按需处理）。
+
+    Args:
+        bars: K 线序列 [{date, open, high, low, close, volume}, ...]
+        signals: 信号序列 [{date, action, price?, weight?}, ...]，action=buy/sell
+        initial_capital: 初始资金
+        market: canonical 市场（a_share/hk_stock/us_stock），内部转 C++ wire 格式
+        symbol: 标的代码（仅用于结果标注）
+        start_date/end_date: 可选日期过滤
+        slippage_pct: 可选滑点覆盖（>=0 生效）
+
+    Returns:
+        C++ 服务返回的原始 dict（metrics/equity_curve/trades/dropped_last_bar_orders）
+    """
+    from common.market import to_cpp_market
+
+    body: Dict[str, Any] = {
+        "symbol": symbol,
+        "signals": signals,
+        "bars": bars,
+        "initial_capital": initial_capital,
+        "market": to_cpp_market(market),
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    if slippage_pct is not None:
+        body["slippage_pct"] = slippage_pct
+
+    return proxy_sync("POST", "/api/backtest/run_signals", body, timeout=timeout or BATCH_TIMEOUT)
+
+
+def safe_float(val: Any, default: float = 0.0) -> float:
     """将 None / NaN / Infinity / 垃圾浮点数转为安全值"""
     if val is None:
         return default

@@ -372,6 +372,8 @@ module = [
   "acquisition.markets.finnhub_news",
   # 域3 data_engine
   "data_engine.base_job",
+  # 域5 回测 C++ client
+  "services.backtest_cpp_client",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
