@@ -370,6 +370,8 @@ module = [
   "acquisition.markets.index_klines",
   "acquisition.markets.stock_news",
   "acquisition.markets.finnhub_news",
+  # 域3 data_engine
+  "data_engine.base_job",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true

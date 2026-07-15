@@ -8,6 +8,10 @@ A股深历史日线回补 —— 常驻后台任务。
 避免对已经补到数据源上限（上市首日/数据源本身没有更早数据）的股票重复发请求——
 东财 K 线接口对超长跨度不会截断（已实测 1990~2009 一次性拿全），所以每只股票
 理论上只需要成功请求一次。
+
+生命周期骨架（单例线程 + 状态机 + start/stop/snapshot + self-heal + finally 兜底）
+统一由 `data_engine.base_job.BaseSingletonJob` 承接，本类只实现业务体 `_execute`
+（ProxyPool 多 worker 并发内核）与状态钩子。
 """
 import json
 import queue
@@ -21,6 +25,7 @@ from typing import Dict, List, Optional
 from loguru import logger
 from sqlalchemy import func
 
+from data_engine.base_job import BaseSingletonJob
 from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo, DailyQuote
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, klines_to_records
@@ -63,35 +68,24 @@ def _save_progress(progress: dict) -> None:
     tmp.replace(PROGRESS_FILE)
 
 
-class AShareDeepHistoryJob:
+class AShareDeepHistoryJob(BaseSingletonJob):
     """A股深历史日线回补的单例后台任务。"""
+
+    JOB_NAME = "A股深历史回补"
+    STOPPING_MSG = "已发送停止信号，会在当前在途请求处理完后停下"
 
     SWITCH_IP_EVERY = 450  # 深历史单次响应体积比增量更新大，比 daily_updater 的 800 调低
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._thread: Optional[threading.Thread] = None
-        self._stop_flag = threading.Event()
-        self._state_lock = threading.Lock()
-        self._reset_state()
-
-    def _reset_state(self) -> None:
-        self.status = "idle"  # idle / running / stopping / stopped / done
-        self.total_all = 0
-        self.done_total = 0
-        self.processed_this_run = 0
+    def _reset_extra_state(self) -> None:
         self.success = 0
         self.failed = 0
         self.new_records = 0
         self.current_symbol: Optional[str] = None
-        self.recent: List[dict] = []
-        self.started_at: Optional[float] = None
-        self.config: Dict = {}
         self.proxy_state: str = "closed"
         self.abort_reason: Optional[str] = None
         self.last_activity_ago_seconds: float = 0.0
 
-    # ---------- 对外：起停 + 查状态 ----------
+    # ---------- 对外：起停（snapshot/stop 由基类提供）----------
 
     def start(
         self,
@@ -100,52 +94,23 @@ class AShareDeepHistoryJob:
         symbols: Optional[List[str]] = None,
         limit: Optional[int] = None,
     ) -> dict:
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return {"ok": False, "message": "已经在跑了", **self.snapshot()}
+        return self._launch({"workers": workers, "symbols": symbols, "limit": limit})
 
-            self._stop_flag.clear()
-            self._reset_state()
-            self.config = {"workers": workers, "symbols": symbols, "limit": limit}
-            self.status = "running"
-            self.started_at = time.time()
-            self._thread = threading.Thread(target=self._run, daemon=True)
-            self._thread.start()
-            return {"ok": True, "message": "已启动", **self.snapshot()}
+    # ---------- 状态钩子 ----------
 
-    def stop(self) -> dict:
-        with self._lock:
-            if self._thread is None or not self._thread.is_alive():
-                return {"ok": False, "message": "当前没有在跑的任务", **self.snapshot()}
-            self._stop_flag.set()
-            with self._state_lock:
-                self.status = "stopping"
-            return {"ok": True, "message": "已发送停止信号，会在当前在途请求处理完后停下", **self.snapshot()}
+    def _clear_current(self) -> None:
+        self.current_symbol = None
 
-    def snapshot(self) -> dict:
-        with self._state_lock:
-            elapsed = (time.time() - self.started_at) if self.started_at else 0.0
-            rate_per_min = (self.processed_this_run / elapsed * 60) if elapsed > 0 else 0.0
-            remaining = max(0, self.total_all - self.done_total)
-            eta_s = (remaining / (rate_per_min / 60)) if rate_per_min > 0 else None
-            return {
-                "status": self.status,
-                "total_all": self.total_all,
-                "done_total": self.done_total,
-                "processed_this_run": self.processed_this_run,
-                "success": self.success,
-                "failed": self.failed,
-                "new_records": self.new_records,
-                "current_symbol": self.current_symbol,
-                "rate_per_min": round(rate_per_min, 1),
-                "eta_seconds": eta_s,
-                "elapsed_seconds": elapsed,
-                "recent": list(self.recent),
-                "config": dict(self.config),
-                "proxy_state": self.proxy_state,
-                "abort_reason": self.abort_reason,
-                "last_activity_ago_seconds": round(self.last_activity_ago_seconds, 1),
-            }
+    def _extra_snapshot_fields(self) -> dict:
+        return {
+            "success": self.success,
+            "failed": self.failed,
+            "new_records": self.new_records,
+            "current_symbol": self.current_symbol,
+            "proxy_state": self.proxy_state,
+            "abort_reason": self.abort_reason,
+            "last_activity_ago_seconds": round(self.last_activity_ago_seconds, 1),
+        }
 
     @staticmethod
     def _resolve_worker_count(requested: Optional[int], proxy_mgr: ProxyManager) -> int:
@@ -154,7 +119,7 @@ class AShareDeepHistoryJob:
         workers = requested if requested else 4
         return max(1, min(workers, 6))
 
-    # ---------- 后台线程实体 ----------
+    # ---------- 后台线程实体（基类 _run 负责异常日志 + finally 兜底翻正）----------
 
     def _build_candidates(self, cfg: Dict) -> tuple:
         """返回 (candidates, already_done_count)"""
@@ -228,228 +193,221 @@ class AShareDeepHistoryJob:
 
         return candidates, already_done, progress
 
-    def _run(self) -> None:
-        cfg = self.config
-        try:
-            candidates, already_done, progress = self._build_candidates(cfg)
-            confirmed: Dict[str, str] = progress["confirmed"]
+    def _execute(self, cfg: Dict) -> None:
+        candidates, already_done, progress = self._build_candidates(cfg)
+        confirmed: Dict[str, str] = progress["confirmed"]
 
+        with self._state_lock:
+            self.total_all = len(candidates) + already_done
+            self.done_total = already_done
+
+        if not candidates:
+            logger.info("A股深历史回补：没有需要回补的股票")
             with self._state_lock:
-                self.total_all = len(candidates) + already_done
-                self.done_total = already_done
+                self.status = "done"
+            return
 
-            if not candidates:
-                logger.info("A股深历史回补：没有需要回补的股票")
-                with self._state_lock:
-                    self.status = "done"
+        proxy_mgr = get_proxy_manager() or ProxyManager()
+        workers = self._resolve_worker_count(cfg.get("workers"), proxy_mgr)
+        logger.info(f"A股深历史回补启动：候选 {len(candidates)} 只，已确认 {already_done} 只，{workers} workers")
+
+        work_q: "queue.Queue" = queue.Queue()
+        result_q: "queue.Queue" = queue.Queue()
+        for c in candidates:
+            work_q.put(c)
+
+        pool = ProxyPool(size=workers, mgr=proxy_mgr, min_delay=0.3, max_delay=1.5)
+        stop_event = threading.Event()
+
+        def _worker():
+            crawler = EastMoneyCrawler(CrawlerConfig(
+                min_delay=0.3, max_delay=1.5, max_retries=0,
+                retry_delay=0, timeout=10, rate_limit_pause=30.0,
+            ))
+            try:
+                slot = pool.acquire()
+            except ProxyExhaustedError:
+                # 启动即无可用 IP：退出，绝不直连。主循环据 futures 全退 + stall/
+                # 熔断兜底收尾（把未处理的计为失败）。
+                logger.warning("深历史 worker 启动即无可用快代理 IP，退出")
                 return
-
-            proxy_mgr = get_proxy_manager() or ProxyManager()
-            workers = self._resolve_worker_count(cfg.get("workers"), proxy_mgr)
-            logger.info(f"A股深历史回补启动：候选 {len(candidates)} 只，已确认 {already_done} 只，{workers} workers")
-
-            work_q: "queue.Queue" = queue.Queue()
-            result_q: "queue.Queue" = queue.Queue()
-            for c in candidates:
-                work_q.put(c)
-
-            pool = ProxyPool(size=workers, mgr=proxy_mgr, min_delay=0.3, max_delay=1.5)
-            stop_event = threading.Event()
-
-            def _worker():
-                crawler = EastMoneyCrawler(CrawlerConfig(
-                    min_delay=0.3, max_delay=1.5, max_retries=0,
-                    retry_delay=0, timeout=10, rate_limit_pause=30.0,
-                ))
-                try:
-                    slot = pool.acquire()
-                except ProxyExhaustedError:
-                    # 启动即无可用 IP：退出，绝不直连。主循环据 futures 全退 + stall/
-                    # 熔断兜底收尾（把未处理的计为失败）。
-                    logger.warning("深历史 worker 启动即无可用快代理 IP，退出")
-                    return
-                crawler._warm_up(proxies=slot.to_requests_proxies())
-                on_ip = 0
-                try:
-                    while not stop_event.is_set():
-                        try:
-                            item = work_q.get(timeout=0.5)
-                        except queue.Empty:
-                            return
-                        try:
-                            if slot.proxy is not None and slot.proxy.is_expired:
-                                pool.refresh(slot)
-                                crawler.reset_session(proxies=slot.to_requests_proxies())
-                            # 轮换后仍没 IP（额度尽）→ 不直连，走 ProxyTimeoutError
-                            # 失败路径（换 IP + 记失败），熔断随换 IP 失败收敛。
-                            if not pool.direct_mode and slot.proxy is None:
-                                raise ProxyTimeoutError("代理槽无可用 IP，拒绝降级直连")
-
-                            secid_mkt = None
-                            if item["stock_type"] in ("index", "etf"):
-                                if item["exchange"] == "SH":
-                                    secid_mkt = 1
-                                elif item["exchange"] in ("SZ", "BJ"):
-                                    secid_mkt = 0
-
-                            data = crawler.fetch_stock_history(
-                                item["code"], TARGET_START, item["fetch_end"],
-                                proxies=slot.to_requests_proxies(), secid_market=secid_mkt,
-                            )
-                            klines = parse_kline_data(data) if data else []
-                            pool.report_success(slot)
-                            result_q.put({**item, "ok": True, "klines": klines})
-                            on_ip += 1
-                            if on_ip >= self.SWITCH_IP_EVERY:
-                                pool.refresh(slot)
-                                crawler.reset_session(proxies=slot.to_requests_proxies())
-                                on_ip = 0
-                        except ProxyTimeoutError as e:
-                            pool.report_failure(slot, proxy_connect=is_proxy_connect_error(e))
+            crawler._warm_up(proxies=slot.to_requests_proxies())
+            on_ip = 0
+            try:
+                while not stop_event.is_set():
+                    try:
+                        item = work_q.get(timeout=0.5)
+                    except queue.Empty:
+                        return
+                    try:
+                        if slot.proxy is not None and slot.proxy.is_expired:
                             pool.refresh(slot)
                             crawler.reset_session(proxies=slot.to_requests_proxies())
-                            result_q.put({**item, "ok": False, "klines": []})
-                        except Exception as e:  # noqa: BLE001
-                            logger.warning(f"{item['symbol']} 深历史回补失败: {e}")
-                            result_q.put({**item, "ok": False, "klines": []})
-                except Exception as e:  # noqa: BLE001
-                    logger.error(f"深历史 worker 异常退出: {e}")
-                finally:
-                    pool.release(slot)
+                        # 轮换后仍没 IP（额度尽）→ 不直连，走 ProxyTimeoutError
+                        # 失败路径（换 IP + 记失败），熔断随换 IP 失败收敛。
+                        if not pool.direct_mode and slot.proxy is None:
+                            raise ProxyTimeoutError("代理槽无可用 IP，拒绝降级直连")
 
-            executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="deep-hist-a")
-            futures = [executor.submit(_worker) for _ in range(workers)]
+                        secid_mkt = None
+                        if item["stock_type"] in ("index", "etf"):
+                            if item["exchange"] == "SH":
+                                secid_mkt = 1
+                            elif item["exchange"] in ("SZ", "BJ"):
+                                secid_mkt = 0
 
-            session = get_session()
-            pending_records: List[Dict] = []
-            processed = 0
-            last_flush = time.time()
-            tracker = LivenessTracker(stall_timeout=180.0)
+                        data = crawler.fetch_stock_history(
+                            item["code"], TARGET_START, item["fetch_end"],
+                            proxies=slot.to_requests_proxies(), secid_market=secid_mkt,
+                        )
+                        klines = parse_kline_data(data) if data else []
+                        pool.report_success(slot)
+                        result_q.put({**item, "ok": True, "klines": klines})
+                        on_ip += 1
+                        if on_ip >= self.SWITCH_IP_EVERY:
+                            pool.refresh(slot)
+                            crawler.reset_session(proxies=slot.to_requests_proxies())
+                            on_ip = 0
+                    except ProxyTimeoutError as e:
+                        pool.report_failure(slot, proxy_connect=is_proxy_connect_error(e))
+                        pool.refresh(slot)
+                        crawler.reset_session(proxies=slot.to_requests_proxies())
+                        result_q.put({**item, "ok": False, "klines": []})
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(f"{item['symbol']} 深历史回补失败: {e}")
+                        result_q.put({**item, "ok": False, "klines": []})
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"深历史 worker 异常退出: {e}")
+            finally:
+                pool.release(slot)
 
-            def _drain_work_queue() -> None:
-                while not work_q.empty():
-                    try:
-                        work_q.get_nowait()
-                    except queue.Empty:
-                        break
+        executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="deep-hist-a")
+        futures = [executor.submit(_worker) for _ in range(workers)]
 
-            try:
-                while processed < len(candidates):
-                    if self._stop_flag.is_set() and not stop_event.is_set():
-                        stop_event.set()
-                        _drain_work_queue()
+        session = get_session()
+        pending_records: List[Dict] = []
+        processed = 0
+        last_flush = time.time()
+        tracker = LivenessTracker(stall_timeout=180.0)
 
+        def _drain_work_queue() -> None:
+            while not work_q.empty():
+                try:
+                    work_q.get_nowait()
+                except queue.Empty:
+                    break
+
+        try:
+            while processed < len(candidates):
+                if self._stop_flag.is_set() and not stop_event.is_set():
+                    stop_event.set()
+                    _drain_work_queue()
+
+                with self._state_lock:
+                    self.proxy_state = pool.breaker_state
+                    self.last_activity_ago_seconds = tracker.seconds_since_activity()
+
+                if pool.breaker_state == "dead" and not stop_event.is_set():
+                    missing = len(candidates) - processed
+                    logger.error(f"深历史回补：代理池与直连均不可用，中止本次任务，{missing} 只计为失败")
                     with self._state_lock:
-                        self.proxy_state = pool.breaker_state
-                        self.last_activity_ago_seconds = tracker.seconds_since_activity()
+                        self.failed += missing
+                        self.abort_reason = "proxy_pool_dead"
+                    stop_event.set()
+                    _drain_work_queue()
+                    break
 
-                    if pool.breaker_state == "dead" and not stop_event.is_set():
+                try:
+                    res = result_q.get(timeout=0.5)
+                except queue.Empty:
+                    if all(f.done() for f in futures) and work_q.empty():
+                        break
+                    if tracker.is_stalled() and not stop_event.is_set():
                         missing = len(candidates) - processed
-                        logger.error(f"深历史回补：代理池与直连均不可用，中止本次任务，{missing} 只计为失败")
+                        logger.error(f"深历史回补：{tracker.stall_timeout:.0f}s 无任何 worker 活动，"
+                                     f"中止本次任务，{missing} 只计为失败")
                         with self._state_lock:
                             self.failed += missing
-                            self.abort_reason = "proxy_pool_dead"
+                            self.abort_reason = "stalled"
                         stop_event.set()
                         _drain_work_queue()
                         break
+                    continue
 
+                tracker.touch()
+                processed += 1
+                symbol = res["symbol"]
+
+                with self._state_lock:
+                    self.processed_this_run += 1
+                    self.current_symbol = symbol
+
+                if res["ok"]:
+                    klines = res["klines"]
+                    if klines:
+                        pending_records.extend(klines_to_records(symbol, "a_share", klines))
+                    # 确认值必须是"这次请求后 DB 实际能到的最早日期"，不是请求前的旧 floor——
+                    # klines 按日期升序，klines[0] 就是这次拿到的最早一天；拿到新数据时
+                    # 如果还记旧 floor，下次重跑会误判"没确认过"又白问一次
+                    new_floor_str = klines[0]["date"] if klines else res["floor_str"]
+                    confirmed[symbol] = new_floor_str
+                    with self._state_lock:
+                        self.success += 1
+                        self.done_total += 1
+                        self.recent.insert(0, {
+                            "symbol": symbol, "name": res["name"], "status": "ok",
+                            "rows": len(klines), "at": time.strftime("%H:%M:%S"),
+                        })
+                        self.recent = self.recent[:30]
+                else:
+                    with self._state_lock:
+                        self.failed += 1
+                        self.recent.insert(0, {
+                            "symbol": symbol, "name": res["name"], "status": "failed",
+                            "rows": 0, "at": time.strftime("%H:%M:%S"),
+                        })
+                        self.recent = self.recent[:30]
+
+                now = time.time()
+                if pending_records and (
+                    processed % 200 == 0 or now - last_flush > 2.0 or processed == len(candidates)
+                ):
                     try:
-                        res = result_q.get(timeout=0.5)
-                    except queue.Empty:
-                        if all(f.done() for f in futures) and work_q.empty():
-                            break
-                        if tracker.is_stalled() and not stop_event.is_set():
-                            missing = len(candidates) - processed
-                            logger.error(f"深历史回补：{tracker.stall_timeout:.0f}s 无任何 worker 活动，"
-                                         f"中止本次任务，{missing} 只计为失败")
-                            with self._state_lock:
-                                self.failed += missing
-                                self.abort_reason = "stalled"
-                            stop_event.set()
-                            _drain_work_queue()
-                            break
-                        continue
-
-                    tracker.touch()
-                    processed += 1
-                    symbol = res["symbol"]
-
-                    with self._state_lock:
-                        self.processed_this_run += 1
-                        self.current_symbol = symbol
-
-                    if res["ok"]:
-                        klines = res["klines"]
-                        if klines:
-                            pending_records.extend(klines_to_records(symbol, "a_share", klines))
-                        # 确认值必须是"这次请求后 DB 实际能到的最早日期"，不是请求前的旧 floor——
-                        # klines 按日期升序，klines[0] 就是这次拿到的最早一天；拿到新数据时
-                        # 如果还记旧 floor，下次重跑会误判"没确认过"又白问一次
-                        new_floor_str = klines[0]["date"] if klines else res["floor_str"]
-                        confirmed[symbol] = new_floor_str
+                        n = bulk_upsert_quotes(session, pending_records)
                         with self._state_lock:
-                            self.success += 1
-                            self.done_total += 1
-                            self.recent.insert(0, {
-                                "symbol": symbol, "name": res["name"], "status": "ok",
-                                "rows": len(klines), "at": time.strftime("%H:%M:%S"),
-                            })
-                            self.recent = self.recent[:30]
-                    else:
-                        with self._state_lock:
-                            self.failed += 1
-                            self.recent.insert(0, {
-                                "symbol": symbol, "name": res["name"], "status": "failed",
-                                "rows": 0, "at": time.strftime("%H:%M:%S"),
-                            })
-                            self.recent = self.recent[:30]
-
-                    now = time.time()
-                    if pending_records and (
-                        processed % 200 == 0 or now - last_flush > 2.0 or processed == len(candidates)
-                    ):
+                            self.new_records += n
+                    except Exception as e:  # noqa: BLE001
+                        logger.error(f"深历史批量写入失败（丢弃 {len(pending_records)} 条）: {e}")
                         try:
-                            n = bulk_upsert_quotes(session, pending_records)
-                            with self._state_lock:
-                                self.new_records += n
-                        except Exception as e:  # noqa: BLE001
-                            logger.error(f"深历史批量写入失败（丢弃 {len(pending_records)} 条）: {e}")
-                            try:
-                                session.rollback()
-                            except Exception:  # noqa: BLE001
-                                pass
-                        pending_records = []
-                        last_flush = now
+                            session.rollback()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    pending_records = []
+                    last_flush = now
 
-                    if processed % _FLUSH_EVERY == 0:
-                        _save_progress(progress)
-            finally:
-                stop_event.set()
-                executor.shutdown(wait=False)
+                if processed % _FLUSH_EVERY == 0:
+                    _save_progress(progress)
+        finally:
+            stop_event.set()
+            executor.shutdown(wait=False)
 
-            if pending_records:
-                try:
-                    n = bulk_upsert_quotes(session, pending_records)
-                    with self._state_lock:
-                        self.new_records += n
-                except Exception as e:  # noqa: BLE001
-                    logger.error(f"深历史批量写入失败（丢弃 {len(pending_records)} 条）: {e}")
+        if pending_records:
+            try:
+                n = bulk_upsert_quotes(session, pending_records)
+                with self._state_lock:
+                    self.new_records += n
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"深历史批量写入失败（丢弃 {len(pending_records)} 条）: {e}")
 
-            session.close()
-            _save_progress(progress)
+        session.close()
+        _save_progress(progress)
 
-            with self._state_lock:
-                self.status = "stopped" if (self._stop_flag.is_set() or self.abort_reason) else "done"
-                self.current_symbol = None
-            logger.success(
-                f"A股深历史回补结束（status={self.status}）：成功 {self.success}, "
-                f"失败 {self.failed}, 新记录 {self.new_records}"
-            )
-        except Exception as e:  # noqa: BLE001 — 后台线程异常绝不能悄悄死掉不留痕迹
-            logger.exception(f"A股深历史回补线程异常退出: {e}")
-            with self._state_lock:
-                self.status = "stopped"
-                self.current_symbol = None
+        with self._state_lock:
+            self.status = "stopped" if (self._stop_flag.is_set() or self.abort_reason) else "done"
+            self.current_symbol = None
+        logger.success(
+            f"A股深历史回补结束（status={self.status}）：成功 {self.success}, "
+            f"失败 {self.failed}, 新记录 {self.new_records}"
+        )
 
 
 # 模块级单例
