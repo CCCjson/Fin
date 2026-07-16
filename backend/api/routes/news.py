@@ -3,7 +3,6 @@
 """
 import asyncio
 import json
-from datetime import datetime
 from typing import Literal, Optional, List
 
 from fastapi import APIRouter, HTTPException, Query
@@ -12,37 +11,13 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from api.routes._stream_utils import bridge_sync_stream
-from data_engine.storage.database import get_session
-from data_engine.storage.models import NewsArticle, NewsSentiment
+from news_engine.articles import list_articles_scored, list_unanalyzed_article_ids
 from news_engine.fetcher import NewsFetcher
 from news_engine.sentiment import SentimentAnalyzer
 from news_engine.analyzer import NewsAnalyzer
 from llm_config import get_cheap_model
 
 router = APIRouter(prefix="/news", tags=["新闻分析"])
-
-# ==================== sort=importance 打分公式（Jason 确认过的权重）====================
-# 类别：命中关键词类别加分，geopolitical 权重最高（地缘政治有时候比财经消息影响力更大）
-_CATEGORY_SCORE = {"geopolitical": 1.0, "financial_risk": 0.8, "urgent": 0.8}
-_IMPORTANCE_WEIGHT = 0.65
-_RECENCY_WEIGHT = 0.35
-_RECENCY_HALFLIFE_HOURS = 6.0  # 时效性分数每 6 小时衰减一半
-
-
-def _importance_score(article: NewsArticle, sent: Optional[NewsSentiment], category: Optional[str]) -> float:
-    """三项等权平均：命中关键词类别 + 情绪强度(非中性) + 自选股/持仓相关性。"""
-    category_score = _CATEGORY_SCORE.get(category, 0.0)
-    sentiment_score = sent.confidence if (sent and sent.sentiment != "neutral" and sent.confidence) else 0.0
-    symbol_score = 1.0 if article.symbol else 0.0
-    return (category_score + sentiment_score + symbol_score) / 3
-
-
-def _recency_score(published_at: Optional[datetime]) -> float:
-    """连续指数衰减，半衰期 6 小时。"""
-    if not published_at:
-        return 0.0
-    age_hours = max(0.0, (datetime.now() - published_at).total_seconds() / 3600)
-    return 0.5 ** (age_hours / _RECENCY_HALFLIFE_HOURS)
 
 _fetcher = NewsFetcher()
 _analyzer = NewsAnalyzer()
@@ -112,23 +87,8 @@ async def fetch_news(request: FetchRequest):
             yield _ndjson({"event": "analyzing", "message": "正在进行 BERT 情感分析..."})
             await asyncio.sleep(0)
 
-            session = get_session()
-            try:
-                query = session.query(NewsArticle).outerjoin(
-                    NewsSentiment,
-                    NewsArticle.article_id == NewsSentiment.article_id,
-                ).filter(NewsSentiment.id.is_(None))
-
-                if request.symbol:
-                    raw_symbol = request.symbol.split(".")[0]
-                    query = query.filter(NewsArticle.symbol == raw_symbol)
-                if request.market:
-                    query = query.filter(NewsArticle.market == request.market)
-
-                unanalyzed = query.all()
-                article_ids = [a.article_id for a in unanalyzed]
-            finally:
-                session.close()
+            article_ids = await asyncio.to_thread(
+                list_unanalyzed_article_ids, request.symbol, request.market)
 
             # Step 3: BERT 情感分析
             if article_ids:
@@ -184,97 +144,15 @@ async def get_articles(
         "recent", description="recent=按时间倒序(默认) / importance=按重要度打分排序"),
 ):
     """查询已缓存的新闻列表，包含 BERT 情感分析结果。"""
-    session = get_session()
     try:
-        query = session.query(NewsArticle, NewsSentiment).outerjoin(
-            NewsSentiment, NewsArticle.article_id == NewsSentiment.article_id
+        return await asyncio.to_thread(
+            list_articles_scored,
+            symbol=symbol, market=market, sentiment=sentiment,
+            limit=limit, offset=offset, sort=sort,
         )
-
-        if symbol:
-            raw_symbol = symbol.split(".")[0]
-            query = query.filter(NewsArticle.symbol == raw_symbol)
-        if market:
-            query = query.filter(NewsArticle.market == market)
-        if sentiment:
-            query = query.filter(NewsSentiment.sentiment == sentiment)
-
-        total = query.count()
-
-        rows = (
-            query.order_by(NewsArticle.published_at.desc())
-            .offset(offset)
-            .limit(limit)
-            .all()
-        )
-
-        keywords_by_category = {}
-        match_keyword = None
-        if sort == "importance":
-            from news_engine.news_scheduler import _load_high_impact_keywords, _match_keyword
-            keywords_by_category = _load_high_impact_keywords()
-            match_keyword = _match_keyword
-
-        articles = []
-        for article, sent in rows:
-            item = {
-                "article_id": article.article_id,
-                "symbol": article.symbol,
-                "market": article.market,
-                "title": article.title,
-                "content": article.content,
-                "summary": article.summary,
-                "source": article.source,
-                "url": article.url,
-                "image_url": article.image_url,
-                "language": article.language,
-                "published_at": str(article.published_at) if article.published_at else None,
-                "fetched_at": str(article.fetched_at) if article.fetched_at else None,
-            }
-            if sent:
-                item["sentiment"] = {
-                    "sentiment": sent.sentiment,
-                    "confidence": sent.confidence,
-                    "prob_positive": sent.prob_positive,
-                    "prob_negative": sent.prob_negative,
-                    "prob_neutral": sent.prob_neutral,
-                    "model_used": sent.model_used,
-                }
-            else:
-                item["sentiment"] = None
-
-            if sort == "importance":
-                matched = match_keyword(article.title or "", keywords_by_category)
-                category = matched[0] if matched else None
-                item["category"] = category
-                item["score"] = round(
-                    _IMPORTANCE_WEIGHT * _importance_score(article, sent, category)
-                    + _RECENCY_WEIGHT * _recency_score(article.published_at),
-                    2,
-                )
-            articles.append(item)
-
-        if sort == "importance":
-            articles.sort(key=lambda a: a.get("score", 0.0), reverse=True)
-
-        # 按标题去重（保留排序后第一条，即分数/时间最优的那条）：修复 store_articles 之前
-        # 就已经入库的历史重复数据——不同来源/栏目转载同一条新闻在库里各占一行，只对
-        # 本页展示做兜底去重，不动 DB 也不影响 total（total 仍是去重前的匹配行数）。
-        seen_titles = set()
-        deduped = []
-        for a in articles:
-            if a["title"] in seen_titles:
-                continue
-            seen_titles.add(a["title"])
-            deduped.append(a)
-        articles = deduped
-
-        return {"total": total, "articles": articles}
-
     except Exception as e:
         logger.error(f"查询新闻失败: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
-    finally:
-        session.close()
 
 
 @router.post("/analyze", summary="OpenAI 单篇新闻深度分析（流式）")

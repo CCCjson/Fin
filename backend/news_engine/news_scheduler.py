@@ -15,21 +15,17 @@ NewsScheduler —— 新闻模块的定时抓取+分析常驻任务（Newnew 用
 门控：环境变量 NEWS_AUTO_FETCH_ENABLED（默认 true）。
 """
 import asyncio
-import json
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from common.market import to_bare_code
 from loguru import logger
 
+from news_engine.keywords import load_high_impact_keywords, match_keyword
+
 JOB_FETCH_ID = "news_fetch_job"
 JOB_CACHE_CLEAR_ID = "news_cache_clear_job"
-
-# 高影响关键词配置：分类 JSON，不塞 .env（词一多 .env 就臃肿）。跟
-# knowledge_engine/config.py::get_scrapers_config_dir() 同一套"相对 backend 根目录"路径惯例。
-_KEYWORDS_CONFIG_PATH = Path(__file__).resolve().parent.parent / "configs" / "news_high_impact_keywords.json"
 
 _CATEGORY_LABEL = {
     "financial_risk": "财务风险",
@@ -57,28 +53,6 @@ def _env_bool(key: str, default: bool) -> bool:
 def _truncate(text: str, limit: int) -> str:
     text = (text or "").strip()
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
-
-
-def _load_high_impact_keywords() -> Dict[str, List[str]]:
-    """读分类关键词 JSON。不做进程内缓存——文件很小，15分钟一次的读盘开销可忽略，
-    换来 Jason 改词表立即生效、不用重启后端。文件缺失/损坏时降级为空（不中断主流程）。"""
-    try:
-        with open(_KEYWORDS_CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return {cat: [str(k).strip() for k in words if str(k).strip()]
-                for cat, words in data.items()}
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"高影响关键词配置读取失败（跳过关键词判定）: {e}")
-        return {}
-
-
-def _match_keyword(title: str, keywords_by_category: Dict[str, List[str]]) -> Optional[tuple]:
-    """标题是否命中任意类别的关键词，命中返回 (category, matched_keyword)，否则 None。"""
-    for category, words in keywords_by_category.items():
-        for w in words:
-            if w and w in title:
-                return category, w
-    return None
 
 
 def _infer_market(symbol: str) -> str:
@@ -420,12 +394,12 @@ class NewsScheduler:
         from data_engine.storage.database import get_session
         from data_engine.storage.models import NewsSentiment
 
-        keywords_by_category = _load_high_impact_keywords()
+        keywords_by_category = load_high_impact_keywords()
         hits: List[Dict] = []
 
         # ---- 综合新闻桶：只做关键词检测（地缘政治的主要入口，没有 symbol 概念）----
         for article in general_new_articles:
-            matched = _match_keyword(article.get("title") or "", keywords_by_category)
+            matched = match_keyword(article.get("title") or "", keywords_by_category)
             if matched:
                 category, _kw = matched
                 hits.append({
@@ -438,7 +412,7 @@ class NewsScheduler:
             keyword_hit = None
             matched_category = None
             for a in articles:
-                matched = _match_keyword(a.get("title") or "", keywords_by_category)
+                matched = match_keyword(a.get("title") or "", keywords_by_category)
                 if matched:
                     keyword_hit = a
                     matched_category = matched[0]
