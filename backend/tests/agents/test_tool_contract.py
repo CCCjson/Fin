@@ -33,14 +33,10 @@ def _id(td):
     return td.name
 
 
-# 已知历史债务：agents/tools/knowledge_tools.py（原 knowledge_engine/tools.py，
-# Phase 4 只挪了注册位置到工具层，不在本次范围内迁移 schema）注册的工具还没迁到
-# args_model。这是一份收缩型白名单——只能变短不能变长：新工具落地时若也漏了
-# args_model，这里的断言会红。
-_LEGACY_NO_ARGS_MODEL = {
-    "search_knowledge", "web_search", "sec_search",
-    "read_url", "login_site", "scrape", "list_alpha_ideas",
-}
+# 历史债务已清零（域8 收口）：knowledge_tools.py 的 7 个工具全部迁到 args_model +
+# ToolEnvelope。这份收缩型白名单现为空——只能变短不能变长：新工具落地时若漏了
+# args_model，test_domain_tools_have_args_model_unless_known_legacy 的断言会红。
+_LEGACY_NO_ARGS_MODEL: set[str] = set()
 
 
 @pytest.mark.parametrize("td", _all_tools(), ids=_id)
