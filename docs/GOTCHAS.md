@@ -103,3 +103,17 @@
 - 同轮 tool_calls 全部串行执行（性能非正确性问题）。
 - USAGE 统计无 per-session 维度（trace里有per-turn数据可以聚合出来）。
 - 桌面Tauri打包版的JWT鉴权/绝对API地址在架构安全加固后**没有重新打包验证过**，如果常用桌面端且改了鉴权相关代码，记得重新打包测一次登录流程。
+
+## 对外字段名冻结自查（域9，改 route 前必读）
+
+第13步大重构铁律：**对外 HTTP API 字段名与 DB schema 逐字段冻结**（前端/桌面 App 零改动可用）。前几域把 agent 工具层入参改了名（`top_k/max_results/days` → `limit/window`），但那**只在 agents/tools 层**，route 是独立契约，**绝不联动**。以下是自查出的「看着该改、其实必须冻结」的点：
+
+- **`knowledge.py` 上 `top_k` / `max_results` / `limit` / `limit_per_symbol` 四个语义不同的入参并存是故意设计**，绝不能因为工具层收敛成 `limit` 就跟着合并/改名，否则语义塌缩 + 破坏前端契约。**最高警惕项**。
+- `prediction.py` 的 `forward_days`（前瞻预测期，不是回看窗口，还挂着 DB 列 `models.py`+整个 prediction_engine）、`history` 的 `days`/`limit`、`news.limit_per_source`、`data.stale_days` —— **全冻结**，别跟工具改名走。
+- `walk_forward` 响应里的 `"window"` 是**回测时间窗对象**，与工具层新引入的 `window` 只是同名巧合，语义无关，别碰。
+- `backtest_cpp.py:246-262` 与 `history.py` 详情的 `metrics` dict 键（`total_return_pct/sharpe_ratio/max_drawdown_pct/…`）直接透传 `result.<attr>`，是冻结对外契约；重构引擎属性名时要回头核对这两处（属性读取会抛异常而非静默改键，相对安全）。
+- market 短写 `us/hk` **只许活在 `common/market.py::to_cpp_market()` 边界内**；域9 已修 `backtest_cpp.py` docstring + `history.py` 详情硬赋值（改用 `infer_market_from_symbol` 产 canonical）+ `walk_forward` 引擎（C++ 调用套 `to_cpp_market`，修港美股静默拿错市场的 bug）。
+
+## async 边界（域9 已彻底清零 api/routes）
+
+`async def` 内一切同步阻塞 IO（`session.query`/`repo.*` 落库方法/`data_engine.get_*`/重计算）必须走 `await asyncio.to_thread(...)`，模板见 `api/routes/data.py`。多条连续 DB 操作用**一个闭包整段包**（SQLAlchemy session 生命周期留在同一线程，不可跨线程共享）。**唯一保守未动**：`automation/scheduler.py` 的 config `session.query`（session 跨多个 await 存活、域7 已裁定本地 sqlite 轻 IO、不在 §5 原清单内）。新增 async route handler 别再裸调同步 DB/IO。

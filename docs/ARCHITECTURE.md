@@ -25,8 +25,7 @@
 | `agents/` | MoneyBill 多智能体编排层（详见第5节） |
 | `data_engine/` | 行情/财务数据抓取、清洗、存储、ORM models、DB session |
 | `analysis_engine/` | 技术指标、K线形态、信号检测 |
-| `backtest_engine/` | **Python 回测引擎（遗留）**——只因 `alpha_lab` 依赖它才保留，见 GOTCHAS |
-| `/backtest_cpp/`（仓库根，非 backend 下）| **C++ 正版回测引擎**，独立服务跑在 `localhost:8002` |
+| `/backtest_cpp/`（仓库根，非 backend 下）| **C++ 回测引擎（唯一口径）**，独立服务跑在 `localhost:8002`；域5 已硬删 Python `backtest_engine/`，alpha_lab 走 C++ `run_signals`。walk_forward 算法在 `alpha_lab/walk_forward.py` |
 | `trading_engine/` | 券商对接（brokers：paper 可用/easytrader 未完整接入）、风控（risk）、监控（monitor）——**以框架为主，实盘未完整实现** |
 | `automation/` | 待确认订单、持仓哨兵、价格预警、调度器、WS 推送 |
 | `report_engine/` | 投研报告的五个章节成稿（分片采集/打分/联网搜索/章节成稿）|
@@ -97,12 +96,12 @@ backtest_cpp/（端口 8002，独立编译的 C++ 服务）
 ### 分析引擎 `backend/analysis_engine/`
 `engine.py`(`AnalysisEngine`)、`indicators/`(trend/momentum/volatility/volume/intraday)、`patterns/candlestick.py`、`signals/detector.py`、`signal_tracker.py`、`market_mood.py`
 
-### 回测引擎（双版本，务必分清楚，详见 GOTCHAS）
-- **Python 版**（遗留）`backend/backtest_engine/`：`engine.py` `backtest_executor.py` `strategies/`(ma_cross/macd/rsi/kdj/signal_strategy) `portfolio/`(order/position/portfolio) `metrics/`(calculator/report)
-- **C++ 版**（正版）`/backtest_cpp/`：`src/engine.cpp` `src/portfolio.cpp` `src/risk_manager.cpp` `src/metrics.cpp` `src/server.cpp`(HTTP服务，端口8002) `src/strategies/`
+### 回测引擎（单口径 = C++；域5 已硬删 Python 版）
+- **C++ 版（唯一口径）** `/backtest_cpp/`：`src/engine.cpp` `src/portfolio.cpp` `src/risk_manager.cpp` `src/metrics.cpp` `src/server.cpp`(HTTP服务，端口8002) `src/strategies/`（含信号驱动 `external_signal_strategy`）
   - backend代理层：`backend/services/backtest_cpp_client.py`
   - HTTP入口：`backend/api/routes/backtest_cpp.py`
   - 对话入口：`backend/agents/tools/backtest_tools.py`
+  - alpha_lab 走 C++ `run_signals`（AI 产信号）；walk-forward 滚动验证算法在 `backend/alpha_lab/walk_forward.py`（走 `proxy_sync` 打 C++，不落库）
   - 改完 C++ 需 `cd backtest_cpp/build && cmake --build .` 重建并**重启常驻的 backtest_server 进程**（不会自动更新）
 
 ### 交易引擎 `backend/trading_engine/`
@@ -252,7 +251,8 @@ frontend/src/
 |---|---|
 | K线图/指标面板 | `frontend/src/components/charts/CandlestickChart.tsx` / `IndicatorPanel.tsx`（类型 `src/types/chart.ts`） |
 | 某个技术指标算法 | `backend/analysis_engine/indicators/{trend,oscillator,volatility,volume}.py` |
-| 回测参数/新增策略 | 优先改 **C++版** `/backtest_cpp/src/strategies/`（正版，8个编译内置策略）；只有 alpha_lab 生成的任意代码才落在 Python版 `backend/backtest_engine/strategies/` |
+| 回测参数/新增策略 | 改 **C++版** `/backtest_cpp/src/strategies/`（唯一口径，8个编译内置策略）；alpha_lab 生成的 AI 策略走 C++ `run_signals`（信号驱动，不再有 Python 引擎） |
+| walk-forward 滚动验证算法 | `backend/alpha_lab/walk_forward.py`（route `api/routes/walk_forward.py` 只做 NDJSON 编码+桥接） |
 | MoneyBill某个工具能力（如"改选股推荐逻辑"）| `agents/tools/recommend_tools.py`（瘦适配器）→ 实际逻辑在 `recommend_engine/` |
 | 风控硬规则 | `trading_engine/risk/rules.py` + `trading_engine/config.py` 的 `RISK_CONFIG` |
 | 新增/删除一个工作台页面 | 同步改 `MainStage.tsx`的`PAGES` + `ToolsDrawer.tsx`的`GROUPS` + `agents/nav_tools.py`的`ALLOWED_PATHS/RETIRED_PATHS` |

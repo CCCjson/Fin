@@ -38,7 +38,6 @@ _HTTPX_ATTRS = {"Client", "AsyncClient", "get", "post"}
 # AST 分辨不了 localhost，靠人工白名单标注理由。
 _LEGAL_EXCEPTIONS = {
     "api/routes/orderbook.py",          # httpx → localhost 撮合引擎
-    "api/routes/walk_forward.py",       # requests → localhost C++ 回测服务
     "orderbook/market_maker.py",        # httpx → localhost 撮合引擎
     "services/backtest_cpp_client.py",  # requests → localhost C++ 回测服务
     "scripts/token_bench.py",           # requests → localhost 压测脚本（非生产）
