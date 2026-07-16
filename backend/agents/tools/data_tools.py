@@ -43,7 +43,7 @@ def search_stocks(keyword: str, market: str = "a_share") -> ToolEnvelope:
 
 class GetDailyDataArgs(BaseModel):
     symbol: str = Field(..., min_length=1, description="股票代码，如 600519.SH")
-    days: int = Field(60, ge=1, le=3650, description="回看自然日天数，默认 60")
+    window: int = Field(60, ge=1, le=3650, description="回看自然日天数，默认 60")
 
 
 @tool(
@@ -53,15 +53,15 @@ class GetDailyDataArgs(BaseModel):
     category="data",
     group="core",
 )
-def get_daily_data(symbol: str, days: int = 60) -> ToolEnvelope:
+def get_daily_data(symbol: str, window: int = 60) -> ToolEnvelope:
     from agents.widgets import sparkline_widget
     end = datetime.now()
-    start = end - timedelta(days=max(days, 5))
+    start = end - timedelta(days=max(window, 5))
     df = _get_engine().get_daily_data(
         symbol, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
     if df is None or df.empty:
         return ToolEnvelope(business_result="negative",
-                             message=f"未找到 {symbol} 在最近 {days} 天的日线数据")
+                             message=f"未找到 {symbol} 在最近 {window} 天的日线数据")
 
     closes = df["close"]
     first, last = float(closes.iloc[0]), float(closes.iloc[-1])
@@ -94,7 +94,7 @@ def get_daily_data(symbol: str, days: int = 60) -> ToolEnvelope:
         "change_pct": change_pct,
         "high": round(float(df["high"].max()), 3),
         "low": round(float(df["low"].min()), 3),
-        "window_days": days,
+        "window_days": window,
         "recent": recent,
     }
     return ToolEnvelope(data=summary, widget=sparkline_widget(symbol, series, summary))

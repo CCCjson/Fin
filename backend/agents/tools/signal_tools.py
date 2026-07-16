@@ -120,7 +120,7 @@ def _today_signals_verdict(s: str):
 
 class GetStockSignalsArgs(BaseModel):
     symbol: str = Field(..., min_length=1, description="股票代码，如 600519.SH")
-    days: int = Field(60, ge=1, le=365, description="回看最近 N 天，默认 60")
+    window: int = Field(60, ge=1, le=365, description="回看最近 N 天，默认 60")
 
 
 @tool(
@@ -133,16 +133,16 @@ class GetStockSignalsArgs(BaseModel):
     category="analysis",
     group="signals",
 )
-def get_stock_signals(symbol: str, days: int = 60) -> ToolEnvelope:
-    days = max(1, min(int(days or 60), 365))
-    cutoff = date.today() - timedelta(days=days)
+def get_stock_signals(symbol: str, window: int = 60) -> ToolEnvelope:
+    window = max(1, min(int(window or 60), 365))
+    cutoff = date.today() - timedelta(days=window)
     session = get_session()
     try:
         rows = (session.query(Signal)
                 .filter(Signal.symbol == symbol, Signal.date >= cutoff)
                 .order_by(Signal.date.desc()).limit(30).all())
         if not rows:
-            return ToolEnvelope(business_result="negative", message=f"{symbol} 近 {days} 天没有触发过信号。")
+            return ToolEnvelope(business_result="negative", message=f"{symbol} 近 {window} 天没有触发过信号。")
 
         tracking = {
             t.signal_id: t
@@ -176,7 +176,7 @@ def get_stock_signals(symbol: str, days: int = 60) -> ToolEnvelope:
     summary = {
         "symbol": symbol,
         "name": names.get(symbol),
-        "days": days,
+        "window_days": window,
         "count": len(signals),
         "win": wins,
         "loss": losses,
@@ -187,7 +187,7 @@ def get_stock_signals(symbol: str, days: int = 60) -> ToolEnvelope:
 
 class GetSignalStatsArgs(BaseModel):
     strategy: Optional[str] = Field(None, description="可选：只看某个策略，如 ma_cross")
-    days: Optional[int] = Field(None, ge=1, le=3650, description="只统计最近 N 天的信号；不填统计全部")
+    window: Optional[int] = Field(None, ge=1, le=3650, description="只统计最近 N 天的信号；不填统计全部")
 
 
 @tool(
@@ -200,11 +200,11 @@ class GetSignalStatsArgs(BaseModel):
     category="analysis",
     group="signals",
 )
-def get_signal_stats(strategy: Optional[str] = None, days: Optional[int] = None) -> ToolEnvelope:
+def get_signal_stats(strategy: Optional[str] = None, window: Optional[int] = None) -> ToolEnvelope:
     from analysis_engine.signal_tracker import SignalTracker
     tracker = SignalTracker()
     try:
-        stats = tracker.get_strategy_stats(strategy=strategy, days=days)
+        stats = tracker.get_strategy_stats(strategy=strategy, days=window)
     finally:
         tracker.close()
 
@@ -224,7 +224,7 @@ def get_signal_stats(strategy: Optional[str] = None, days: Optional[int] = None)
          "positive": (overall.get("avg_return_10d") or 0) >= 0},
         {"label": "止损命中", "value": f"{overall.get('stop_loss_hit_rate', 0)}%", "type": "risk"},
     ]
-    title = f"信号胜率统计（{strategy or '全部策略'}" + (f"·近{days}天" if days else "") + "）"
+    title = f"信号胜率统计（{strategy or '全部策略'}" + (f"·近{window}天" if window else "") + "）"
     return ToolEnvelope(data=stats, widget=metric_cards_widget(cards, title=title))
 
 

@@ -14,7 +14,7 @@ from agents.tool_envelope import ToolEnvelope
 
 class GetNewsSentimentArgs(BaseModel):
     symbol: str = Field(..., min_length=1, description="股票代码，如 600519.SH、00700.HK、AAPL")
-    days: int = Field(7, ge=1, le=90, description="只统计近 N 日新闻，默认 7")
+    window: int = Field(7, ge=1, le=90, description="只统计近 N 日新闻，默认 7")
     market: Literal["a_share", "hk_stock", "us_stock"] = Field(
         "a_share", description="市场，默认 a_share；港股/美股用 hk_stock/us_stock")
 
@@ -31,14 +31,14 @@ class GetNewsSentimentArgs(BaseModel):
     category="analysis",
     group="news",
 )
-def get_news_sentiment(symbol: str, days: int = 7, market: str = "a_share") -> ToolEnvelope:
+def get_news_sentiment(symbol: str, window: int = 7, market: str = "a_share") -> ToolEnvelope:
     from news_engine.realtime import get_realtime_sentiment
     from agents.widgets import metric_cards_widget
 
-    r = get_realtime_sentiment(symbol, days=days, market=market)
+    r = get_realtime_sentiment(symbol, days=window, market=market)
     if not r["available"]:
         return ToolEnvelope(business_result="negative",
-                             message=f"{symbol} 近 {days} 日无可用新闻情绪数据（{r.get('reason', '数据不足')}）。")
+                             message=f"{symbol} 近 {window} 日无可用新闻情绪数据（{r.get('reason', '数据不足')}）。")
 
     headlines = [
         {"title": a["title"], "source": a["source"],
@@ -53,7 +53,7 @@ def get_news_sentiment(symbol: str, days: int = 7, market: str = "a_share") -> T
         "negative": r["negative"],
         "neutral": r["neutral"],
         "total": r["total"],
-        "days": days,
+        "window_days": window,
         "headlines": headlines,
     }
 
@@ -64,7 +64,7 @@ def get_news_sentiment(symbol: str, days: int = 7, market: str = "a_share") -> T
         {"label": "利空", "value": r["negative"], "type": "risk", "positive": False},
         {"label": "中性", "value": r["neutral"], "type": "neutral"},
     ]
-    widget = metric_cards_widget(cards, title=f"{symbol} 新闻情绪（近{days}日 {r['total']}条）")
+    widget = metric_cards_widget(cards, title=f"{symbol} 新闻情绪（近{window}日 {r['total']}条）")
     return ToolEnvelope(data=summary, widget=widget)
 
 
