@@ -1,6 +1,8 @@
 """
 历史记录API - 信号、回测、订单、成交记录
 """
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 from datetime import datetime, date
@@ -34,57 +36,59 @@ async def get_signals(
         limit: 每页条数
         offset: 偏移量
     """
-    try:
-        repo = HistoryRepository()
+    def _work():
+        try:
+            repo = HistoryRepository()
 
-        total = repo.count_signals(
-            symbol=symbol,
-            start_date=start_date,
-            end_date=end_date,
-            signal_type=signal_type,
-            strategy=strategy,
-        )
+            total = repo.count_signals(
+                symbol=symbol,
+                start_date=start_date,
+                end_date=end_date,
+                signal_type=signal_type,
+                strategy=strategy,
+            )
 
-        signals = repo.get_signals(
-            symbol=symbol,
-            start_date=start_date,
-            end_date=end_date,
-            signal_type=signal_type,
-            strategy=strategy,
-            limit=limit,
-            offset=offset,
-        )
+            signals = repo.get_signals(
+                symbol=symbol,
+                start_date=start_date,
+                end_date=end_date,
+                signal_type=signal_type,
+                strategy=strategy,
+                limit=limit,
+                offset=offset,
+            )
 
-        result = []
-        for signal in signals:
-            result.append({
-                "id": signal.id,
-                "symbol": signal.symbol,
-                "date": str(signal.date),
-                "signal_type": signal.signal_type,
-                "strength": signal.strength,
-                "price": signal.price,
-                "entry_price": signal.entry_price,
-                "stop_loss": signal.stop_loss,
-                "take_profit": signal.take_profit,
-                "position_size": signal.position_size,
-                "strategy": signal.strategy,
-                "signal_id": signal.signal_id,
-                "created_at": signal.created_at.isoformat() if signal.created_at else None
-            })
+            result = []
+            for signal in signals:
+                result.append({
+                    "id": signal.id,
+                    "symbol": signal.symbol,
+                    "date": str(signal.date),
+                    "signal_type": signal.signal_type,
+                    "strength": signal.strength,
+                    "price": signal.price,
+                    "entry_price": signal.entry_price,
+                    "stop_loss": signal.stop_loss,
+                    "take_profit": signal.take_profit,
+                    "position_size": signal.position_size,
+                    "strategy": signal.strategy,
+                    "signal_id": signal.signal_id,
+                    "created_at": signal.created_at.isoformat() if signal.created_at else None
+                })
 
-        repo.close()
+            repo.close()
 
-        return {
-            "signals": result,
-            "total": total,
-            "count": len(result),
-            "offset": offset,
-            "limit": limit
-        }
+            return {
+                "signals": result,
+                "total": total,
+                "count": len(result),
+                "offset": offset,
+                "limit": limit
+            }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return await asyncio.to_thread(_work)
 
 
 @router.get("/signals/statistics")
@@ -99,15 +103,17 @@ async def get_signal_statistics(
         symbol: 股票代码
         days: 统计天数（可选，不传则统计所有信号）
     """
-    try:
-        repo = HistoryRepository()
-        stats = repo.get_signal_statistics(symbol=symbol, days=days)
-        repo.close()
+    def _work():
+        try:
+            repo = HistoryRepository()
+            stats = repo.get_signal_statistics(symbol=symbol, days=days)
+            repo.close()
 
-        return stats
+            return stats
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return await asyncio.to_thread(_work)
 
 
 # ==================== 回测历史 ====================
@@ -129,40 +135,42 @@ async def get_backtest_tasks(
         strategy_type: 策略类型
         limit: 返回条数
     """
-    try:
-        repo = HistoryRepository()
-        tasks = repo.get_backtest_tasks(
-            status=status,
-            strategy_type=strategy_type,
-            limit=limit
-        )
+    def _work():
+        try:
+            repo = HistoryRepository()
+            tasks = repo.get_backtest_tasks(
+                status=status,
+                strategy_type=strategy_type,
+                limit=limit
+            )
 
-        result = []
-        for task in tasks:
-            import json
-            symbols = json.loads(task.symbols) if task.symbols else []
-            result.append({
-                "task_id": task.task_id,
-                "name": task.name,
-                "status": task.status,
-                "strategy_type": task.strategy_type,
-                "symbols": symbols,
-                "start_date": str(task.start_date),
-                "end_date": str(task.end_date),
-                "initial_capital": task.initial_capital,
-                "created_at": task.created_at.isoformat() if task.created_at else None,
-                "completed_at": task.completed_at.isoformat() if task.completed_at else None
-            })
+            result = []
+            for task in tasks:
+                import json
+                symbols = json.loads(task.symbols) if task.symbols else []
+                result.append({
+                    "task_id": task.task_id,
+                    "name": task.name,
+                    "status": task.status,
+                    "strategy_type": task.strategy_type,
+                    "symbols": symbols,
+                    "start_date": str(task.start_date),
+                    "end_date": str(task.end_date),
+                    "initial_capital": task.initial_capital,
+                    "created_at": task.created_at.isoformat() if task.created_at else None,
+                    "completed_at": task.completed_at.isoformat() if task.completed_at else None
+                })
 
-        repo.close()
+            repo.close()
 
-        return {
-            "tasks": result,
-            "count": len(result)
-        }
+            return {
+                "tasks": result,
+                "count": len(result)
+            }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return await asyncio.to_thread(_work)
 
 
 @router.delete("/backtests/{task_id}")
@@ -173,33 +181,35 @@ async def delete_backtest_task(task_id: str):
     Args:
         task_id: 回测任务ID
     """
-    try:
-        repo = HistoryRepository()
+    def _work():
+        try:
+            repo = HistoryRepository()
 
-        # 直接按 task_id 查询，避免 limit=1000 全扫
-        from data_engine.storage.models import BacktestTask as _BT
-        task = repo.session.query(_BT).filter(_BT.task_id == task_id).first()
+            # 直接按 task_id 查询，避免 limit=1000 全扫
+            from data_engine.storage.models import BacktestTask as _BT
+            task = repo.session.query(_BT).filter(_BT.task_id == task_id).first()
 
-        if not task:
+            if not task:
+                repo.close()
+                raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+
+            # 删除任务（通过直接删除数据库记录）
+            from data_engine.storage.models import BacktestTask, BacktestResult
+            repo.session.query(BacktestResult).filter(BacktestResult.task_id == task_id).delete()
+            repo.session.query(BacktestTask).filter(BacktestTask.task_id == task_id).delete()
+            repo.session.commit()
             repo.close()
-            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
-        # 删除任务（通过直接删除数据库记录）
-        from data_engine.storage.models import BacktestTask, BacktestResult
-        repo.session.query(BacktestResult).filter(BacktestResult.task_id == task_id).delete()
-        repo.session.query(BacktestTask).filter(BacktestTask.task_id == task_id).delete()
-        repo.session.commit()
-        repo.close()
+            return {
+                "message": "任务删除成功",
+                "task_id": task_id
+            }
 
-        return {
-            "message": "任务删除成功",
-            "task_id": task_id
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return await asyncio.to_thread(_work)
 
 
 @router.get("/backtests/comparison")
@@ -212,18 +222,20 @@ async def compare_backtests(
     Args:
         strategy_type: 策略类型（可选）
     """
-    try:
-        repo = HistoryRepository()
-        comparison = repo.get_backtest_comparison(strategy_type=strategy_type)
-        repo.close()
+    def _work():
+        try:
+            repo = HistoryRepository()
+            comparison = repo.get_backtest_comparison(strategy_type=strategy_type)
+            repo.close()
 
-        return {
-            "comparison": comparison,
-            "count": len(comparison)
-        }
+            return {
+                "comparison": comparison,
+                "count": len(comparison)
+            }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return await asyncio.to_thread(_work)
 
 
 @router.post("/backtests/compare")
@@ -234,62 +246,64 @@ async def compare_backtests_by_ids(request: dict):
     Args:
         request: { "task_ids": ["id1", "id2", ...] }
     """
-    try:
-        import json as json_module
+    def _work():
+        try:
+            import json as json_module
 
-        task_ids = request.get("task_ids", [])
-        if not task_ids or len(task_ids) < 1:
-            raise HTTPException(status_code=400, detail="至少需要1个task_id")
+            task_ids = request.get("task_ids", [])
+            if not task_ids or len(task_ids) < 1:
+                raise HTTPException(status_code=400, detail="至少需要1个task_id")
 
-        repo = HistoryRepository()
-        from data_engine.storage.models import BacktestTask as _BT
+            repo = HistoryRepository()
+            from data_engine.storage.models import BacktestTask as _BT
 
-        comparisons = []
-        for tid in task_ids:
-            result = repo.get_backtest_result(tid)
-            task = repo.session.query(_BT).filter(_BT.task_id == tid).first()
+            comparisons = []
+            for tid in task_ids:
+                result = repo.get_backtest_result(tid)
+                task = repo.session.query(_BT).filter(_BT.task_id == tid).first()
 
-            if not result or not task:
-                continue
+                if not result or not task:
+                    continue
 
-            symbols = json_module.loads(task.symbols) if task.symbols else []
-            daily_records = json_module.loads(result.daily_records) if result.daily_records else []
+                symbols = json_module.loads(task.symbols) if task.symbols else []
+                daily_records = json_module.loads(result.daily_records) if result.daily_records else []
 
-            comparisons.append({
-                "task_id": tid,
-                "name": task.name,
-                "strategy_type": task.strategy_type,
-                "symbols": symbols,
-                "metrics": {
-                    "total_return": result.total_return,
-                    "total_return_pct": result.total_return_pct,
-                    "annual_return": result.annual_return,
-                    "final_value": result.final_value,
-                    "max_drawdown": result.max_drawdown,
-                    "max_drawdown_pct": result.max_drawdown_pct,
-                    "volatility": result.volatility,
-                    "sharpe_ratio": result.sharpe_ratio,
-                    "sortino_ratio": result.sortino_ratio,
-                    "total_trades": result.total_trades,
-                    "winning_trades": result.winning_trades,
-                    "losing_trades": result.losing_trades,
-                    "win_rate": result.win_rate,
-                    "profit_factor": result.profit_factor,
-                },
-                "equity_curve": daily_records,
-            })
+                comparisons.append({
+                    "task_id": tid,
+                    "name": task.name,
+                    "strategy_type": task.strategy_type,
+                    "symbols": symbols,
+                    "metrics": {
+                        "total_return": result.total_return,
+                        "total_return_pct": result.total_return_pct,
+                        "annual_return": result.annual_return,
+                        "final_value": result.final_value,
+                        "max_drawdown": result.max_drawdown,
+                        "max_drawdown_pct": result.max_drawdown_pct,
+                        "volatility": result.volatility,
+                        "sharpe_ratio": result.sharpe_ratio,
+                        "sortino_ratio": result.sortino_ratio,
+                        "total_trades": result.total_trades,
+                        "winning_trades": result.winning_trades,
+                        "losing_trades": result.losing_trades,
+                        "win_rate": result.win_rate,
+                        "profit_factor": result.profit_factor,
+                    },
+                    "equity_curve": daily_records,
+                })
 
-        repo.close()
+            repo.close()
 
-        return {
-            "comparisons": comparisons,
-            "count": len(comparisons)
-        }
+            return {
+                "comparisons": comparisons,
+                "count": len(comparisons)
+            }
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return await asyncio.to_thread(_work)
 
 
 @router.get("/backtests/{task_id}")
@@ -448,45 +462,47 @@ async def get_orders(
         end_date: 结束时间
         limit: 返回条数
     """
-    try:
-        repo = HistoryRepository()
-        orders = repo.get_orders(
-            account_id=account_id,
-            symbol=symbol,
-            status=status,
-            start_date=start_date,
-            end_date=end_date,
-            limit=limit
-        )
+    def _work():
+        try:
+            repo = HistoryRepository()
+            orders = repo.get_orders(
+                account_id=account_id,
+                symbol=symbol,
+                status=status,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit
+            )
 
-        result = []
-        for order in orders:
-            result.append({
-                "order_id": order.order_id,
-                "account_id": order.account_id,
-                "symbol": order.symbol,
-                "side": order.side,
-                "order_type": order.order_type,
-                "quantity": order.quantity,
-                "price": order.price,
-                "status": order.status,
-                "filled_quantity": order.filled_quantity,
-                "avg_fill_price": order.avg_fill_price,
-                "commission": order.commission,
-                "strategy": order.strategy,
-                "created_at": order.created_at.isoformat() if order.created_at else None,
-                "filled_at": order.filled_at.isoformat() if order.filled_at else None
-            })
+            result = []
+            for order in orders:
+                result.append({
+                    "order_id": order.order_id,
+                    "account_id": order.account_id,
+                    "symbol": order.symbol,
+                    "side": order.side,
+                    "order_type": order.order_type,
+                    "quantity": order.quantity,
+                    "price": order.price,
+                    "status": order.status,
+                    "filled_quantity": order.filled_quantity,
+                    "avg_fill_price": order.avg_fill_price,
+                    "commission": order.commission,
+                    "strategy": order.strategy,
+                    "created_at": order.created_at.isoformat() if order.created_at else None,
+                    "filled_at": order.filled_at.isoformat() if order.filled_at else None
+                })
 
-        repo.close()
+            repo.close()
 
-        return {
-            "orders": result,
-            "count": len(result)
-        }
+            return {
+                "orders": result,
+                "count": len(result)
+            }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return await asyncio.to_thread(_work)
 
 
 @router.get("/orders/statistics")
@@ -501,15 +517,17 @@ async def get_order_statistics(
         account_id: 账户ID
         days: 统计天数
     """
-    try:
-        repo = HistoryRepository()
-        stats = repo.get_order_statistics(account_id=account_id, days=days)
-        repo.close()
+    def _work():
+        try:
+            repo = HistoryRepository()
+            stats = repo.get_order_statistics(account_id=account_id, days=days)
+            repo.close()
 
-        return stats
+            return stats
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return await asyncio.to_thread(_work)
 
 
 # ==================== 成交历史 ====================
@@ -532,41 +550,43 @@ async def get_trades(
         end_date: 结束时间
         limit: 返回条数
     """
-    try:
-        repo = HistoryRepository()
-        trades = repo.get_trades(
-            account_id=account_id,
-            symbol=symbol,
-            start_date=start_date,
-            end_date=end_date,
-            limit=limit
-        )
+    def _work():
+        try:
+            repo = HistoryRepository()
+            trades = repo.get_trades(
+                account_id=account_id,
+                symbol=symbol,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit
+            )
 
-        result = []
-        for trade in trades:
-            result.append({
-                "trade_id": trade.trade_id,
-                "order_id": trade.order_id,
-                "account_id": trade.account_id,
-                "symbol": trade.symbol,
-                "direction": trade.direction,
-                "quantity": trade.quantity,
-                "price": trade.price,
-                "commission": trade.commission,
-                "slippage": trade.slippage,
-                "amount": trade.amount,
-                "executed_at": trade.executed_at.isoformat() if trade.executed_at else None
-            })
+            result = []
+            for trade in trades:
+                result.append({
+                    "trade_id": trade.trade_id,
+                    "order_id": trade.order_id,
+                    "account_id": trade.account_id,
+                    "symbol": trade.symbol,
+                    "direction": trade.direction,
+                    "quantity": trade.quantity,
+                    "price": trade.price,
+                    "commission": trade.commission,
+                    "slippage": trade.slippage,
+                    "amount": trade.amount,
+                    "executed_at": trade.executed_at.isoformat() if trade.executed_at else None
+                })
 
-        repo.close()
+            repo.close()
 
-        return {
-            "trades": result,
-            "count": len(result)
-        }
+            return {
+                "trades": result,
+                "count": len(result)
+            }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return await asyncio.to_thread(_work)
 
 
 @router.get("/trades/statistics")
@@ -581,12 +601,14 @@ async def get_trade_statistics(
         account_id: 账户ID
         days: 统计天数
     """
-    try:
-        repo = HistoryRepository()
-        stats = repo.get_trade_statistics(account_id=account_id, days=days)
-        repo.close()
+    def _work():
+        try:
+            repo = HistoryRepository()
+            stats = repo.get_trade_statistics(account_id=account_id, days=days)
+            repo.close()
 
-        return stats
+            return stats
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return await asyncio.to_thread(_work)

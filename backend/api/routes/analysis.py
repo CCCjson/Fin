@@ -1,6 +1,8 @@
 """
 分析相关API
 """
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from typing import List, Dict, Any
 import pandas as pd
@@ -40,11 +42,12 @@ async def calculate_indicators(request: IndicatorRequest):
     - 等等...
     """
     try:
-        # 获取数据
-        df = data_engine.get_daily_data(
+        # 获取数据（同步阻塞 IO 丢线程，避免占住事件循环）
+        df = await asyncio.to_thread(
+            data_engine.get_daily_data,
             symbol=request.symbol,
             start_date=request.start_date,
-            end_date=request.end_date
+            end_date=request.end_date,
         )
 
         if df.empty:
@@ -156,24 +159,23 @@ async def detect_signals(request: SignalRequest):
     - BOLL_BREAKOUT: 布林带突破
     """
     try:
-        # 获取数据
-        df = data_engine.get_daily_data(
+        # 获取数据（同步阻塞 IO 丢线程）
+        df = await asyncio.to_thread(
+            data_engine.get_daily_data,
             symbol=request.symbol,
             start_date=request.start_date,
-            end_date=request.end_date
+            end_date=request.end_date,
         )
 
         if df.empty:
             raise HTTPException(status_code=404, detail=f"未找到 {request.symbol} 的数据")
 
-        # 先计算技术指标（信号检测依赖指标列）
-        df = analysis_engine.add_indicators(df)
+        # 计算指标 + 检测信号（重计算丢线程）
+        def _add_indicators_and_detect():
+            df_ind = analysis_engine.add_indicators(df)
+            return analysis_engine.detect_signals(symbol=request.symbol, df=df_ind)
 
-        # 检测信号
-        signals = analysis_engine.detect_signals(
-            symbol=request.symbol,
-            df=df
-        )
+        signals = await asyncio.to_thread(_add_indicators_and_detect)
 
         # 转换为JSON格式
         signals_list = []
@@ -215,18 +217,19 @@ async def detect_patterns(request: PatternRequest):
     - 等等...
     """
     try:
-        # 获取数据
-        df = data_engine.get_daily_data(
+        # 获取数据（同步阻塞 IO 丢线程）
+        df = await asyncio.to_thread(
+            data_engine.get_daily_data,
             symbol=request.symbol,
             start_date=request.start_date,
-            end_date=request.end_date
+            end_date=request.end_date,
         )
 
         if df.empty:
             raise HTTPException(status_code=404, detail=f"未找到 {request.symbol} 的数据")
 
-        # 识别形态（返回 Dict[str, List[int]]，value 是出现位置的行索引）
-        patterns = analysis_engine.detect_patterns(df)
+        # 识别形态（返回 Dict[str, List[int]]，value 是出现位置的行索引；重计算丢线程）
+        patterns = await asyncio.to_thread(analysis_engine.detect_patterns, df)
 
         # 转换为JSON格式：用位置索引从 df 中取出对应行的 OHLCV 数据
         patterns_dict = {}

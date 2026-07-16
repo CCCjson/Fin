@@ -4,6 +4,7 @@
 前缀 /data-monitor（避开已存在的 monitor.router）。手动触发更新沿用现成的
 POST /data/update-daily/stream，本模块不重复实现。
 """
+import asyncio
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 
@@ -224,31 +225,33 @@ def _catch_up(session, scheduler_status: dict) -> dict:
 @router.get("/overview", summary="数据更新监控总览（一次性聚合）")
 async def get_overview():
     """前端轮询这一个接口即可拿到面板全部数据。"""
-    session = get_session()
-    try:
-        from data_engine.daily_pipeline_scheduler import daily_pipeline_scheduler
-        scheduler_status = daily_pipeline_scheduler.get_status()
+    def _work():
+        session = get_session()
+        try:
+            from data_engine.daily_pipeline_scheduler import daily_pipeline_scheduler
+            scheduler_status = daily_pipeline_scheduler.get_status()
 
-        return {
-            "coverage": get_coverage(),
-            "freshness": get_freshness(session),
-            "assets": {
-                "realtime": _asset_realtime(session),
-                "financial": _asset_financial(session),
-                "valuation": _asset_valuation(session),
-                "news": _asset_news(session),
-                "limit_up": _asset_limit_up(session),
-            },
-            "recent_update_logs": _recent_update_logs(session),
-            "scheduler": scheduler_status,
-            "catch_up": _catch_up(session, scheduler_status),
-            "server_time": datetime.now().isoformat(),
-        }
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"数据监控总览查询失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        session.close()
+            return {
+                "coverage": get_coverage(),
+                "freshness": get_freshness(session),
+                "assets": {
+                    "realtime": _asset_realtime(session),
+                    "financial": _asset_financial(session),
+                    "valuation": _asset_valuation(session),
+                    "news": _asset_news(session),
+                    "limit_up": _asset_limit_up(session),
+                },
+                "recent_update_logs": _recent_update_logs(session),
+                "scheduler": scheduler_status,
+                "catch_up": _catch_up(session, scheduler_status),
+                "server_time": datetime.now().isoformat(),
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"数据监控总览查询失败: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            session.close()
+    return await asyncio.to_thread(_work)
 
 
 @router.get("/events", summary="最近业务事件（活动流种子/轮询）")
@@ -282,7 +285,9 @@ async def get_limit_up_detail(trade_date: Optional[str] = None):
     """数据监控页「涨停池」卡片展开详情用：完整连板榜+炸板榜（不是聚合数字）。"""
     try:
         from limit_up_engine.service import get_pool_overview
-        return get_pool_overview(trade_date, include_zhaban=True)
+        return await asyncio.to_thread(get_pool_overview, trade_date, include_zhaban=True)
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         logger.error(f"涨停池详情查询失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))

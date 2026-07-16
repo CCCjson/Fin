@@ -1,6 +1,7 @@
 """
 自动化交易 API — 待确认订单 / 配置 / 调度器 / 日志
 """
+import asyncio
 import json
 from datetime import datetime
 from typing import Optional, List
@@ -138,18 +139,20 @@ async def batch_reject(
 @router.get("/configs")
 async def list_configs():
     """获取所有自动化配置"""
-    session = get_session()
-    try:
-        configs = session.query(AutomationConfig).order_by(AutomationConfig.id).all()
-        result = []
-        for c in configs:
-            result.append(_config_to_dict(c))
-        return {"success": True, "configs": result}
-    except Exception as e:
-        logger.error(f"获取配置失败: {e}")
-        return {"success": False, "message": str(e)}
-    finally:
-        session.close()
+    def _work():
+        session = get_session()
+        try:
+            configs = session.query(AutomationConfig).order_by(AutomationConfig.id).all()
+            result = []
+            for c in configs:
+                result.append(_config_to_dict(c))
+            return {"success": True, "configs": result}
+        except Exception as e:
+            logger.error(f"获取配置失败: {e}")
+            return {"success": False, "message": str(e)}
+        finally:
+            session.close()
+    return await asyncio.to_thread(_work)
 
 
 @router.post("/configs")
@@ -165,108 +168,116 @@ async def create_config(
     order_expire_minutes: int = Body(30),
 ):
     """创建自动化配置"""
-    session = get_session()
-    try:
-        import uuid
-        config_id = f"AC-{uuid.uuid4().hex[:8]}"
-        config = AutomationConfig(
-            config_id=config_id,
-            name=name,
-            enabled=1,
-            scan_type=scan_type,
-            frequency_minutes=frequency_minutes,
-            strategies=json.dumps(strategies, ensure_ascii=False),
-            watchlist=json.dumps(watchlist, ensure_ascii=False),
-            min_strength=min_strength,
-            broker_type=broker_type,
-            position_size_pct=position_size_pct,
-            order_expire_minutes=order_expire_minutes,
-        )
-        session.add(config)
-        session.commit()
+    def _work():
+        session = get_session()
+        try:
+            import uuid
+            config_id = f"AC-{uuid.uuid4().hex[:8]}"
+            config = AutomationConfig(
+                config_id=config_id,
+                name=name,
+                enabled=1,
+                scan_type=scan_type,
+                frequency_minutes=frequency_minutes,
+                strategies=json.dumps(strategies, ensure_ascii=False),
+                watchlist=json.dumps(watchlist, ensure_ascii=False),
+                min_strength=min_strength,
+                broker_type=broker_type,
+                position_size_pct=position_size_pct,
+                order_expire_minutes=order_expire_minutes,
+            )
+            session.add(config)
+            session.commit()
 
-        return {"success": True, "config": _config_to_dict(config)}
-    except Exception as e:
-        session.rollback()
-        logger.error(f"创建配置失败: {e}")
-        return {"success": False, "message": str(e)}
-    finally:
-        session.close()
+            return {"success": True, "config": _config_to_dict(config)}
+        except Exception as e:
+            session.rollback()
+            logger.error(f"创建配置失败: {e}")
+            return {"success": False, "message": str(e)}
+        finally:
+            session.close()
+    return await asyncio.to_thread(_work)
 
 
 @router.put("/configs/{config_id}")
 async def update_config(config_id: str, updates: dict = Body(...)):
     """更新自动化配置"""
-    session = get_session()
-    try:
-        config = session.query(AutomationConfig).filter(AutomationConfig.config_id == config_id).first()
-        if not config:
-            return {"success": False, "message": f"配置 {config_id} 不存在"}
+    def _work():
+        session = get_session()
+        try:
+            config = session.query(AutomationConfig).filter(AutomationConfig.config_id == config_id).first()
+            if not config:
+                return {"success": False, "message": f"配置 {config_id} 不存在"}
 
-        # 可更新的字段
-        updatable = ["name", "scan_type", "frequency_minutes", "min_strength",
-                      "broker_type", "position_size_pct", "order_expire_minutes"]
-        for key in updatable:
-            if key in updates:
-                setattr(config, key, updates[key])
+            # 可更新的字段
+            updatable = ["name", "scan_type", "frequency_minutes", "min_strength",
+                          "broker_type", "position_size_pct", "order_expire_minutes"]
+            for key in updatable:
+                if key in updates:
+                    setattr(config, key, updates[key])
 
-        if "strategies" in updates:
-            config.strategies = json.dumps(updates["strategies"], ensure_ascii=False)
-        if "watchlist" in updates:
-            config.watchlist = json.dumps(updates["watchlist"], ensure_ascii=False)
+            if "strategies" in updates:
+                config.strategies = json.dumps(updates["strategies"], ensure_ascii=False)
+            if "watchlist" in updates:
+                config.watchlist = json.dumps(updates["watchlist"], ensure_ascii=False)
 
-        session.commit()
-        return {"success": True, "config": _config_to_dict(config)}
-    except Exception as e:
-        session.rollback()
-        logger.error(f"更新配置失败: {e}")
-        return {"success": False, "message": str(e)}
-    finally:
-        session.close()
+            session.commit()
+            return {"success": True, "config": _config_to_dict(config)}
+        except Exception as e:
+            session.rollback()
+            logger.error(f"更新配置失败: {e}")
+            return {"success": False, "message": str(e)}
+        finally:
+            session.close()
+    return await asyncio.to_thread(_work)
 
 
 @router.delete("/configs/{config_id}")
 async def delete_config(config_id: str):
     """删除自动化配置"""
-    session = get_session()
-    try:
-        config = session.query(AutomationConfig).filter(AutomationConfig.config_id == config_id).first()
-        if not config:
-            return {"success": False, "message": f"配置 {config_id} 不存在"}
+    def _work():
+        session = get_session()
+        try:
+            config = session.query(AutomationConfig).filter(AutomationConfig.config_id == config_id).first()
+            if not config:
+                return {"success": False, "message": f"配置 {config_id} 不存在"}
 
-        session.delete(config)
-        session.commit()
-        return {"success": True, "message": f"配置 {config_id} 已删除"}
-    except Exception as e:
-        session.rollback()
-        logger.error(f"删除配置失败: {e}")
-        return {"success": False, "message": str(e)}
-    finally:
-        session.close()
+            session.delete(config)
+            session.commit()
+            return {"success": True, "message": f"配置 {config_id} 已删除"}
+        except Exception as e:
+            session.rollback()
+            logger.error(f"删除配置失败: {e}")
+            return {"success": False, "message": str(e)}
+        finally:
+            session.close()
+    return await asyncio.to_thread(_work)
 
 
 @router.post("/configs/{config_id}/toggle")
 async def toggle_config(config_id: str):
     """启用/禁用配置"""
-    session = get_session()
-    try:
-        config = session.query(AutomationConfig).filter(AutomationConfig.config_id == config_id).first()
-        if not config:
-            return {"success": False, "message": f"配置 {config_id} 不存在"}
+    def _work():
+        session = get_session()
+        try:
+            config = session.query(AutomationConfig).filter(AutomationConfig.config_id == config_id).first()
+            if not config:
+                return {"success": False, "message": f"配置 {config_id} 不存在"}
 
-        config.enabled = 0 if config.enabled else 1
-        session.commit()
-        return {
-            "success": True,
-            "enabled": bool(config.enabled),
-            "message": f"配置已{'启用' if config.enabled else '禁用'}",
-        }
-    except Exception as e:
-        session.rollback()
-        logger.error(f"切换配置失败: {e}")
-        return {"success": False, "message": str(e)}
-    finally:
-        session.close()
+            config.enabled = 0 if config.enabled else 1
+            session.commit()
+            return {
+                "success": True,
+                "enabled": bool(config.enabled),
+                "message": f"配置已{'启用' if config.enabled else '禁用'}",
+            }
+        except Exception as e:
+            session.rollback()
+            logger.error(f"切换配置失败: {e}")
+            return {"success": False, "message": str(e)}
+        finally:
+            session.close()
+    return await asyncio.to_thread(_work)
 
 
 # ==================== 调度器 ====================
@@ -328,35 +339,37 @@ async def list_logs(
     limit: int = Query(30, ge=1, le=100),
 ):
     """获取运行日志"""
-    session = get_session()
-    try:
-        query = session.query(AutomationLog)
-        if config_id:
-            query = query.filter(AutomationLog.config_id == config_id)
+    def _work():
+        session = get_session()
+        try:
+            query = session.query(AutomationLog)
+            if config_id:
+                query = query.filter(AutomationLog.config_id == config_id)
 
-        logs = query.order_by(AutomationLog.started_at.desc()).limit(limit).all()
-        result = []
-        for log in logs:
-            result.append({
-                "id": log.id,
-                "config_id": log.config_id,
-                "run_type": log.run_type,
-                "status": log.status,
-                "symbols_scanned": log.symbols_scanned,
-                "signals_found": log.signals_found,
-                "orders_created": log.orders_created,
-                "duration_seconds": log.duration_seconds,
-                "error_message": log.error_message,
-                "detail": json.loads(log.detail) if log.detail else None,
-                "started_at": log.started_at.isoformat() if log.started_at else None,
-                "completed_at": log.completed_at.isoformat() if log.completed_at else None,
-            })
-        return {"success": True, "logs": result}
-    except Exception as e:
-        logger.error(f"获取日志失败: {e}")
-        return {"success": False, "message": str(e)}
-    finally:
-        session.close()
+            logs = query.order_by(AutomationLog.started_at.desc()).limit(limit).all()
+            result = []
+            for log in logs:
+                result.append({
+                    "id": log.id,
+                    "config_id": log.config_id,
+                    "run_type": log.run_type,
+                    "status": log.status,
+                    "symbols_scanned": log.symbols_scanned,
+                    "signals_found": log.signals_found,
+                    "orders_created": log.orders_created,
+                    "duration_seconds": log.duration_seconds,
+                    "error_message": log.error_message,
+                    "detail": json.loads(log.detail) if log.detail else None,
+                    "started_at": log.started_at.isoformat() if log.started_at else None,
+                    "completed_at": log.completed_at.isoformat() if log.completed_at else None,
+                })
+            return {"success": True, "logs": result}
+        except Exception as e:
+            logger.error(f"获取日志失败: {e}")
+            return {"success": False, "message": str(e)}
+        finally:
+            session.close()
+    return await asyncio.to_thread(_work)
 
 
 @router.get("/statistics")
@@ -580,53 +593,55 @@ async def get_execution_history(
     limit: int = Query(50, ge=1, le=200),
 ):
     """查询执行历史（非 PENDING 的 PendingOrder 记录）"""
-    session = get_session()
-    try:
-        query = session.query(PendingOrder).filter(PendingOrder.status != "PENDING")
+    def _work():
+        session = get_session()
+        try:
+            query = session.query(PendingOrder).filter(PendingOrder.status != "PENDING")
 
-        if status:
-            query = query.filter(PendingOrder.status == status)
-        if broker_type:
-            query = query.filter(PendingOrder.broker_type == broker_type)
-        if symbol:
-            query = query.filter(PendingOrder.symbol.contains(symbol))
-        if date_from:
-            query = query.filter(PendingOrder.created_at >= datetime.fromisoformat(date_from))
-        if date_to:
-            query = query.filter(PendingOrder.created_at <= datetime.fromisoformat(date_to + "T23:59:59"))
+            if status:
+                query = query.filter(PendingOrder.status == status)
+            if broker_type:
+                query = query.filter(PendingOrder.broker_type == broker_type)
+            if symbol:
+                query = query.filter(PendingOrder.symbol.contains(symbol))
+            if date_from:
+                query = query.filter(PendingOrder.created_at >= datetime.fromisoformat(date_from))
+            if date_to:
+                query = query.filter(PendingOrder.created_at <= datetime.fromisoformat(date_to + "T23:59:59"))
 
-        orders = query.order_by(PendingOrder.updated_at.desc()).limit(limit).all()
+            orders = query.order_by(PendingOrder.updated_at.desc()).limit(limit).all()
 
-        result = []
-        for o in orders:
-            result.append({
-                "order_id": o.order_id,
-                "symbol": o.symbol,
-                "name": o.name,
-                "signal_type": o.signal_type,
-                "strategy": o.strategy,
-                "strength": o.strength,
-                "suggested_price": o.suggested_price,
-                "suggested_quantity": o.suggested_quantity,
-                "actual_price": o.actual_price,
-                "actual_quantity": o.actual_quantity,
-                "commission": o.commission,
-                "status": o.status,
-                "broker_type": o.broker_type,
-                "scan_source": o.scan_source,
-                "reject_reason": o.reject_reason,
-                "confirmed_at": o.confirmed_at.isoformat() if o.confirmed_at else None,
-                "created_at": o.created_at.isoformat() if o.created_at else None,
-                "updated_at": o.updated_at.isoformat() if o.updated_at else None,
-            })
+            result = []
+            for o in orders:
+                result.append({
+                    "order_id": o.order_id,
+                    "symbol": o.symbol,
+                    "name": o.name,
+                    "signal_type": o.signal_type,
+                    "strategy": o.strategy,
+                    "strength": o.strength,
+                    "suggested_price": o.suggested_price,
+                    "suggested_quantity": o.suggested_quantity,
+                    "actual_price": o.actual_price,
+                    "actual_quantity": o.actual_quantity,
+                    "commission": o.commission,
+                    "status": o.status,
+                    "broker_type": o.broker_type,
+                    "scan_source": o.scan_source,
+                    "reject_reason": o.reject_reason,
+                    "confirmed_at": o.confirmed_at.isoformat() if o.confirmed_at else None,
+                    "created_at": o.created_at.isoformat() if o.created_at else None,
+                    "updated_at": o.updated_at.isoformat() if o.updated_at else None,
+                })
 
-        return {"success": True, "orders": result, "total": len(result)}
+            return {"success": True, "orders": result, "total": len(result)}
 
-    except Exception as e:
-        logger.error(f"获取执行历史失败: {e}")
-        return {"success": False, "message": str(e)}
-    finally:
-        session.close()
+        except Exception as e:
+            logger.error(f"获取执行历史失败: {e}")
+            return {"success": False, "message": str(e)}
+        finally:
+            session.close()
+    return await asyncio.to_thread(_work)
 
 
 # -------- 工具函数 --------
