@@ -27,7 +27,7 @@
 | `analysis_engine/` | 技术指标、K线形态、信号检测 |
 | `backtest_engine/` | **Python 回测引擎（遗留）**——只因 `alpha_lab` 依赖它才保留，见 GOTCHAS |
 | `/backtest_cpp/`（仓库根，非 backend 下）| **C++ 正版回测引擎**，独立服务跑在 `localhost:8002` |
-| `trading_engine/` | 券商对接（brokers：paper/easytrader）、风控（risk）、监控（monitor）|
+| `trading_engine/` | 券商对接（brokers：paper 可用/easytrader 未完整接入）、风控（risk）、监控（monitor）——**以框架为主，实盘未完整实现** |
 | `automation/` | 待确认订单、持仓哨兵、价格预警、调度器、WS 推送 |
 | `report_engine/` | 投研报告的五个章节成稿（分片采集/打分/联网搜索/章节成稿）|
 | `knowledge_engine/` | 外置金融大脑：文档摄入、向量检索(RAG)、alpha idea 挖掘、逆向 API 爬取 |
@@ -106,7 +106,9 @@ backtest_cpp/（端口 8002，独立编译的 C++ 服务）
   - 改完 C++ 需 `cd backtest_cpp/build && cmake --build .` 重建并**重启常驻的 backtest_server 进程**（不会自动更新）
 
 ### 交易引擎 `backend/trading_engine/`
-`brokers/`(base/easytrader_broker/paper_broker)、`risk/`(manager.py/rules.py/adapter.py)、`monitor/`(alerts/logger/performance/tracker)、`mac_automation/`(explore_ths.py等，较冷门)、`position_sizing.py`、`config.py`
+`brokers/`(base/easytrader_broker/paper_broker)、`risk/`(manager.py/rules.py/adapter.py)、`monitor/`(alerts/logger/performance/tracker)、`position_sizing.py`、`config.py`
+
+> ⚠️ **以框架/骨架为主，实盘未完整实现**：可用的只有 `paper_broker`（模拟撮合）+ `risk`/`position_sizing`/`monitor` 的算法本体；`easytrader_broker`（同花顺/雪球实盘）尚未完整接入验证。对接真实券商 API 列入第 14 步（Jason 去新加坡后换券商）。
 
 ### report_engine `backend/report_engine/`
 **13.2 已把整篇周报拆成五个可单独调用的章节**（`market` / `news` / `positions` / `strategy` / `picks`），
