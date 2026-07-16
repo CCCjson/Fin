@@ -261,6 +261,110 @@ class HistoryRepository:
             BacktestResult.task_id == task_id
         ).first()
 
+    def get_backtest_detail(self, task_id: str) -> Optional[Dict]:
+        """回测结果详情拼装（从 api/routes/history.py 下沉，域9）。
+
+        收编：result+task 取数、market 推断（canonical，经 common.market.infer_market_from_symbol，
+        替代旧 route 里 "hk"/"us" 硬赋值）、JSON 字段解析、metrics dict 拼装、symbol/strategy_name 提取。
+
+        返回 None（无结果，route 据此 404）或 dict：
+            {"response": <冻结的对外响应体>, "benchmark_inputs": {market/start_date/end_date/initial_capital}}
+        基准曲线拉取与超额收益计算留 route（与本函数的落库取数解耦）。
+        """
+        result = self.get_backtest_result(task_id)
+        if not result:
+            return None
+
+        # 直接按 task_id 查询任务信息，避免 limit=1000 全扫
+        task = self.session.query(BacktestTask).filter(BacktestTask.task_id == task_id).first()
+
+        # 推断市场类型（canonical）
+        market = "a_share"
+        start_date_str = None
+        end_date_str = None
+        initial_capital = 100000.0
+
+        if task:
+            # 从 strategy_params 提取 market
+            if task.strategy_params:
+                try:
+                    params = json.loads(task.strategy_params)
+                    market = params.get("market", "a_share")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # 如果 market 还是默认值，从 symbols 后缀推断（canonical hk_stock/us_stock/a_share）
+            if market == "a_share" and task.symbols:
+                try:
+                    symbols = json.loads(task.symbols)
+                    if symbols:
+                        from common.market import infer_market_from_symbol
+                        market = infer_market_from_symbol(symbols[0])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            start_date_str = str(task.start_date) if task.start_date else None
+            end_date_str = str(task.end_date) if task.end_date else None
+            initial_capital = task.initial_capital or 100000.0
+
+        # 解析 JSON 字段
+        daily_records = json.loads(result.daily_records) if result.daily_records else []
+        trade_records = json.loads(result.trade_records) if result.trade_records else []
+
+        # 提取 symbol 和 strategy_name 供前端组件使用
+        symbol = ""
+        strategy_name = ""
+        if task:
+            if task.symbols:
+                try:
+                    syms = json.loads(task.symbols)
+                    symbol = syms[0] if syms else ""
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if task.strategy_type:
+                strategy_name = task.strategy_type.replace("CPP_", "")
+
+        response = {
+            "task_id": result.task_id,
+            "symbol": symbol,
+            "strategy_name": strategy_name,
+            "task_info": {
+                "name": task.name if task else None,
+                "strategy_type": task.strategy_type if task else None,
+                "start_date": str(task.start_date) if task else None,
+                "end_date": str(task.end_date) if task else None,
+            },
+            "metrics": {
+                "total_return": result.total_return,
+                "total_return_pct": result.total_return_pct,
+                "annual_return": result.annual_return,
+                "final_value": result.final_value,
+                "max_drawdown": result.max_drawdown,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "volatility": result.volatility,
+                "sharpe_ratio": result.sharpe_ratio,
+                "sortino_ratio": result.sortino_ratio,
+                "total_trades": result.total_trades,
+                "winning_trades": result.winning_trades,
+                "losing_trades": result.losing_trades,
+                "win_rate": result.win_rate,
+                "profit_factor": result.profit_factor,
+            },
+            "daily_records": daily_records,
+            "trade_records": trade_records,
+            "created_at": result.created_at.isoformat() if result.created_at else None,
+        }
+
+        return {
+            "response": response,
+            "benchmark_inputs": {
+                "market": market,
+                "start_date": start_date_str,
+                "end_date": end_date_str,
+                "initial_capital": initial_capital,
+            },
+        }
+
     def get_backtest_comparison(self, strategy_type: str = None) -> List[Dict]:
         """对比多个回测结果"""
         query = self.session.query(BacktestResult).join(BacktestTask)
