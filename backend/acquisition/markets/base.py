@@ -12,7 +12,7 @@ class MarketDataRequest(BaseModel):
     symbol: str
     start_date: str  # YYYY-MM-DD
     end_date: str  # YYYY-MM-DD
-    frequency: str = "1d"
+    freq: str = "1d"
     adjust: str = "qfq"  # qfq: 前复权, hfq: 后复权, none: 不复权
 
 

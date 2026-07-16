@@ -32,7 +32,7 @@ class HKStockFetcher(BaseFetcher):
             df = ticker.history(
                 start=request.start_date,
                 end=request.end_date,
-                interval=request.frequency
+                interval=request.freq
             )
 
             if df.empty:
