@@ -3,24 +3,6 @@
 
 凭证一律从环境变量读取（.env），不得硬编码进仓库。
 """
-import os
-
-# OpenCTP 7x24 测试环境配置（账号/密码从 .env 读取：OPENCTP_USER_ID / OPENCTP_PASSWORD）
-OPENCTP_CONFIG = {
-    # 经纪商配置
-    "broker_id": os.getenv("OPENCTP_BROKER_ID", "9999"),  # SimNow 经纪商代码
-    "user_id": os.getenv("OPENCTP_USER_ID", ""),
-    "password": os.getenv("OPENCTP_PASSWORD", ""),
-
-    # 认证信息
-    "app_id": os.getenv("OPENCTP_APP_ID", "simnow_client_test"),
-    "auth_code": os.getenv("OPENCTP_AUTH_CODE", "0000000000000000"),
-
-    # 服务器地址（7x24 测试环境 - 电信线路）
-    "md_address": "tcp://180.168.146.187:10131",  # 行情服务器
-    "td_address": "tcp://180.168.146.187:10130",  # 交易服务器
-}
-
 # 风险控制配置（对标 CLAUDE.md 风控要求）
 RISK_CONFIG = {
     # 单个品种最大持仓比例 ≤ 总资金 20%
