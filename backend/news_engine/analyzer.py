@@ -15,7 +15,7 @@ from openai import OpenAI
 from data_engine.storage.database import get_session
 from data_engine.storage.models import NewsAnalysis, NewsArticle, NewsSentiment
 from news_engine.prompts import build_single_analysis_prompt, build_report_prompt
-from llm_config import get_cheap_model, normalize_chat_params
+from llm_config import get_cheap_model
 from llm_client import build_client
 
 load_dotenv(override=True)
@@ -209,6 +209,8 @@ class NewsAnalyzer:
         start_time = time.time()
 
         try:
+            from llm_client import stream_text
+
             client = self._get_client()
 
             messages = [
@@ -216,33 +218,20 @@ class NewsAnalyzer:
                 {"role": "user", "content": user_prompt},
             ]
 
-            stream_kwargs = normalize_chat_params(dict(
-                model=model,
-                messages=messages,
-                temperature=0.5,
-                stream=True,
-            ))
-
-            try:
-                stream = client.chat.completions.create(
-                    **stream_kwargs,
-                    stream_options={"include_usage": True},
-                )
-            except Exception:
-                stream = client.chat.completions.create(**stream_kwargs)
-
             full_content = ""
             token_count = 0
 
-            for chunk in stream:
-                if chunk.usage:
-                    token_count = chunk.usage.total_tokens
-
-                if chunk.choices:
-                    delta = chunk.choices[0].delta
-                    if delta and delta.content:
-                        full_content += delta.content
-                        yield _ndjson({"event": "chunk", "content": delta.content})
+            for ev in stream_text(
+                messages,
+                model=model,
+                temperature=0.5,
+                client=client,
+            ):
+                if ev["type"] == "text":
+                    yield _ndjson({"event": "chunk", "content": ev["content"]})
+                elif ev["type"] == "done":
+                    full_content = ev["content"]
+                    token_count = ev["tokens"]
 
             elapsed = round(time.time() - start_time, 2)
 

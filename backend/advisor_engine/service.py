@@ -14,7 +14,7 @@ from loguru import logger
 
 from advisor_engine.context_collector import AdvisorContextCollector
 from advisor_engine.prompt_builder import AdvisorPromptBuilder
-from llm_config import get_best_model, normalize_chat_params
+from llm_config import get_best_model
 
 load_dotenv(override=True)
 
@@ -119,38 +119,25 @@ class AdvisorService:
             return
 
         try:
-            from llm_client import build_client
+            from llm_client import build_client, stream_text
             client = build_client(base_url=base_url, api_key=api_key)
-
-            stream_kwargs: Dict = normalize_chat_params(dict(
-                model=model,
-                messages=session.get_messages(),
-                temperature=0.5,
-                stream=True,
-                # 硬上限兜底（prompt 已约束 ≤1200 字），防止无节制长报告压垮前端渲染
-                max_tokens=2500,
-            ))
-            try:
-                stream = client.chat.completions.create(
-                    **stream_kwargs,
-                    stream_options={"include_usage": True},
-                )
-            except Exception:
-                # 部分兼容端点不支持 stream_options，回退
-                stream = client.chat.completions.create(**stream_kwargs)
 
             full_content = ""
             token_count = 0
 
-            for chunk in stream:
-                if chunk.usage:
-                    token_count = chunk.usage.total_tokens
-
-                if chunk.choices:
-                    delta = chunk.choices[0].delta
-                    if delta and delta.content:
-                        full_content += delta.content
-                        yield _ndjson({"event": "chunk", "content": delta.content})
+            # 硬上限兜底（prompt 已约束 ≤1200 字），防止无节制长报告压垮前端渲染
+            for ev in stream_text(
+                session.get_messages(),
+                model=model,
+                temperature=0.5,
+                max_tokens=2500,
+                client=client,
+            ):
+                if ev["type"] == "text":
+                    yield _ndjson({"event": "chunk", "content": ev["content"]})
+                elif ev["type"] == "done":
+                    full_content = ev["content"]
+                    token_count = ev["tokens"]
 
             # 保存 assistant 回复
             session.messages.append({"role": "assistant", "content": full_content})

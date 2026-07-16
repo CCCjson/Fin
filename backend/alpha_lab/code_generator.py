@@ -155,33 +155,23 @@ class CodeGenerator:
             return
 
         try:
-            stream_kwargs = normalize_chat_params(dict(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=4096,
-                stream=True,
-            ))
-
-            try:
-                stream = self.client.chat.completions.create(
-                    **stream_kwargs,
-                    stream_options={"include_usage": True},
-                )
-            except Exception:
-                stream = self.client.chat.completions.create(**stream_kwargs)
+            from llm_client import stream_text
 
             full_content = ""
             token_count = 0
 
-            for chunk in stream:
-                if chunk.usage:
-                    token_count = chunk.usage.total_tokens
-                if chunk.choices:
-                    delta = chunk.choices[0].delta
-                    if delta and delta.content:
-                        full_content += delta.content
-                        yield {"event": "chunk", "content": delta.content}
+            for ev in stream_text(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=4096,
+                client=self.client,
+            ):
+                if ev["type"] == "text":
+                    yield {"event": "chunk", "content": ev["content"]}
+                elif ev["type"] == "done":
+                    full_content = ev["content"]
+                    token_count = ev["tokens"]
 
             # 提取代码
             try:
