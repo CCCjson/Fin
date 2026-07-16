@@ -2,7 +2,7 @@
 系统监控类工具 —— MoneyBill 的「monitor」身份核心。
 
 get_system_pulse：一次性给出数据新鲜度、信号覆盖、追踪胜率、调度器状态 + 最近业务事件，
-回答「系统还好吗 / 数据更新了吗 / 最近发生了啥」。event_limit 可调事件条数
+回答「系统还好吗 / 数据更新了吗 / 最近发生了啥」。limit 可调事件条数
 （原 get_recent_events 已并入此工具，避免重复入口）。
 
 复用 data_engine.health 的覆盖率/新鲜度 helper（与 api/routes/data_monitor.py 同源，
@@ -44,14 +44,14 @@ def _tracking_win_rate() -> "float | None":
 
 
 class GetSystemPulseArgs(BaseModel):
-    event_limit: int = Field(5, ge=0, le=50, description="返回的业务事件条数，默认 5；想看更多动静就调大")
+    limit: int = Field(5, ge=0, le=50, description="返回的业务事件条数，默认 5；想看更多动静就调大")
 
 
 @tool(
     name="get_system_pulse",
     description=(
         "系统健康脉搏：行情数据是否最新、今日信号数、信号覆盖率、追踪胜率、每日流水线调度器状态，"
-        "以及最近发生的业务事件（流水线完成/信号生成/下单成交/风控告警等，event_limit 可调条数）。"
+        "以及最近发生的业务事件（流水线完成/信号生成/下单成交/风控告警等，limit 可调条数）。"
         "用户问「系统正常吗 / 数据更新到几号 / 最近有啥动静 / 最近发生了什么」时调用。"
         "只看系统健康，不看盘面——市场行情/情绪用 get_market_pulse。"
     ),
@@ -59,7 +59,7 @@ class GetSystemPulseArgs(BaseModel):
     category="monitor",
     group="system",
 )
-def get_system_pulse(event_limit: int = 5) -> ToolEnvelope:
+def get_system_pulse(limit: int = 5) -> ToolEnvelope:
     from data_engine.health import get_coverage, get_freshness
     from data_engine.storage.database import get_session
 
@@ -88,7 +88,7 @@ def get_system_pulse(event_limit: int = 5) -> ToolEnvelope:
     except Exception:  # noqa: BLE001
         news_sched = {}
 
-    events = _recent_events(max(0, min(int(event_limit or 5), 50)))
+    events = _recent_events(max(0, min(int(limit or 5), 50)))
     summary = {
         "data_latest_date": freshness.get("latest_date"),
         "data_is_stale": freshness.get("is_stale"),

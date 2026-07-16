@@ -119,7 +119,7 @@ def _run():
         e(patch("recommend_engine.engine.build_broker_info", lambda tc: {"cash": 8000.0}))
         e(patch("recommend_engine.engine.PortfolioCalculator", _FakeCalc))
         e(patch("decision_log.record_decision", lambda *a, **k: None))
-        return recommend_stocks(pool_id=None, max_new_buys=5, min_strength=0.3).data
+        return recommend_stocks(pool_id=None, limit=5, min_strength=0.3).data
 
 
 def test_market_state_active_and_shape():

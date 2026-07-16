@@ -69,7 +69,7 @@ def get_news_sentiment(symbol: str, days: int = 7, market: str = "a_share") -> T
 
 
 class GetMorningBriefArgs(BaseModel):
-    limit_per_source: int = Field(8, ge=3, le=20, description="每路新闻最多条数，默认 8")
+    limit: int = Field(8, ge=3, le=20, description="每路新闻最多条数，默认 8")
 
 
 @tool(
@@ -83,10 +83,10 @@ class GetMorningBriefArgs(BaseModel):
     category="analysis",
     group="news",
 )
-def get_morning_brief(limit_per_source: int = 8) -> ToolEnvelope:
+def get_morning_brief(limit: int = 8) -> ToolEnvelope:
     from news_engine.fetcher import NewsFetcher
 
-    lim = max(3, min(int(limit_per_source or 8), 20))
+    lim = max(3, min(int(limit or 8), 20))
     all_news = NewsFetcher().collect_market_news()
     if not all_news:
         return ToolEnvelope(business_result="negative", message="暂时没抓到隔夜新闻，稍后再试。")

@@ -24,7 +24,7 @@ from recommend_engine.session import _now_sh, _session_phase  # noqa: F401 (向�
 class RecommendStocksArgs(BaseModel):
     pool_id: Optional[Literal["sse50", "csi300", "csi500"]] = Field(
         None, description="可选：把候选限定在某指数池内；不填则全市场主板选股")
-    max_new_buys: int = Field(5, ge=1, le=8, description="最多深度分析并推荐的新买入标的数，默认 5")
+    limit: int = Field(5, ge=1, le=8, description="最多深度分析并推荐的新买入标的数，默认 5")
     min_strength: float = Field(0.3, ge=0, le=1, description="今日买入信号强度下限(0-1)，默认 0.3，过滤弱信号")
 
 
@@ -41,10 +41,10 @@ class RecommendStocksArgs(BaseModel):
     category="analysis",
     group="core",
 )
-def recommend_stocks(pool_id: Optional[str] = None, max_new_buys: int = 5,
+def recommend_stocks(pool_id: Optional[str] = None, limit: int = 5,
                      min_strength: float = 0.3) -> ToolEnvelope:
     """按今日行情选股：持仓分流 SELL/HOLD、非持仓推 BUY，受账户资金硬约束。"""
-    summary = recommend(pool_id=pool_id, max_new_buys=max_new_buys, min_strength=min_strength)
+    summary = recommend(pool_id=pool_id, max_new_buys=limit, min_strength=min_strength)
 
     # widget 用完整数据渲染前端看板；回灌 LLM 的 summary 用瘦身副本控 token
     widget = recommendation_board_widget(summary)

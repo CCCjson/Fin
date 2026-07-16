@@ -41,7 +41,7 @@ def get_limit_up_pool(trade_date: Optional[str] = None, include_zhaban: bool = T
 
 
 class PredictLimitUpArgs(BaseModel):
-    top_n: int = Field(10, ge=1, le=20, description="返回候选数量上限，默认10")
+    limit: int = Field(10, ge=1, le=20, description="返回候选数量上限，默认10")
 
 
 @tool(
@@ -56,8 +56,8 @@ class PredictLimitUpArgs(BaseModel):
     category="analysis",
     group="market_sentiment",
 )
-def predict_limit_up_candidates(top_n: int = 10) -> ToolEnvelope:
-    result = get_candidates(target_date_str=None, top_n=top_n)
+def predict_limit_up_candidates(limit: int = 10) -> ToolEnvelope:
+    result = get_candidates(target_date_str=None, top_n=limit)
     widget = limit_up_candidates_widget(result)
     slim = {
         **result,
