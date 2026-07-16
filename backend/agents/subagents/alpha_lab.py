@@ -1,5 +1,10 @@
-"""策略研发 subagent —— 复用 AlphaLabEngine.start_session（生成→沙箱→回测→评分 迭代闭环）。"""
+"""策略研发 subagent —— 复用 AlphaLabEngine.start_session（生成→沙箱→回测→评分 迭代闭环）。
+
+GRAPH_ALPHA_LAB=on 时改走 LangGraph 子图（alpha_lab.graph.engine），带 sqlite checkpointer
+断点续跑；默认 off 回落旧引擎。对外契约（恰好一个 subagent_done / clamp[1,20] / name）两路一致。
+"""
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Generator
 
@@ -15,44 +20,67 @@ class AlphaLabSubagent(SubagentRunner):
     name = "run_alpha_lab"
 
     def run(self, args: dict, cancel_event=None) -> Generator[str, None, None]:
-        symbols = args.get("symbols") or args.get("target_symbols")
-        if isinstance(symbols, str):
-            symbols = [symbols]
-        if not symbols:
-            yield emit_subagent_done(ToolEnvelope(
-                ok=False, error_code=ErrorCode.VALIDATION_ERROR,
-                message="缺少 symbols，无法研发策略"))
-            return
-        goal = args.get("goal") or args.get("optimization_goal") or "sharpe"
-        end = datetime.now()
-        data_end = args.get("data_end") or end.strftime("%Y-%m-%d")
-        data_start = args.get("data_start") or (end - timedelta(days=3 * 365)).strftime("%Y-%m-%d")
-        # 钳到 [1,20]：max_iterations 来自模型可控的 tool args，无上限的话
-        # 模型传个大数会让引擎连转几十轮（每轮 LLM 生成 + 最长 90s 沙箱回测），
-        # 长时间烧钱。20 轮足够覆盖 explore(5)+refine，超出无实际收益。
-        try:
-            max_iter = int(args.get("max_iterations", 8))
-        except (TypeError, ValueError):
-            max_iter = 8
-        max_iter = max(1, min(max_iter, 20))
+        # 图路径回滚开关：GRAPH_ALPHA_LAB=on 走 LangGraph 子图（带 checkpointer 断点续跑），
+        # 默认 off 回落旧 AlphaLabEngine。契约（恰好一个 subagent_done / clamp / name）两路一致。
+        graph_on = os.getenv("GRAPH_ALPHA_LAB", "off").lower() == "on"
+        resume_sid = args.get("resume_session_id")
 
-        from alpha_lab.engine import AlphaLabEngine
+        # resume 分支：仅图路径支持，从 checkpoint 续跑中断的会话。symbols 从 checkpoint 读回，
+        # 故先于 symbols 校验处理（resume 不需要重新传 symbols）。
+        if graph_on and resume_sid:
+            def _make_gen():
+                from alpha_lab.graph.engine import AlphaLabGraphEngine
+                return AlphaLabGraphEngine().resume_session(str(resume_sid))
+        else:
+            symbols = args.get("symbols") or args.get("target_symbols")
+            if isinstance(symbols, str):
+                symbols = [symbols]
+            if not symbols:
+                yield emit_subagent_done(ToolEnvelope(
+                    ok=False, error_code=ErrorCode.VALIDATION_ERROR,
+                    message="缺少 symbols，无法研发策略"))
+                return
+            goal = args.get("goal") or args.get("optimization_goal") or "sharpe"
+            end = datetime.now()
+            data_end = args.get("data_end") or end.strftime("%Y-%m-%d")
+            data_start = args.get("data_start") or (end - timedelta(days=3 * 365)).strftime("%Y-%m-%d")
+            # 钳到 [1,20]：max_iterations 来自模型可控的 tool args，无上限的话
+            # 模型传个大数会让引擎连转几十轮（每轮 LLM 生成 + 最长 90s 沙箱回测），
+            # 长时间烧钱。20 轮足够覆盖 explore(5)+refine，超出无实际收益。
+            try:
+                max_iter = int(args.get("max_iterations", 8))
+            except (TypeError, ValueError):
+                max_iter = 8
+            max_iter = max(1, min(max_iter, 20))
+
+            def _make_gen():
+                if graph_on:
+                    from alpha_lab.graph.engine import AlphaLabGraphEngine
+                    return AlphaLabGraphEngine().start_session(
+                        target_symbols=symbols, optimization_goal=goal,
+                        data_start=data_start, data_end=data_end, max_iterations=max_iter,
+                    )
+                from alpha_lab.engine import AlphaLabEngine
+                return AlphaLabEngine().start_session(
+                    target_symbols=symbols, optimization_goal=goal,
+                    data_start=data_start, data_end=data_end, max_iterations=max_iter,
+                )
 
         best = None
         complete = None
         cancelled = False
         try:
-            gen = AlphaLabEngine().start_session(
-                target_symbols=symbols, optimization_goal=goal,
-                data_start=data_start, data_end=data_end, max_iterations=max_iter,
-            )
+            gen = _make_gen()
             for line in gen:
                 line = (line or "").strip()
                 if not line:
                     continue
                 ev = json.loads(line)
                 et = ev.get("event")
-                if et == "iteration_start":
+                if et == "session_resumed":
+                    yield emit(EV.AGENT_PROGRESS, agent=self.name,
+                               message=f"从第 {ev.get('from_iteration')} 轮断点续跑…")
+                elif et == "iteration_start":
                     yield emit(EV.AGENT_PROGRESS, agent=self.name,
                                message=f"第 {ev.get('iteration')} 轮（{ev.get('phase')}）：生成策略中…")
                 elif et == "backtest_running":

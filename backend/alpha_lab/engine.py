@@ -1,13 +1,9 @@
 """
 AlphaLabEngine — 迭代主循环
 """
-import os
-import json
 import time
-import tempfile
 from typing import List, Dict, Optional, Generator
 
-import pandas as pd
 from loguru import logger
 
 from alpha_lab.sandbox import Sandbox, _ndjson
@@ -15,9 +11,7 @@ from alpha_lab.code_generator import CodeGenerator, _get_all_provider_configs
 from alpha_lab.evaluator import Evaluator, EvaluationResult
 from alpha_lab.session_manager import SessionManager, SessionState, IterationRecord
 from alpha_lab.strategy_store import StrategyStore
-
-from data_engine.engine import DataEngine
-from analysis_engine import AnalysisEngine
+from alpha_lab.data_prep import prepare_data, cleanup_temp_data
 
 
 class AlphaLabEngine:
@@ -398,82 +392,20 @@ class AlphaLabEngine:
         data_end: str,
     ) -> tuple:
         """
-        准备训练/验证数据，保存为 parquet 临时文件
+        准备训练/验证数据，保存为临时 CSV 文件。
+
+        实际逻辑已下沉到共享纯函数 `alpha_lab.data_prep.prepare_data`（供旧引擎
+        与 LangGraph 图路径共用），此处保留方法签名以维持调用点不变。
 
         Returns:
             (train_paths: Dict[str, str], val_paths: Dict[str, str], data_summary: Dict)
         """
-        data_engine = DataEngine()
-        train_paths = {}
-        val_paths = {}
-        data_summary = {}
-
-        tmpdir = tempfile.mkdtemp(prefix="alab_data_")
-
-        for symbol in symbols:
-            logger.info(f"准备数据: {symbol} ({data_start} ~ {data_end})")
-            df = data_engine.get_daily_data(
-                symbol=symbol,
-                start_date=data_start,
-                end_date=data_end,
-            )
-
-            if df.empty:
-                raise ValueError(f"{symbol} 在 {data_start}~{data_end} 期间无数据")
-
-            # 计算技术指标
-            df = AnalysisEngine().add_indicators(df)
-
-            # 时序分割：前 70% 训练，后 30% 验证
-            split_idx = int(len(df) * 0.7)
-            train_df = df.iloc[:split_idx].copy()
-            val_df = df.iloc[split_idx:].copy()
-
-            # 保存为 CSV 临时文件
-            train_path = os.path.join(tmpdir, f"{symbol}_train.csv")
-            val_path = os.path.join(tmpdir, f"{symbol}_val.csv")
-            train_df.to_csv(train_path, index=True)
-            val_df.to_csv(val_path, index=True)
-
-            train_paths[symbol] = train_path
-            val_paths[symbol] = val_path
-
-            # 数据摘要（累积多股票信息）
-            sym_summary = {
-                "train_days": len(train_df),
-                "val_days": len(val_df),
-                "total_days": len(df),
-                "price_range": f"{df['close'].min():.2f} ~ {df['close'].max():.2f}",
-                "avg_volume": f"{df['volume'].mean():,.0f}",
-                "latest_price": f"{df['close'].iloc[-1]:.2f}",
-            }
-            if not data_summary:
-                data_summary = sym_summary
-            else:
-                # 多股票时汇总：天数取最小值，价格范围合并
-                data_summary["train_days"] = min(data_summary["train_days"], sym_summary["train_days"])
-                data_summary["val_days"] = min(data_summary["val_days"], sym_summary["val_days"])
-                data_summary["total_days"] = min(data_summary["total_days"], sym_summary["total_days"])
-                data_summary["price_range"] += f" | {symbol}: {sym_summary['price_range']}"
-                data_summary["avg_volume"] += f" | {symbol}: {sym_summary['avg_volume']}"
-                data_summary["latest_price"] += f" | {symbol}: {sym_summary['latest_price']}"
-
-        logger.info(f"数据准备完成: train={data_summary['train_days']}天, val={data_summary['val_days']}天")
-        return train_paths, val_paths, data_summary
+        return prepare_data(symbols, data_start, data_end)
 
     @staticmethod
     def _cleanup_temp_data(train_paths: Dict, val_paths: Dict):
-        """清理临时数据文件"""
-        import shutil
-        cleaned = set()
-        for path in list(train_paths.values()) + list(val_paths.values()):
-            parent = os.path.dirname(path)
-            if parent not in cleaned and os.path.exists(parent):
-                try:
-                    shutil.rmtree(parent)
-                    cleaned.add(parent)
-                except Exception as e:
-                    logger.warning(f"清理临时目录失败: {e}")
+        """清理临时数据文件（委托共享 `alpha_lab.data_prep.cleanup_temp_data`）。"""
+        cleanup_temp_data(train_paths, val_paths)
 
     def get_sessions(self, status: Optional[str] = None) -> List[Dict]:
         """获取会话列表（优先从数据库）"""

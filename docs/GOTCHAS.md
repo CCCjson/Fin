@@ -1,6 +1,6 @@
 # 已知坑位与架构决策记录
 
-> 最后更新：2026-07-10。这份文档回答"为什么这么设计 / 之前踩过什么坑"，配合 `docs/ARCHITECTURE.md`（是什么）和 `docs/FEATURES.md`（有什么）一起看。内容来自项目历史踩坑记录，按主题分类，每条格式：**是什么 → 为什么 → 现在应该怎么做**。
+> 最后更新：2026-07-16。这份文档回答"为什么这么设计 / 之前踩过什么坑"，配合 `docs/ARCHITECTURE.md`（是什么）和 `docs/FEATURES.md`（有什么）一起看。内容来自项目历史踩坑记录，按主题分类，每条格式：**是什么 → 为什么 → 现在应该怎么做**。
 
 ## 架构决策
 
@@ -23,6 +23,25 @@
 - `report_engine/web_searcher.py` 与 `stock_analyzer.py` 是**共享件**（news_engine / advisor_engine / cockpit / `api/routes/news.py` 六处依赖），别跟着报告一起删。
 - `collect_common()`（行情总览 + 持仓）带 300 秒进程内 TTL 缓存，缓存 key **必须含 `report_type` 与 `period_end`**——只按时间做 key 会让周报命中日报的窗口数据。没有它，MoneyBill 连调四个章节会出网抓四次指数。
 - 改任何章节 prompt 前先看 `tests/report/test_section_prompt_parity.py`：它拿退役前冻结的 golden（`tests/report/fixtures/section_prompts_golden.json`，6 个 report_type×周末组合）钉死 prompt 逐字不变。**故意改 prompt 时要连同更新 golden**，并说明改了什么。
+
+### LangGraph 阶段A：alpha_lab 迁循环子图 + 断点续跑（2026-07-16）
+13.5 评估报告推荐的阶段A 已完工：把 alpha_lab 深任务迁成 LangGraph 循环子图（`alpha_lab/graph/{state,nodes,build,engine}.py`）+ sqlite checkpointer，补上「进程重启/断连后从第 i 轮恢复」的断点续跑能力。B（report DAG）/ C（主循环迁图）未做。
+
+**为什么这么切**：alpha_lab 的 `SessionState` 只活内存、每轮烧钱且带 cost 累计，进程一挂就得从头再来。checkpointer 在**节点边界**落盘，最贵的 90s C++ 回测完成即持久化——这是 LangGraph 带来的真实新能力，不是重写换重写。薄用四原语（`StateGraph`/sqlite checkpointer/`interrupt`/subgraph，见 `CODING_STANDARDS §6`），旧 `AlphaLabEngine` 一行未改。
+
+**怎么做 / 改这块前必读**：
+- **回滚开关 `GRAPH_ALPHA_LAB`**（默认 `off`，生产仍走旧引擎）在 subagent 层（`agents/subagents/alpha_lab.py`）二选一分叉。`on` 才走图路径。**回滚 = 删 `alpha_lab/graph/` 目录 + 去掉 subagent 几行 if**。共享数据准备刻意放 `alpha_lab/data_prep.py`（顶层，非 graph/ 子包），因为旧引擎也 import 它——放 graph/ 会让「删 graph/ 回滚」打断旧引擎。
+- **★早停计数器必须持久化**：旧引擎里 `no_improve_count`/`fail_streak`/`phase` 是 `start_session` 局部变量，图路径全提升进 `AlphaLabGraphState`，否则 resume 重算早停会错。
+- **⚠️ 中断节点会整个重跑**：节点边界 checkpoint 下，resume 把「中断时正在跑的那个节点」从头重跑。实测中断点常落在 `advance` 提交前 → resume 重跑 `advance` → **重发一次 `iteration_complete` + 重做 best 更新**（幂等无害，贵的 generate/backtest 不重跑）。**所有节点尤其 advance 必须对「同输入重跑」幂等**，别放非幂等副作用（无条件自增外部计数、不带去重的写库）。`strategy_store.save_strategy` 用确定性 id `{sid}_iter{i}` 天然幂等。
+- **失败转 flag 不抛异常**：generate/ast_check/backtest 各自把失败落成 flag 交 `advance`，免疫 LangGraph「超步内任一节点抛异常回滚整个超步 state」坑；唯一抛的是 prepare 数据准备失败（走 finalize 收 status=failed）。
+- checkpointer 库 `backend/data/alpha_lab_graph.db`（独立于 market.db，env `ALPHA_LAB_GRAPH_DB` 覆写），thread_id=session_id。resume 时临时 CSV 目录多半已被清理→用 symbols+日期区间确定性重建。
+- **跑真实冒烟三个环境坑**：① 必须 **cwd=backend**（`.env` 里 `DATABASE_URL=sqlite:///./data/market.db` 是相对路径，且多个 `load_dotenv(override=True)` 会把绝对 override 冲掉）；② 8002 C++ 回测服务要在跑；③ provider=claude 没进 `SessionManager.COST_RATES` 故 cost 显示 $0（非 bug）。
+- 门禁：`tests/baseline/test_deep_task_contract_graph.py`（图路径契约，与旧路径过同一套 clamp/单 done）+ `tests/test_alpha_lab_graph_resume.py`（断点续跑）。
+
+### 引入 LangGraph 把 pydantic 顶到 2.13（2026-07-16）
+装 `langgraph==1.2.9` + `langgraph-checkpoint-sqlite==3.1.0` 时，pip 把 **`pydantic 2.5.3 → 2.13.4`**、`websockets 16 → 15.0.1` 一起顶了版。
+
+**为什么记这条**：pydantic 是 FastAPI + 整个 `ToolEnvelope`/`args_model` 校验层的核心依赖，跨 2.5→2.13 是大跳。已全量测试验证兼容（**895 passed**），`requirements.txt` 的钉子已改到 `pydantic==2.13.4`。只剩 class-based `config` 的 deprecation 警告（非错误，V3 才移除）。**动依赖前知道 pydantic 已是 2.13，别按 2.5 的假设改。**
 
 ### `AnalysisReport` 表已停写停读（13.2）
 表定义还在（DB schema 冻结），但 2026-07-10 起没有任何代码读写它。
@@ -64,7 +83,7 @@
 - **subagent 失败必须 `ok:False`**（契约：`{ok, summary, widgets, tokens}`），走模型自愈路径，子层崩溃有 try/except 兜底不杀主流程。
 - **风控键对模型只读**：`settings_tools._RISK_READONLY_KEYS` 黑名单锁死 `max_position_pct`/`total_capital` 等。
 - **alpha_lab 沙箱 AST 逃逸（已修，曾是RCE缺口）**：`ASTChecker` 原先没拦 `.__class__.__base__.__subclasses__()` 这类属性链逃逸，subprocess又无OS级隔离，逃逸=用Jason权限RCE。已加 `BANNED_DUNDER_ATTRS` денylist。**沙箱仍非OS级隔离**，改沙箱代码要意识到这一点。
-- **alpha_lab max_iterations 已钳制到 [1,20]**（`AlphaLabEngine.start_session`），别去掉这个上限——无美元预算熔断，轮数是唯一烧钱闸门。
+- **alpha_lab max_iterations 已钳制到 [1,20]**（`AlphaLabEngine.start_session` + subagent fork 前 + 图引擎兜底），别去掉这个上限——无美元预算熔断，轮数是唯一烧钱闸门。图路径（`GRAPH_ALPHA_LAB=on`）同样钳制，见「架构决策 · LangGraph 阶段A」。
 - **advisor_engine 是单次流式completion，不是function-calling循环**，`max_tokens=2500`硬顶，无失控风险，deep_stock只调一次。
 
 ## 常见 bug 模式

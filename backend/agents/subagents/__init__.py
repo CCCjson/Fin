@@ -109,6 +109,8 @@ class AlphaLabArgs(BaseModel):
     symbols: list[str] = Field(..., min_length=1, description="目标股票代码列表，如 ['600519.SH']")
     goal: str = Field("sharpe", description="优化目标，如 sharpe / return，默认 sharpe")
     max_iterations: int = Field(8, ge=1, le=20, description="最大迭代轮数，默认 8，最多 20")
+    # 阶段A（GRAPH_ALPHA_LAB=on）：断点续跑一个中断的会话；本期仅内部/测试入口用
+    resume_session_id: str | None = Field(None, description="续跑已中断的策略研发会话（图路径）")
 
 
 _register(

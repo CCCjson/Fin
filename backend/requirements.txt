@@ -1,7 +1,7 @@
 # Web Framework
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
-pydantic==2.5.3
+pydantic==2.13.4              # 2.5.3→2.13.4：langgraph 1.x 依赖顶上来（全量测试 879 passed 验证兼容，见 13.5 阶段A）
 pydantic-settings==2.1.0
 python-jose[cryptography]==3.5.0
 
@@ -54,6 +54,11 @@ lxml>=5.0.0                 # bs4 解析器后端
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.3
+
+# LangGraph（薄用四原语：StateGraph + sqlite checkpointer + interrupt + subgraph，见 CODING_STANDARDS §6）
+# 阶段A：alpha_lab 深任务迁循环子图 + 断点续跑；GRAPH_ALPHA_LAB=off 默认回落旧引擎
+langgraph==1.2.9
+langgraph-checkpoint-sqlite==3.1.0
 
 # Lint / Type check（配置见 backend/pyproject.toml，规范见 docs/CODING_STANDARDS.md §10）
 ruff>=0.15
