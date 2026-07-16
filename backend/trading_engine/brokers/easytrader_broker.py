@@ -97,7 +97,8 @@ class EasyTraderBroker(BaseBroker):
             }
         except Exception as e:
             logger.error(f"获取账户信息失败: {e}")
-            return {"cash": 0, "market_value": 0, "total_value": 0}
+            # 键集与正常路径保持一致（含 frozen），杜绝调用方取 ["frozen"] 时 KeyError
+            return {"cash": 0, "market_value": 0, "total_value": 0, "frozen": 0}
 
     def get_positions(self) -> List[BrokerPosition]:
         """获取持仓列表"""

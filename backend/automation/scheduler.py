@@ -238,7 +238,9 @@ class AutomationScheduler:
             generator = SignalGenerator()
 
             scan_symbols = watchlist if watchlist else None
-            result = generator.scan_market(
+            # 同步重 IO（全市场行情拉取+策略计算+落库）丢线程池，避免阻塞事件循环
+            result = await asyncio.to_thread(
+                generator.scan_market,
                 symbols=scan_symbols,
                 lookback_days=60,
                 save_to_db=True,
@@ -331,7 +333,9 @@ class AutomationScheduler:
             from strategy.signal_generator import SignalGenerator
             generator = SignalGenerator()
 
-            result = generator.scan_intraday(
+            # pytdx 分钟线网络请求同步阻塞，丢线程池避免卡事件循环
+            result = await asyncio.to_thread(
+                generator.scan_intraday,
                 symbols=watchlist,
                 bar_count=240,
                 period=1,
@@ -394,7 +398,8 @@ class AutomationScheduler:
             from trading_engine.risk.adapter import get_effective_risk_config
 
             calculator = PortfolioCalculator()
-            positions = calculator.get_current_positions()
+            # 持仓行情/DB 查询同步阻塞，丢线程池
+            positions = await asyncio.to_thread(calculator.get_current_positions)
             risk_manager = RiskManager(get_effective_risk_config())
 
             orders_created = 0
@@ -468,7 +473,8 @@ class AutomationScheduler:
 
     async def _expire_orders_job(self):
         """清理过期订单"""
-        count = self._order_manager.expire_orders()
+        # DB 批量更新同步阻塞（每 5 分钟触发），丢线程池
+        count = await asyncio.to_thread(self._order_manager.expire_orders)
         if count > 0:
             try:
                 from automation.websocket_manager import ws_manager
