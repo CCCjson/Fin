@@ -163,6 +163,36 @@ def init_db():
                 ))
             print("✓ backtest_tasks 表已添加 batch_id 列")
 
+    # 自动迁移：为 decision_logs 表添加后验评估列（P0-1，判定内核见 common/outcome_eval.py）
+    if "decision_logs" in insp.get_table_names():
+        _dl_new = [
+            ("return_5d", "FLOAT"), ("return_20d", "FLOAT"),
+            ("outcome_5d", "VARCHAR(10)"), ("outcome_20d", "VARCHAR(10)"),
+            ("hit_stop", "INTEGER"), ("hit_target", "INTEGER"),
+            ("first_hit", "VARCHAR(12)"), ("first_hit_days", "INTEGER"),
+            ("outcome_status", "VARCHAR(20)"), ("unable_reason", "VARCHAR(30)"),
+            ("engine_version", "VARCHAR(30)"), ("evaluated_at", "DATETIME"),
+        ]
+        dl_cols = {c["name"] for c in insp.get_columns("decision_logs")}
+        _dl_added = [c for c, _ in _dl_new if c not in dl_cols]
+        if _dl_added:
+            with engine.begin() as conn:
+                for _col, _typ in _dl_new:
+                    if _col not in dl_cols:
+                        conn.execute(text(f"ALTER TABLE decision_logs ADD COLUMN {_col} {_typ}"))
+            print(f"✓ decision_logs 表已添加后验评估列: {_dl_added}")
+        # 刻意**不**回填 outcome_status='pending'：存量行该标什么状态是评估内核的判断
+        # （advisor 该 unable/no_action、report_picks 该按龄分流），在 SQL 里手写等于
+        # 把内核逻辑复制一份，engine_version 也没法戳。留 NULL 让首次回填自然分流。
+        dl_idx = {i["name"] for i in insp.get_indexes("decision_logs")}
+        if "idx_decision_outcome_scan" not in dl_idx:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_decision_outcome_scan "
+                    "ON decision_logs (outcome_status, created_at)"
+                ))
+            print("✓ decision_logs 表已添加 idx_decision_outcome_scan 复合索引")
+
     # 自动迁移：回填 stock_info 表的 stock_type 和 exchange
     if "stock_info" in insp.get_table_names():
         with engine.begin() as conn:

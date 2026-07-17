@@ -1126,7 +1126,8 @@ class PositionReconciliation(Base):
 class DecisionLog(Base):
     """决策留痕表 —— 每条 AI 产生的买卖建议的可复现、可归因记录。
 
-    覆盖 advisor / cockpit / moneybill 三条现在不落库的 AI 路径；规则信号已有 Signal 表故不重复记。
+    活跃 source：advisor / cockpit / moneybill / moneybill_recommend / report_picks。
+    规则信号已有 Signal 表故不重复记。
     """
     __tablename__ = "decision_logs"
 
@@ -1167,6 +1168,32 @@ class DecisionLog(Base):
     turn_start_idx = Column(Integer)           # 定位 agent_traces/{session_id}.jsonl 里产生该决策的那个 turn
     executed = Column(Integer, default=0)      # moneybill 是否真的成交 0/1
     risk_passed = Column(Integer)              # moneybill 风控是否通过 0/1
+
+    # 后验评估（P0-1）—— 由 decision_log.backfill_outcomes() 回填，判定内核见
+    # common/outcome_eval.py。上面所有列是「当时怎么说的」，下面这些是「后来对不对」。
+    # ⚠️ 上面的列**不可篡改**（decision_log._IMMUTABLE_REFRESH_FIELDS 钉死）——
+    # 改了当时的止损再去算胜率，等于给自己发奖状。
+    return_5d = Column(Float)                  # 收益率%，符号已按方向归一（SELL 跌对了也是正）
+    return_20d = Column(Float)
+    outcome_5d = Column(String(10))            # win / loss / neutral
+    outcome_20d = Column(String(10))
+    hit_stop = Column(Integer)                 # 0/1；None = 建议里没写止损位，无从判起
+    hit_target = Column(Integer)
+    first_hit = Column(String(12))             # stop_loss / take_profit / ambiguous / none
+    first_hit_days = Column(Integer)
+    outcome_status = Column(String(20), index=True)  # completed/pending/unable；NULL=还没评过
+    unable_reason = Column(String(30))         # 没法评的原因；可重试性见 outcome_eval.is_retryable
+    engine_version = Column(String(30))        # 判定口径版本；不打戳历史结果会随代码演进悄悄漂移
+    evaluated_at = Column(DateTime)
+
+    __table_args__ = (
+        # 吃这个索引的是 get_decision_stats 的胜率聚合（MoneyBill 每次问胜率的热路径），
+        # 不是回填扫描（那个是低选择度全表扫，几百行无所谓）。等值列在前、范围列在后。
+        # ⚠️ 这里只对 create_all 建的新库生效（测试内存库走这条）；**存量 market.db
+        # 一个字节都不会动**，生产库的索引靠 database.py:init_db() 里手写的
+        # CREATE INDEX IF NOT EXISTS。两处都要有，漏一处就只有一半环境有索引。
+        Index("idx_decision_outcome_scan", "outcome_status", "created_at"),
+    )
 
     def __repr__(self):
         return f"<DecisionLog(source={self.source}, symbol={self.symbol}, action={self.action})>"
