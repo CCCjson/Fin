@@ -55,7 +55,7 @@ _DIRECTIONAL_ACTIONS = frozenset({"BUY", "SELL"})
 # 我们的 `entry_price` 是决策产生时就写死的存量字段，且被 `_IMMUTABLE_REFRESH_FIELDS`
 # 冻结（原始决策不可篡改）—— **NULL 就永远是 NULL**，重试一万次也一样。所以它在
 # 我们这儿是不可重试的。
-_RETRYABLE_UNABLE_REASONS = frozenset({
+RETRYABLE_UNABLE_REASONS = frozenset({
     "no_quotes",         # 一根 bar 都没有：停牌 / 新股 / 行情还没回补
     "insufficient_bars", # 有 bar 但不够 MIN_BARS：建议刚发出来，等几天就够了
 })
@@ -105,7 +105,7 @@ def is_retryable(reason: Optional[str]) -> bool:
     可重试性是 `unable_reason` 的**函数**，不是独立事实 —— 所以它不是一个数据库列。
     独立列会允许「reason=no_action 但 retryable=1」这种不可能状态存在。
     """
-    return reason in _RETRYABLE_UNABLE_REASONS
+    return reason in RETRYABLE_UNABLE_REASONS
 
 
 def _label(ret: Optional[float]) -> Optional[str]:
