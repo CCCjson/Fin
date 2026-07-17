@@ -2,6 +2,7 @@
 数据类工具 —— 瘦封装 data_engine，供 MoneyBill 取行情/搜股。
 引擎实例懒加载，结果裁剪成精简 summary 回灌 LLM。
 """
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -86,18 +87,29 @@ def get_daily_data(symbol: str, window: int = 60) -> ToolEnvelope:
     finally:
         session.close()
 
+    from common.context_quality import compute_quality
+    from data_engine.quality_probe import daily_bars_block
+    # scope 只有 daily_bars：本工具只查日线，不该因为「没有实时行情/技术面块」
+    # 被扣分——那不是缺陷，是这个工具就不管那些。
+    quality = compute_quality({"daily_bars": daily_bars_block(symbol)},
+                              scope=["daily_bars"])
+
     summary = {
         "symbol": symbol,
         "name": name,
         "bars": int(len(df)),
+        # **必须带日期**：字段名叫 latest 但值可能是一周前的收盘价。此前只给数字，
+        # LLM 没有任何线索能看出它旧了（recent 里虽有日期，但那要它自己去比对今天几号）。
         "latest_close": round(last, 3),
+        "latest_date": recent[-1]["date"] if recent else None,
         "change_pct": change_pct,
         "high": round(float(df["high"].max()), 3),
         "low": round(float(df["low"].min()), 3),
         "window_days": window,
         "recent": recent,
     }
-    return ToolEnvelope(data=summary, widget=sparkline_widget(symbol, series, summary))
+    return ToolEnvelope(data=summary, widget=sparkline_widget(symbol, series, summary),
+                        quality=asdict(quality))
 
 
 class GetRealtimeQuoteArgs(BaseModel):
@@ -116,7 +128,21 @@ class GetRealtimeQuoteArgs(BaseModel):
 )
 def get_realtime_quote(symbols: list[str]) -> ToolEnvelope:
     from agents.widgets import quote_widget
-    quotes = _get_engine().get_realtime_quotes(symbols)
+    from common.context_quality import compute_quality
+    from data_engine.quality_probe import quote_block
+
+    quotes, failures = _get_engine().get_realtime_quotes_with_status(symbols)
+    quality = compute_quality({"quote": quote_block(quotes, symbols, failures)},
+                              scope=["quote"])
+
     if not quotes:
-        return ToolEnvelope(business_result="negative", message="未获取到实时行情，请稍后再试")
-    return ToolEnvelope(data={"count": len(quotes), "quotes": quotes}, widget=quote_widget(quotes))
+        # 一只都没拿到时也要说清**为什么** —— 此前恒为「请稍后再试」，把
+        # 代理额度耗尽 / 退市 / 市场不支持全收敛成同一句废话（重试根本没用）。
+        why = ("；".join(f"{m}: {r}" for m, r in failures.items()) if failures
+               else "全源均无这些标的（多半是退市/无效码，重试无用）")
+        return ToolEnvelope(business_result="negative",
+                            message=f"未获取到实时行情 —— {why}",
+                            quality=asdict(quality))
+
+    return ToolEnvelope(data={"count": len(quotes), "quotes": quotes},
+                        widget=quote_widget(quotes), quality=asdict(quality))

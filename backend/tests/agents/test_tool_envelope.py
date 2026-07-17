@@ -68,3 +68,72 @@ def test_serialization_roundtrip():
     assert "error_code" not in dumped
     restored = ToolEnvelope.model_validate(dumped)
     assert restored == env
+
+
+# ════════════════ 数据质量维度（P0-2） ════════════════
+
+_DEGRADED = {"overall_score": 50, "level": "poor", "core_degraded": True,
+             "limitations": ["quote: stale"], "block_scores": {"quote": 50},
+             "version": "context-quality-v1"}
+_HEALTHY = {"overall_score": 100, "level": "good", "core_degraded": False,
+            "limitations": [], "block_scores": {"quote": 100},
+            "version": "context-quality-v1"}
+
+
+def test_quality_warning_is_prefixed_not_buried():
+    """🔒 质量警告必须**前置**在回灌文本最前面。
+
+    两个坑一起绕（都实测过）：
+    1. `truncate_json_safe` 按插入序保前缀键、超限就 break —— quality 塞在 data
+       尾部时，大结果一来就被静默丢掉，只留一行「丢弃字段」。数据质量警告恰恰
+       是最不能丢的那个。
+    2. `to_legacy_dict` 里 message 优先于 data —— 工具只要给了 message，整个
+       data 就不进 summary。
+
+    别把它改回「data 里的一个键」。
+    """
+    from agents.tool_envelope import to_legacy_dict
+    env = ToolEnvelope(data={"symbol": "600519.SH", "price": 1253.0},
+                        quality=_DEGRADED)
+    out = to_legacy_dict(env)
+    assert out["summary"].startswith("⚠️ 数据质量降级")
+    assert "quote: stale" in out["summary"]
+    assert "不得声称高置信度" in out["summary"]
+
+
+def test_quality_warning_survives_message_priority():
+    """🔒 工具给了 message 时，质量警告照样要能到达 LLM。"""
+    from agents.tool_envelope import to_legacy_dict
+    env = ToolEnvelope(business_result="negative", message="未获取到实时行情",
+                        quality=_DEGRADED)
+    out = to_legacy_dict(env)
+    assert out["summary"].startswith("⚠️ 数据质量降级")
+    assert "未获取到实时行情" in out["summary"]
+
+
+def test_healthy_quality_adds_no_noise():
+    """🔒 数据健康时一个字都不加。
+
+    每轮每个工具都挂一句「数据正常」是纯 token 浪费，而且狼来了喊多了没人听。
+    """
+    from agents.tool_envelope import to_legacy_dict
+    env = ToolEnvelope(data={"symbol": "600519.SH"}, quality=_HEALTHY)
+    out = to_legacy_dict(env)
+    assert not out["summary"].startswith("⚠️")
+    assert out["quality"] == _HEALTHY        # 结构化字段照常给下游
+
+
+def test_no_quality_is_unchanged():
+    """没传 quality 的工具（多数）行为完全不变。"""
+    from agents.tool_envelope import to_legacy_dict
+    out = to_legacy_dict(ToolEnvelope(data={"a": 1}))
+    assert "quality" not in out
+    assert out["summary"] == '{"a": 1}'
+
+
+def test_quality_is_orthogonal_to_ok_and_business_result():
+    """🔒 三个维度正交：成功返回了一个三天前的收盘价 —— 三个维度都用得上。"""
+    env = ToolEnvelope(ok=True, business_result="affirmative", quality=_DEGRADED)
+    assert env.ok is True
+    assert env.is_bad() is False              # 技术上没失败、业务上有结果
+    assert env.quality["core_degraded"] is True   # 但数据不可信

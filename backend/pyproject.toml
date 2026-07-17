@@ -354,6 +354,10 @@ module = [
   "common.limit_rules",
   "common.scoring_utils",
   "common.db",
+  # P0-2 内核：纯逻辑、零 DB、零第三方，天生该在强检域里
+  "common.context_quality",
+  "common.market_freshness",
+  "common.outcome_eval",
   "net.clash",
   "net.env",
   "net.session",

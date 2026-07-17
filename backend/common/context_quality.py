@@ -241,46 +241,74 @@ def _block_status(blocks: Mapping[str, QualityBlock], key: str) -> FieldStatus:
     return block.status if block else FieldStatus.MISSING
 
 
-def is_core_degraded(blocks: Mapping[str, QualityBlock]) -> bool:
+def is_core_degraded(blocks: Mapping[str, QualityBlock],
+                     scope: Iterable[str] | None = None) -> bool:
     """核心块里有没有降级的 —— 硬传导的触发条件。
+
+    `scope` = 本次**该看**哪些块（见 `compute_quality`）；不传则看全部五块。
 
     写成**函数**而不是 `DataQuality` 上的一个独立字段：可降级性是块状态的
     **函数**，不是独立事实。独立字段会允许「core_degraded=False 但 quote=stale」
     这种不可能状态存在（同 `outcome_eval.is_retryable` 的道理）。
     """
-    return any(_block_status(blocks, k) in _CORE_DEGRADED_STATUSES for k in CORE_BLOCKS)
+    keys = set(scope) if scope is not None else set(_BLOCK_WEIGHTS)
+    return any(_block_status(blocks, k) in _CORE_DEGRADED_STATUSES
+               for k in CORE_BLOCKS if k in keys)
 
 
-def _limitations(blocks: Mapping[str, QualityBlock]) -> tuple[str, ...]:
+def _limitations(blocks: Mapping[str, QualityBlock],
+                 scope: set[str]) -> tuple[str, ...]:
     """限制说明，格式 `"block: status"`，最多 5 条。"""
     out: list[str] = []
     for key in CORE_BLOCKS:
+        if key not in scope:
+            continue
         status = _block_status(blocks, key)
         if status in _CORE_LIMITATION_STATUSES:
             out.append(f"{key}: {status.value}")
     for key in AUX_BLOCKS:
+        if key not in scope:
+            continue
         status = _block_status(blocks, key)
         if status in _AUX_LIMITATION_STATUSES:   # 单纯 missing 不进，见常量注释
             out.append(f"{key}: {status.value}")
     return tuple(out[:5])
 
 
-def compute_quality(blocks: Mapping[str, QualityBlock]) -> DataQuality:
+def compute_quality(blocks: Mapping[str, QualityBlock],
+                    scope: Iterable[str] | None = None) -> DataQuality:
     """块状态 → 质量分 + 档位 + 限制说明。
+
+    Args:
+        blocks: 块名 → 块状态。
+        scope: 本次**该看**哪些块。不传 = 全部五块（整体分析的场景，如 cockpit）。
+
+    ## `scope` 与「块没填」的区别（别混，这是本模块最容易用错的地方）
+
+      - **不在 `scope` 里** = 「这次压根不看它」。`get_daily_data` 只查日线，
+        它的产出不该因为「没有实时行情块」而扣分 —— 那不是缺陷，是这个工具就
+        不管实时行情。
+      - **在 `scope` 里但 `blocks` 没这个键** = 「该有却没有」→ MISSING → 扣分。
+
+    差别是刻意的：若从 `blocks` 的键自动推断 scope，任何一次**漏填**都会变成
+    静默豁免 —— 忘了传 quote 反而不扣分，状态机就废了。所以 scope 必须显式。
 
     **`not_supported` 的块：权重剔除后重归一化，不打低分**（分歧 1）。
     效果：一个只有行情没有财务的港股，和一个财务齐全的 A 股，在「各自能拿到的
     数据都健康」时拿到**同样的分**。它不该因为「港股没有基本面数据接入」而低人
     一等 —— 那不是数据质量问题，是我们还没接（P1-2 的活）。
 
-    **只算固定的五块，不因辅助块缺席就重归一化**（抄蓝本）：将来新增块不会
-    自动改变历史分数，`GROUP BY version` 才有意义。
+    **scope 内只算固定块，不因辅助块缺席就重归一化**（抄蓝本）：同一个 scope 下
+    新增块不会自动改变历史分数，`GROUP BY version` 才有意义。
     """
+    keys = set(scope) if scope is not None else set(_BLOCK_WEIGHTS)
     block_scores: dict[str, int] = {}
     weighted_sum = 0
     total_weight = 0
 
     for key, weight in _BLOCK_WEIGHTS.items():
+        if key not in keys:
+            continue                      # ← 本次不看它，既不计分也不计分母
         status = _block_status(blocks, key)
         if status is FieldStatus.NOT_SUPPORTED:
             continue                      # ← 权重剔除，不计分也不计分母
@@ -297,8 +325,8 @@ def compute_quality(blocks: Mapping[str, QualityBlock]) -> DataQuality:
         overall_score=overall,
         level=_level(overall) if total_weight else "poor",
         block_scores=block_scores,
-        limitations=_limitations(blocks),
-        core_degraded=is_core_degraded(blocks),
+        limitations=_limitations(blocks, keys),
+        core_degraded=is_core_degraded(blocks, keys),
     )
 
 

@@ -124,6 +124,52 @@ def test_fetch_failed_scores_worse_than_missing():
     assert _STATUS_SCORES[FieldStatus.FETCH_FAILED] < _STATUS_SCORES[FieldStatus.MISSING]
 
 
+# ════════════════ 🔒 scope：「不看」≠「该看却没有」════════════════
+
+def test_scope_limits_what_counts():
+    """只查日线的工具，不该因为「没有实时行情块」被扣分。
+
+    实测过的真事：`get_daily_data` 接状态机时忘了传 scope，健康的茅台被判
+    「质量分 51/poor、核心数据不可信」—— 因为 quote/technical 没传 → 算 MISSING。
+    """
+    blocks = {"daily_bars": block_from_fields({"f": _OK})}
+    q = compute_quality(blocks, scope=["daily_bars"])
+    assert q.overall_score == 100
+    assert q.core_degraded is False
+    assert q.limitations == ()
+
+
+def test_missing_block_inside_scope_still_penalizes():
+    """🔒 但 scope 里点了名却没给的块，照样算 MISSING 照样扣分。
+
+    这条和上一条是一对：区别是「这次不看它」vs「该看却没有」。若从 blocks 的键
+    自动推断 scope，任何一次**漏填**都会变成静默豁免——忘了传 quote 反而不扣分，
+    状态机就废了。所以 scope 必须显式传，别改成自动推断。
+    """
+    blocks = {"daily_bars": block_from_fields({"f": _OK})}
+    q = compute_quality(blocks, scope=["daily_bars", "quote"])   # 点了 quote 却没给
+    assert q.core_degraded is True
+    assert q.block_scores["quote"] == _STATUS_SCORES[FieldStatus.MISSING]
+
+
+def test_scope_none_means_all_blocks():
+    """不传 scope = 看全部五块（整体分析场景，如 cockpit）。"""
+    q = compute_quality({}, scope=None)
+    assert q.core_degraded is True
+    assert set(q.block_scores) == {"quote", "daily_bars", "technical",
+                                   "fundamentals", "news"}
+
+
+def test_scope_narrows_core_degraded_check():
+    """scope 外的核心块降级不该触发硬传导 —— 本次压根没用它的数据。"""
+    blocks = {
+        "daily_bars": block_from_fields({"f": _OK}),
+        "quote": block_from_fields({"f": QualityField(status=FieldStatus.FETCH_FAILED)}),
+    }
+    assert is_core_degraded(blocks, scope=["daily_bars"]) is False
+    assert is_core_degraded(blocks, scope=["daily_bars", "quote"]) is True
+
+
 # ════════════════ block 聚合（分歧 2：算出来，不硬编码）════════════════
 
 def test_empty_block_is_not_supported():
