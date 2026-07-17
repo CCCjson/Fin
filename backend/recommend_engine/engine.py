@@ -220,6 +220,7 @@ def recommend(pool_id: Optional[str] = None, max_new_buys: int = 5,
 
     # 决策留痕（provenance）：每条 BUY 推荐入 DecisionLog，供「上次推荐对不对」归因
     try:
+        from cockpit_engine.scorer import SCORER_VERSION
         from decision_log import record_decision
         for b in buys:
             record_decision(
@@ -228,6 +229,11 @@ def recommend(pool_id: Optional[str] = None, max_new_buys: int = 5,
                 name=b.get("name"),
                 action="BUY",
                 recommendation="BUY",
+                # 纯规则路径（无 LLM）：model_id 记打分器、prompt_version 记它的口径
+                # 版本 —— 这条路走的就是 cockpit light 打分，所以复用 SCORER_VERSION。
+                # 范式同 picks_log 的 model_id="rule:report_scorer"。
+                model_id="rule:cockpit_light",
+                prompt_version=SCORER_VERSION,
                 # DecisionLog.confidence 的量纲是 0-100（见 models.py 该列注释：
                 # 「驾驶舱综合分(0-100) 或其它置信度」）。这里曾经除以 100 存成 0-1，
                 # 而 report_picks 存 0-100 —— 同一列两个量纲，跨 source 比胜率必错。

@@ -84,8 +84,14 @@ class ConfirmationGate:
                     ok=result.get("ok", True), elapsed_ms=_elapsed_ms)
             except Exception:  # noqa: BLE001 — 落原文不可影响主流程
                 pass
-            # 决策留痕（provenance）：MoneyBill 实际下单
+            # 决策留痕（provenance）：MoneyBill 实际下单。
+            #
+            # ⚠️ 这里记的是**每一次经确认的工具调用**，不只是买卖 —— 「加自选股」
+            # 「删自选股」也会落一行（它们没有 action/entry_price）。后验评估把它们
+            # 判成 unable/no_action **不进胜率分母**，而不是算成「判错」——
+            # 这正是 unable≠miss 的意义（见 common/outcome_eval.py）。
             try:
+                from agents.skills_loader import MONITOR_PROMPT_VERSION
                 from decision_log import record_decision
                 _summ = result.get("data", {}) if isinstance(result, dict) else {}
                 _summ = _summ if isinstance(_summ, dict) else {}
@@ -95,9 +101,11 @@ class ConfirmationGate:
                     action=_summ.get("action") or pending.args.get("side"),
                     entry_price=_summ.get("price") or pending.args.get("price"),
                     model_id=model,
+                    prompt_version=MONITOR_PROMPT_VERSION,
                     input_snapshot=pending.args,
                     output_summary=_summ,
                     executed=bool(_summ.get("executed")),
+                    latency_ms=_elapsed_ms,
                     session_id=session.session_id,
                     turn_start_idx=session.turn_start_idx,
                 )

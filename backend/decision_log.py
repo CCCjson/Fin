@@ -74,6 +74,40 @@ def _warn_if_confidence_looks_normalized(source: str, confidence: Optional[float
         )
 
 
+# 这些 source 天生评不出方向，别对它们吼「缺 action」—— 每次都吼会把日志变成噪音，
+# 噪音多了就没人看告警了，反而更危险。
+#   advisor —— 只产自由文本，不记 action/entry_price（见 advisor_engine/service.py）
+#   moneybill —— confirm_gate 把「加/删自选股」这类非交易确认也记成 decision
+_MISSING_FIELD_WARN_EXEMPT = frozenset({"advisor", "moneybill"})
+
+
+def _warn_if_missing_outcome_fields(
+    source: str, action: Optional[str], entry_price: Optional[float],
+    prompt_version: Optional[str],
+) -> None:
+    """关键字段缺了就吼一嗓子 —— **只告警，不拦截**。
+
+    与 `_warn_if_confidence_looks_normalized` 同构：留痕**绝不能**反过来搞坏主流程
+    （advisor 是 SSE 流式，抛异常会掐断用户正在读的回答）。所以漏传的代价是一行
+    warning + 一条评不出来的记录，不是一次失败的对话。
+
+    「新加写入点忘了传 prompt_version」这类结构性遗漏由
+    tests/baseline/test_prompt_version_pinned.py 的源码 grep 门禁兜。
+    """
+    if not prompt_version:
+        logger.warning(
+            f"DecisionLog 缺 prompt_version（source={source}）；"
+            f"归因时将无法分辨这条建议是哪版 prompt/口径产生的。"
+        )
+    if source in _MISSING_FIELD_WARN_EXEMPT:
+        return
+    if (action or "").strip().upper() in ("BUY", "SELL") and entry_price is None:
+        logger.warning(
+            f"DecisionLog 有 action={action} 却没有 entry_price（source={source}）；"
+            f"这条建议将**无法后验评估**（unable/no_entry_price），不进胜率分母。"
+        )
+
+
 def record_decision(
     *,
     source: str,
@@ -104,6 +138,7 @@ def record_decision(
     """记录一条决策，返回 decision_id；任何异常都被吞掉并返回 None（不影响主流程）。"""
     try:
         _warn_if_confidence_looks_normalized(source, confidence)
+        _warn_if_missing_outcome_fields(source, action, entry_price, prompt_version)
         if not total_tokens and (prompt_tokens or completion_tokens):
             total_tokens = prompt_tokens + completion_tokens
         decision_id = uuid.uuid4().hex[:32]

@@ -4,6 +4,10 @@ AI 投资顾问 — Prompt 构建器
 """
 from typing import Dict, Optional
 
+# Prompt 口径的版本戳 —— 落进 DecisionLog.prompt_version，供归因时分辨
+# 「这条建议是哪版 prompt 产生的」。**改本文件里任何 prompt 文案必须 bump。**
+# 忘了 bump 会被 tests/baseline/test_prompt_version_pinned.py 逮住。
+PROMPT_VERSION = "advisor-v1"
 
 SYSTEM_PROMPT = """你是我的私人量化交易顾问，直接告诉我该怎么操作，不要废话。
 你的分析基于量化系统提供的真实数据。

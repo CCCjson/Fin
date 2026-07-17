@@ -142,13 +142,21 @@ class AdvisorService:
             # 保存 assistant 回复
             session.messages.append({"role": "assistant", "content": full_content})
 
-            # 决策留痕（provenance）：记录模型/输入快照/token，供事后复现与归因
+            # 决策留痕（provenance）：记录模型/输入快照/token，供事后复现与归因。
+            #
+            # ⚠️ 这条路径**没有 action / entry_price**，所以后验评估一律判
+            # unable/no_action —— advisor 的诚实胜率是「N/A，N 条都没法评」而不是
+            # 「0%」（见 common/outcome_eval.py 的判定顺序）。要让它可评，得在流式
+            # 结束后跑一次结构化抽取把方向和入场价抠出来 —— 那是另一张卡的活，
+            # doc14 P0-1 明确不做「解析中文自由文本猜方向」。
             try:
+                from advisor_engine.prompt_builder import PROMPT_VERSION
                 from decision_log import record_decision
                 record_decision(
                     source="advisor",
                     symbol=getattr(session, "symbol", None),
                     model_id=model,
+                    prompt_version=PROMPT_VERSION,
                     output_text=full_content,
                     total_tokens=token_count,
                     input_snapshot=getattr(session, "context_data", None),

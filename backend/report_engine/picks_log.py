@@ -19,6 +19,7 @@ from loguru import logger
 from sqlalchemy import func
 
 from data_engine.storage.models import DecisionLog
+from report_engine.prompt_builder import PROMPT_VERSION as _PROMPT_VERSION
 
 PICKS_SOURCE = "report_picks"
 
@@ -51,6 +52,7 @@ def record_picks(recommendations: list[dict], *, model_id: str = "rule:report_sc
             stop_loss=rec.get("stop_loss"),
             take_profit=rec.get("take_profit"),
             model_id=model_id,
+            prompt_version=_PROMPT_VERSION,
             reasons=rec.get("resonance_strategies") or rec.get("strategy") or "",
             output_summary={"composite_score": rec.get("composite_score"),
                             "risk_tier": (rec.get("risk_tier") or {}).get("label")},

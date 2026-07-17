@@ -36,12 +36,59 @@ def get_cockpit_score(symbol: str) -> ToolEnvelope:
         "recommendation": r.get("recommendation"),
         "price": (r.get("price") or {}).get("latest"),
         "stop_loss": r.get("stop_loss"),
+        "take_profit": r.get("take_profit"),
         "current_position_pct": r.get("current_position_pct"),
         "suggested": r.get("suggested"),
         "dimensions": {k: {"score": v.get("score"), "detail": v.get("detail")}
                        for k, v in dims.items()},
     }
+    _record_cockpit_decision(r)
     return ToolEnvelope(data=summary, widget=cockpit_widget(r))
+
+
+def _record_cockpit_decision(r: dict) -> None:
+    """决策留痕（provenance）：驾驶舱评级入 DecisionLog，供「上次驾驶舱说买，对了吗」归因。
+
+    **为什么留痕接在工具层而不是 `aggregator.aggregate()` 里**：aggregate 有两个
+    调用方，另一个是 `recommend_engine/scoring.py:17` 的 `_aggregate_many()` ——
+    批量选股循环，4 线程、每轮几十只。写在 aggregate 里会让每跑一次选股就涌几十条
+    「Jason 从没看见过的中间打分」进 DecisionLog，而 recommend_engine 自己已经把
+    最终 BUY 记成 moneybill_recommend 了 → 胜率分母被中间产物泡掉、同一建议重复
+    计数。接在这里语义也更准：**展现给 Jason 的建议才算一条决策**。
+
+    留痕失败绝不影响主流程（同 decision_log 模块的一贯取舍）。
+    """
+    try:
+        from cockpit_engine.scorer import SCORER_VERSION
+        from decision_log import record_decision
+
+        sizing = r.get("suggested") or {}
+        record_decision(
+            source="cockpit",
+            symbol=r.get("symbol"),
+            name=r.get("name"),
+            # 全仓约定：cockpit 没有独立的 action 字段，action 就等于 recommendation；
+            # composite(0-100) 当 confidence 用。**别除以 100** —— 这一列约定 0-100，
+            # decision_log._warn_if_confidence_looks_normalized 会吼。
+            action=r.get("recommendation"),
+            recommendation=r.get("recommendation"),
+            confidence=r.get("composite"),
+            entry_price=(r.get("price") or {}).get("latest"),
+            stop_loss=r.get("stop_loss"),
+            take_profit=r.get("take_profit"),
+            position_pct=r.get("suggested_position_pct"),
+            model_id="rule:cockpit_scorer",
+            prompt_version=SCORER_VERSION,
+            input_snapshot={
+                "dimensions": r.get("dimensions"),
+                "weights_used": r.get("weights_used"),
+                "available_dimensions": r.get("available_dimensions"),
+            },
+            output_summary={"composite": r.get("composite"), "suggested": sizing},
+            risk_passed=bool(sizing.get("risk_passed")),
+        )
+    except Exception:  # noqa: BLE001 — 留痕不可影响主流程
+        pass
 
 
 class PredictStockArgs(BaseModel):

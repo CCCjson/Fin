@@ -47,6 +47,14 @@ def _ch8_count_rule(batch_count: int, variant: str = "full") -> str:
 - 每只标的的分析篇幅不少于 **200字**"""
 
 
+# —— Prompt 口径的版本戳 ——
+# 落进 DecisionLog.prompt_version（report_picks 那条路径），供归因时分辨
+# 「这批推荐是哪版 prompt 产生的」。**改本文件里任何 prompt 文案必须 bump。**
+# 忘了 bump 会被 tests/baseline/test_prompt_version_pinned.py 逮住 ——
+# 那个门禁钉的是**整个文件**的 hash，所以改注释/排版也会红：那种情况重新 pin
+# 一下 hash 就行，别顺手 bump 版本号（版本号只该跟着 prompt 语义变）。
+PROMPT_VERSION = "report-v1"
+
 # —— 通用格式行 ——
 _FMT_BOLD_TABLE = "- 关键数据**加粗**，适当使用表格"
 

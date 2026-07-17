@@ -7,6 +7,11 @@
 import json
 from typing import Dict
 
+# Prompt 口径的版本戳。**改本文件里任何 prompt 文案必须 bump。**
+# 注意这只管「LLM 怎么叙述」；驾驶舱的**评级口径**版本是
+# cockpit_engine/scorer.py 的 SCORER_VERSION（那才是真正产生买卖结论的地方）。
+PROMPT_VERSION = "cockpit-v1"
+
 SYSTEM_PROMPT = (
     "你是一位资深量化投资顾问。下面给你一只股票的「决策驾驶舱」结构化数据，"
     "其中综合评分、各维度分值、买卖建议、建议仓位、止损位，以及"

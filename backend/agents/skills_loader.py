@@ -88,6 +88,12 @@ def parse_skill_frontmatter(name: str) -> dict:
         return {}
 
 
+# MoneyBill 主编排 prompt 的口径版本戳 —— 落进 DecisionLog.prompt_version。
+# **改 agents/skills/monitor.md 的内容必须 bump**（忘了会被
+# tests/baseline/test_prompt_version_pinned.py 逮住）。
+MONITOR_PROMPT_VERSION = "moneybill-v1"
+
+
 def load_monitor_system_prompt() -> str:
     """MoneyBill 主编排 agent 的 system prompt（去掉顶部 frontmatter，只留正文）。"""
     text = _read("monitor.md")
