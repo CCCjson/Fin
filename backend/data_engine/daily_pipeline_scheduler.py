@@ -12,10 +12,23 @@ DailyPipelineScheduler — 每日收盘后自动更新数据链（开机自启�
 门控：环境变量 DAILY_AUTO_UPDATE_ENABLED（默认 true，Jason 要的就是自动跑）。
 每一步失败只记 warning，不中断后续，也不影响主服务。运行时可通过 set_enabled()
 在页面上动态开关，无需改 .env。
+
+## 启动补跑（2026-07-17 加，别删）
+
+**cron 只在进程活着的那一刻触发。** 本项目的后端跟着桌面 App 起停，15:35 那一刻
+后端不在 = 那天的数据**永久丢失，且无声无息**。实测后果：2026-07-09 之后连丢 6 个
+交易日（07-10 起全市场只剩 2 只票有数据），没有任何告警。
+
+而且它有**正反馈**：`DailyUpdater` 只有「只差一天」才走快速批量路径，差多天一律
+落慢路径逐只抓 —— **断更越久，补得越慢，越难恢复**。
+
+所以 `start()` 会另挂一个一次性 job（延迟 `_CATCHUP_DELAY_SEC`）主动问一句
+「今天该有的数据有没有」，缺了就补。**只要哪天开过 App，数据就能自愈。**
 """
 import os
 import asyncio
 import json
+from datetime import date, datetime, timedelta
 from typing import List, Dict, Optional
 
 from loguru import logger
@@ -33,6 +46,42 @@ _DEFAULT_CRON = os.getenv("DAILY_AUTO_UPDATE_CRON", "").strip()  # 空则用下�
 _AUTO_HOUR = int(os.getenv("DAILY_AUTO_UPDATE_HOUR", "15"))
 _AUTO_MINUTE = int(os.getenv("DAILY_AUTO_UPDATE_MINUTE", "35"))
 JOB_ID = "daily_data_pipeline"
+CATCHUP_JOB_ID = "daily_data_pipeline_catchup"
+
+# 启动后隔多久做补跑检查。默认 3 分钟：避开后端启动高峰（约 20-34s 才就绪）+
+# 前端首屏抢资源，也让「开关窗抖动」不会连着触发几次（每次都会被 _is_updating 挡，
+# 但没必要让它反复进来）。设 0 关闭启动补跑。
+_CATCHUP_DELAY_SEC = int(os.getenv("DAILY_AUTO_UPDATE_CATCHUP_DELAY", "180"))
+
+# 覆盖率低于这个百分比就认为「那天整天没跑成」，触发补跑。
+#
+# 它只负责逮**整天缺失**（实测 07-10 起是 2/5200 = 0.04%，一逮一个准）。
+# **不负责逮「跑了但残缺」**：2026-07-09 落了 4216/5200 = 81%，高于此阈值，不会
+# 触发补跑 —— 这是**可以接受的**，因为残缺那天漏掉的票会在下次跑时因
+# `latest < target_date` 自然落进慢路径补上（`daily_updater` 的三分类逻辑），
+# 部分残缺自愈，不需要这里操心。
+#
+# 取 80 而不是 100：每天总有几十只停牌/退市/新股抓不到，强求 100% 会天天空转。
+_CATCHUP_COVERAGE_PCT = float(os.getenv("DAILY_AUTO_UPDATE_CATCHUP_COVERAGE_PCT", "80"))
+
+
+def _last_expected_trading_day(now: datetime) -> date:
+    """粗判「到这会儿为止，最近一个**应该已经有完整数据**的工作日」。
+
+    **刻意不查节假日**：查了要引交易日历，而误判的代价极低 —— 补跑会调
+    `DailyUpdater`，它自己会用 `_probe_latest_trading_date()` 探真实交易日；若数据
+    其实是全的，全部股票落进 `already_fresh` → `total_need_update == 0` → 立刻
+    complete。所以节假日的假阳性 = 一次几秒的空转，换掉一整套交易日历的维护成本。
+
+    宁可多空转一次，不可漏掉一天 —— 漏掉是永久的，空转只是几秒。
+    """
+    d = now.date()
+    # 今天收盘（+落库缓冲）之前，今天本来就还不该有完整数据 → 从昨天开始找
+    if (now.hour, now.minute) < (_AUTO_HOUR, _AUTO_MINUTE):
+        d -= timedelta(days=1)
+    while d.weekday() >= 5:  # 5=周六 6=周日
+        d -= timedelta(days=1)
+    return d
 
 
 class DailyPipelineScheduler:
@@ -119,6 +168,8 @@ class DailyPipelineScheduler:
         scheduler = self._get_scheduler()
         if self._enabled:
             self._add_job(scheduler)
+            # 补跑检查：cron 兜不住「15:35 那会儿进程没起」，这里兜
+            self._add_catchup_job(scheduler)
         scheduler.start()
         self._running = True
         if self._enabled:
@@ -142,9 +193,90 @@ class DailyPipelineScheduler:
             id=JOB_ID,
             name="每日数据更新链",
             replace_existing=True,
-            misfire_grace_time=3600,  # 服务重启错过触发点，1 小时内仍补跑
+            # ⚠️ 这**只**兜「调度器活着、但 job 没能按时跑」（线程池满/调度器暂停）。
+            # **它兜不住「进程当时根本没起」** —— 内存 jobstore 下 next_run_time 是
+            # add_job 那一刻往后算的，过去的触发点压根不进视野，没有「错过」记录可补。
+            # （此处原注释写「服务重启错过触发点，1 小时内仍补跑」，是**假的**，
+            #   而且大概率就是「连丢 6 个交易日没人发现」的原因。）
+            # 进程没起过的那些天，靠 _catchup_job 补。
+            misfire_grace_time=3600,
             coalesce=True,
         )
+
+    def _add_catchup_job(self, scheduler):
+        """挂一个一次性的启动补跑检查（延迟执行）。"""
+        if _CATCHUP_DELAY_SEC <= 0:
+            logger.info("启动补跑已关闭（DAILY_AUTO_UPDATE_CATCHUP_DELAY=0）")
+            return
+        from apscheduler.triggers.date import DateTrigger
+        scheduler.add_job(
+            self._catchup_job,
+            DateTrigger(run_date=datetime.now() + timedelta(seconds=_CATCHUP_DELAY_SEC)),
+            id=CATCHUP_JOB_ID,
+            name="启动补跑检查",
+            replace_existing=True,
+        )
+
+    @staticmethod
+    def _coverage_on(day: date) -> tuple:
+        """`day` 当天有日线的活跃 A 股占比 -> (有数据只数, 活跃总数)。
+
+        ⚠️ **不能用 `max(DailyQuote.date)` 判新鲜度** —— 全市场 5200 只里只要有 1 只
+        领先（真实存在：库里有两只常年比别人快），`max()` 就是最新日期，于是「数据
+        很新鲜」，而实际 99.96% 的票都停在一周前。**一个数看着没问题，其实什么都
+        没检查** —— 这正是每日链连丢 6 天没人发现的同一类病，别再犯。
+
+        同理必须带 `market == "a_share"` 过滤：不带的话港美股会混进来，
+        参见「日线覆盖率 300% bug」那次事故。
+
+        同步查询，调用方负责丢线程池。
+        """
+        from sqlalchemy import func
+        from data_engine.storage.database import get_session
+        from data_engine.storage.models import DailyQuote, StockInfo
+        session = get_session()
+        try:
+            total = session.query(func.count(StockInfo.symbol)).filter(
+                StockInfo.market == "a_share",
+                StockInfo.is_active == 1,
+                StockInfo.stock_type != "etf",   # 口径与 DailyUpdater 的 universe 一致
+            ).scalar() or 0
+            have = session.query(func.count(func.distinct(DailyQuote.symbol))).filter(
+                DailyQuote.market == "a_share",
+                DailyQuote.date >= day,
+            ).scalar() or 0
+            return have, total
+        finally:
+            session.close()
+
+    async def _catchup_job(self):
+        """启动补跑：数据落后于最近该有的交易日就补一次链。
+
+        存在的理由见模块 docstring —— cron 只在进程活着时触发，而本项目后端跟着
+        桌面 App 起停，没有这个兜底就会**无声无息**地丢掉整天的数据。
+        """
+        if not self._enabled or self._is_updating:
+            return
+        try:
+            expected = _last_expected_trading_day(datetime.now())
+            loop = asyncio.get_event_loop()
+            have, total = await loop.run_in_executor(None, self._coverage_on, expected)
+            if total <= 0:
+                logger.warning("[启动补跑] 活跃 A 股列表为空，跳过（先跑全量导入脚本）")
+                return
+            pct = have / total * 100
+            if pct >= _CATCHUP_COVERAGE_PCT:
+                logger.info(
+                    f"[启动补跑] {expected} 覆盖率 {pct:.1f}%（{have}/{total}），无需补跑"
+                )
+                return
+            logger.warning(
+                f"[启动补跑] {expected} 覆盖率仅 {pct:.1f}%（{have}/{total}）→ 立即补跑每日链。"
+                f"cron 只在进程活着时触发，15:35 那会儿后端没起的天数只能靠这里捞回来"
+            )
+            await self._daily_pipeline_job()
+        except Exception as e:  # noqa: BLE001 — 补跑失败绝不能拖垮启动
+            logger.exception(f"[启动补跑] 检查异常: {e}")
 
     def set_enabled(self, enabled: bool) -> Dict:
         """运行时开关自动更新：动态增删 job，无需改 .env / 重启。"""
