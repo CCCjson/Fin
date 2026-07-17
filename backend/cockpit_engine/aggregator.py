@@ -5,6 +5,7 @@
   技术面 / 基本面 / 新闻情感 / ML 预测 / 持仓风险
 所有重操作（collect / predict）放线程池由路由层调度；本模块同步实现。
 """
+from dataclasses import asdict
 from datetime import datetime
 from typing import Dict, Optional, List
 
@@ -15,6 +16,8 @@ from data_engine.storage.database import get_session
 from data_engine.storage.repository import FinancialRepository, ValuationRepository
 from portfolio.calculator import PortfolioCalculator
 from cockpit_engine.scorer import score_cockpit
+from common.context_quality import compute_quality
+from data_engine.quality_probe import daily_bars_block
 from trading_engine.risk.adapter import build_broker_info, get_total_capital, get_max_position_pct
 from trading_engine.position_sizing import size_position
 from common.scoring_utils import clamp
@@ -310,7 +313,17 @@ class CockpitAggregator:
         held_value = float(held.get("market_value") or 0.0)
         current_pct = round(held_value / total_capital * 100, 1) if total_capital else 0.0
 
-        scored = score_cockpit(dimensions, dynamic_levels, current_pct, max_pct)
+        # ---- 数据质量 → 硬钳（P0-2）----
+        # 只看 daily_bars：cockpit 的五维全部由本地库的日线派生（技术面、ML 都是），
+        # 日线陈旧 = 整个打分建在旧数据上。scope 不含 quote 是因为 aggregate 压根
+        # 不取实时行情；不含 fundamentals/news 是因为它们缺失走的是「维度重新
+        # 归一化」那条路（缺失≠看空，2026-02 的设计，别改）——
+        # **港美股没有财务数据，若在这儿按 missing 扣分，它们会全线被打成低分**。
+        quality = compute_quality(
+            {"daily_bars": daily_bars_block(symbol)}, scope=["daily_bars"])
+
+        scored = score_cockpit(dimensions, dynamic_levels, current_pct, max_pct,
+                               quality=quality)
 
         # 把「建议加仓 %」按真实资金换算成可执行金额/股数（硬约束：现金 + 风控）
         sizing = size_position(
@@ -344,5 +357,8 @@ class CockpitAggregator:
                 "ml": {"score": ml_score, "detail": ml_detail},
                 "position": {"score": pos_score, "detail": pos_detail},
             },
+            "data_quality": asdict(quality),
+            # **scored 里带出 composite / recommendation / dimension_coverage /
+            # raw_composite / adjustments —— 后三个是 P0-2 新增
             **scored,
         }

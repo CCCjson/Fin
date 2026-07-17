@@ -3,8 +3,19 @@
 
 输入 aggregator 产出的五维分（各 0-100，50=中性，None=缺失），
 按权重加权得综合分；缺失维度自动重新归一化权重，不当 0 拉低。
+
+**数据质量硬钳（2026-07-17，P0-2）**：传了 `quality` 且核心数据降级时，composite
+被**代码强行打到 `CLAMP_CAP` 以下**，recommendation 与目标仓位随之重算。不是求
+LLM 谨慎、不是 prompt 里写句「请注意」—— 这条路径压根没有 LLM，是纯代码说了算。
+
+**「缺维度重新归一化」是刻意的，别改**（那条 2026-02 的设计是对的：缺失 ≠ 看空）。
+但它的代价现在被显式化了：一维算出的 65 分与五维算出的 65 分，此前在下游长得
+一模一样。`dimension_coverage` 就是那个此前不存在的区分。
 """
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
+
+if TYPE_CHECKING:      # 只为类型标注 —— 运行时不 import，本模块保持零依赖纯函数
+    from common.context_quality import DataQuality
 
 # 打分口径的版本戳 —— 落进 DecisionLog.prompt_version。
 #
@@ -14,7 +25,17 @@ from typing import Dict, Optional
 #
 # 与 DecisionLog.engine_version 是两根轴：这个戳「当时怎么给的建议」，
 # engine_version 戳「事后怎么判的对错」。
-SCORER_VERSION = "rule:cockpit-v1"
+#
+# v2（2026-07-17）：加数据质量硬钳 + dimension_coverage。判定口径变了 → 必须 bump，
+# 否则 v1 那些「没被钳过」的历史决策会和 v2 的混在一起算胜率。
+SCORER_VERSION = "rule:cockpit-v2"
+
+# 核心数据降级时 composite 的上限。
+#
+# 60 落在 HOLD 区间（BUY 线是 65，见 `_recommendation`）——即：**数据不可信时，
+# 不许给出买入级别的结论**。这个数与 `common.context_quality.clamp_confidence`
+# 的默认 cap 是同一把尺子，有门禁 `test_clamp_cap_sits_below_buy_threshold` 钉着。
+CLAMP_CAP = 60.0
 
 # 五维权重（投资建议导向）
 # ⚠️ 这组权重**从没回测验证过**（见 00-PLAN.md Backlog）。改动请连带 bump SCORER_VERSION。
@@ -51,7 +72,8 @@ def _target_position_pct(composite: float, max_pct: float = 0.5) -> float:
 def score_cockpit(dimensions: Dict[str, Optional[float]],
                   dynamic_levels: Optional[Dict] = None,
                   current_position_pct: float = 0.0,
-                  max_position_pct: float = 0.5) -> Dict:
+                  max_position_pct: float = 0.5,
+                  quality: Optional["DataQuality"] = None) -> Dict:
     """
     Args:
         dimensions: {technical, ml, fundamental, sentiment, position} → 分值或 None
@@ -59,10 +81,21 @@ def score_cockpit(dimensions: Dict[str, Optional[float]],
             take_profit_levels 的 tp2 作止盈位）
         current_position_pct: 当前该股占总资金比例（用于建议加减仓）
         max_position_pct: 单股集中度上限（满分时的目标仓位），来自用户设置
+        quality: `common.context_quality.compute_quality` 的产出。给了且核心数据
+            降级 → composite 被强行钳到 `CLAMP_CAP`。**不给 = 不钳**（老调用方
+            行为不变）。
 
     Returns:
         {composite, recommendation, suggested_position_pct, suggested_add_pct,
-         current_position_pct, stop_loss, take_profit, weights_used, available_dimensions}
+         current_position_pct, stop_loss, take_profit, weights_used,
+         available_dimensions, dimension_coverage, raw_composite, adjustments}
+
+        - `dimension_coverage`: 实际可用维度占总权重的比例。**此前不存在** ——
+          一维算出的 65 与五维算出的 65 在下游长得一模一样。批量选股走 `light=True`
+          时系统性丢掉 ml+sentiment（40% 权重）却从不吭声，这个字段就是那个哑巴。
+        - `raw_composite`: 钳之前的分。P0-3 校准要审计「打压前是多少」，
+          且钳的口径以后会改 —— 只留钳后的分等于把原始信息永久丢掉。
+        - `adjustments`: **稳定标识符**元组，不是给人看的文案（文案会改，标识符不会）。
     """
     available = {k: v for k, v in dimensions.items() if v is not None}
     if not available:
@@ -78,12 +111,26 @@ def score_cockpit(dimensions: Dict[str, Optional[float]],
             "take_profit": None,
             "weights_used": {},
             "available_dimensions": [],
+            "dimension_coverage": 0.0,
+            "raw_composite": None,
+            "adjustments": (),
         }
 
     # 仅用可用维度，权重重新归一化
     total_w = sum(WEIGHTS[k] for k in available)
     weights_used = {k: round(WEIGHTS[k] / total_w, 4) for k in available}
     composite = round(sum(available[k] * weights_used[k] for k in available), 1)
+
+    # 这次的分是拿多少权重的数据算出来的。1.0 = 五维齐全；light 档 = 0.6。
+    dimension_coverage = round(total_w / sum(WEIGHTS.values()), 4)
+
+    # ── 数据质量硬钳 ──
+    # LLM 不参与这条路径，所以这里没有「求它诚实」的余地，也不需要 —— 直接改数。
+    raw_composite = composite
+    adjustments: list[str] = []
+    if quality is not None and quality.core_degraded and composite > CLAMP_CAP:
+        composite = CLAMP_CAP
+        adjustments.append("composite_capped_core_data_degraded")
 
     stop_loss = None
     take_profit = None
@@ -103,6 +150,8 @@ def score_cockpit(dimensions: Dict[str, Optional[float]],
     add_pct = round(max(0.0, target_pct - current_position_pct), 1) if target_pct > 0 else 0.0
 
     return {
+        # composite / recommendation / 目标仓位 全部是**钳后**的值 —— 钳了分却
+        # 照旧给 BUY 和满仓建议，这条硬约束就是摆设。
         "composite": composite,
         "recommendation": _recommendation(composite),
         "suggested_position_pct": target_pct,
@@ -112,4 +161,7 @@ def score_cockpit(dimensions: Dict[str, Optional[float]],
         "take_profit": take_profit,
         "weights_used": weights_used,
         "available_dimensions": list(available.keys()),
+        "dimension_coverage": dimension_coverage,
+        "raw_composite": raw_composite,
+        "adjustments": tuple(adjustments),
     }

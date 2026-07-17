@@ -72,6 +72,8 @@ def _record_cockpit_decision(r: dict) -> None:
             # decision_log._warn_if_confidence_looks_normalized 会吼。
             action=r.get("recommendation"),
             recommendation=r.get("recommendation"),
+            # P0-2 起这里是**钳后**的分（数据降级时被打到 CLAMP_CAP）——留痕跟着
+            # 变诚实了。钳前的原始分在 output_summary.raw_composite 里。
             confidence=r.get("composite"),
             entry_price=(r.get("price") or {}).get("latest"),
             stop_loss=r.get("stop_loss"),
@@ -83,8 +85,19 @@ def _record_cockpit_decision(r: dict) -> None:
                 "dimensions": r.get("dimensions"),
                 "weights_used": r.get("weights_used"),
                 "available_dimensions": r.get("available_dimensions"),
+                # 这次的分是拿多少权重的数据算出来的（light 档 = 0.6）
+                "dimension_coverage": r.get("dimension_coverage"),
+                "data_quality": r.get("data_quality"),
             },
-            output_summary={"composite": r.get("composite"), "suggested": sizing},
+            output_summary={
+                "composite": r.get("composite"),
+                # **P0-3 要它**：校准得知道「打压前模型说多少」。且钳的口径以后会
+                # 改（CLAMP_CAP / core_degraded 的定义），只留钳后的分 = 把原始
+                # 信息永久丢掉，将来重算都没得算。
+                "raw_composite": r.get("raw_composite"),
+                "adjustments": list(r.get("adjustments") or ()),
+                "suggested": sizing,
+            },
             risk_passed=bool(sizing.get("risk_passed")),
         )
     except Exception:  # noqa: BLE001 — 留痕不可影响主流程
