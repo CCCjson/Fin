@@ -47,14 +47,15 @@ MoneyBill 给建议
 
 > **进度（2026-07-17）**：**P0-1 ✅ 已完工**（`ee561a1`→`f95c08d`）。闭环的「回头看」那一环已通：`get_decision_history` 能按 source 报胜率，回填每天 15:35 自动跑。
 > **但现在还答不出「能不能盈利」**——真库里绝大多数建议是 `unable`（advisor 不记方向、confirm_gate 把加自选股也记成决策、行情落后一周导致新建议还没 bar 可评），且 20 日窗口要等到 8 月才满。**这不是 bug，是这套东西第一次把「我们其实没在评自己」这件事显式化了。**
-> 下一步按序做 **P0-2**（它与 P2-2 合并施工），然后 P0-3（硬依赖 P0-1，已可开工）。
+> **P0-2 ✅ 已完工**（2026-07-17，四笔 `d216c4e`→`030cdd3`，含 P2-2 的 B+C）：数据不可信时 MoneyBill 不许再说「有把握」——cockpit composite 被代码强行钳制（实测 BUY→HOLD），主循环收尾追加系统更正；**港股财务恒缺不被系统性降级**（避开了蓝本那个 bug）。
+> 下一步 **P0-3**（闭环最后一环，硬依赖 P0-1，已可开工）。开工前先读 P0-2 卡顶「实施偏离」第 6 条（confirm_gate 记的是数据质量不是 confidence）+ P0-1 卡的量纲雷（confidence 是 0-100 别抄 validator 的 0-1 桶）。
 
 ## 4. 任务卡索引
 
 | ID | 一句话 | 规模 | 依赖 | 路径核实 | 卡片 |
 |---|---|---|---|---|---|
 | ~~**P0-1**~~ | ✅ **已完工 07-17**：建议后验评估器（内核 `common/outcome_eval.py` + `backfill_outcomes`/`get_decision_stats` + cockpit 留痕接**工具层** + 每日链第⑥步）。**开工 P0-3 前先读它卡片顶部的「实施偏离」框** | 小 | 无 | ✅ 07-17 | `P0-1-decision-outcome.md` |
-| **P0-2** | 数据质量状态机：字段级八态 + 质量分 + 置信度 Python 硬传导 | 中 | 无（与 P2-2 合并施工） | ✅ 07-17 | `P0-2-data-quality.md` |
+| ~~**P0-2**~~ | ✅ **已完工 07-17**：字段级八态 + 质量分 + 硬传导（cockpit composite 钳制 + MoneyBill 收尾更正）。含 P2-2 的 B+C。**开工 P0-3 前先读它卡片顶部的「实施偏离」框**（尤其第 6 条：confirm_gate 记的是数据质量不是 confidence） | 中 | 无 | ✅ 07-17 | `P0-2-data-quality.md` |
 | **P0-3** | 置信度校准反哺：历史命中率 → calibration_factor 反调置信度 | 小 | **P0-1** | ✅ 07-17 | `P0-3-calibration.md` |
 | **P1-5** | NewsNow 资讯源接入（方案已勘察定稿，可立即开工） | 小 | 无 | ✅ 07-17 | `P1-5-newsnow.md` |
 | **P1-1** | 反方 subagent `run_devils_advocate` + 主结论/反方并排 | 中 | 无 | ⚠️ 待核实 | `P1-1-devils-advocate.md` |
@@ -62,7 +63,7 @@ MoneyBill 给建议
 | **P1-3** | 不可信内容隔离标记 + 外部内容轮次高危工具提示 | 小 | 无 | ⚠️ 待核实 | `P1-3-injection.md` |
 | **P1-4** | 失效条件结构化 + 复用 price_alert_monitor 盯失效 | 中 | P0-1 | ⚠️ 待核实 | `P1-4-invalidation.md` |
 | **P2-1** | EV/EBITDA + DCF 情景工具 + 行业分位比较 **+ 财务风险筛查（Beneish M / Altman Z）** | 中 | 三大报表先落库 | ⚠️ 待核实 | `P2-1-valuation.md` |
-| **P2-2** | 跨源抽检 + health.py 扩域 + ToolEnvelope 血缘 | 中 | 无（与 P0-2 合并） | ⚠️ 待核实 | `P2-2-validation-layer.md` |
+| **P2-2** | **B+C ✅ 随 P0-2 完工**（health 扩域 + ToolEnvelope 血缘）；只剩 **A 跨源抽检**（回填期噪声大，港美股齐了再做） | 中 | 无 | ✅ 07-17 | `P2-2-validation-layer.md` |
 | **P2-3** | 参数敏感性热图 + 最小因子引擎（IC/IR） | 中 | 无 | ⚠️ 待核实 | `P2-3-quant.md` |
 | **P3-1** | report_* 按能力重切 + 关键假设/跟踪指标章节 + Audit 收尾 | 中 | P0/P1 | ⚠️ 待核实 | `P3-1-report-recut.md` |
 | **P3-2** | subagent 并行 + trace 离线回放 + 决策留痕面板 | 大 | 无 | ⚠️ 待核实 | `P3-2-parallel-trace.md` |

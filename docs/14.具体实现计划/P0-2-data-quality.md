@@ -3,9 +3,56 @@ id: P0-2
 title: 数据质量状态机 + 置信度硬传导
 size: 中
 depends: 无（与 P2-2 ToolEnvelope 血缘合并施工）
-blocked_by: B-1（落点未定，见 00-PLAN §5）
+blocked_by: B-1 已解 → 落点 backend/common/（Jason 拍板）
 paths_verified: 2026-07-17
+status: ✅ 已完工 2026-07-17（d216c4e / 1c7b3c0 / b2ba21a / 030cdd3，四笔）
 ---
+
+# P0-2 数据质量状态机 + 置信度硬传导
+
+> ## ✅ 已完工（2026-07-17）—— 下方是原始计划，实施偏离见本框
+>
+> **四条验收标准全部达成**，实测：港股（财务恒缺）data_quality=100/good **不被系统性降级**；
+> 日线陈旧→composite 72→60、BUY→HOLD、raw_composite 留痕。代码承载物：
+> - 内核 `common/context_quality.py`（八态+块聚合+质量分+`clamp_confidence`，纯逻辑/零DB）
+> - 新鲜度 `common/market_freshness.py`（市场参考交易日=最近覆盖达标日，治 max(date) 病）
+> - 查库桥 `data_engine/quality_probe.py`；`health.get_freshness` 重写（按市场+木桶取短板）
+> - 血缘 `tool_envelope.py`（第三个正交维度 quality，警告前置绕过截断+message优先两坑）
+> - 硬钳层1 `cockpit_engine/scorer.py`（SCORER_VERSION v1→v2，+dimension_coverage/raw_composite）
+> - 硬钳层2 `agents/quality_guard.py`（收尾追加更正 chunk，堵 `_finalize` 绕过校验的洞）
+> - 数据层 `quote_router._canonical` 干掉 else 0 兜底 + 加 source/as_of；engine 按市场分 try
+>
+> ### 实施时对本卡的六处偏离（都已跟 Jason 确认，别改回去）
+>
+> 1. **B-1 落点 = `backend/common/`**（分层铁律，Jason 拍板）。内核落 `context_quality.py`，
+>    新鲜度判定另拆 `market_freshness.py`（两件事：一个管整市场断更，一个管单票跟不跟得上）。
+> 2. **`not_supported` 不参与扣分**（权重剔除后重归一化），**与蓝本刻意分歧**。蓝本给它
+>    70 分导致它自己的港美股 capital_flow 系统性降级。本项目 FinancialData 港美股各 0 只，
+>    照抄会在 Jason 刚接通港美股时把它们全线打死。4 条门禁盯着，完整照抄蓝本会一起红（已实测）。
+> 3. **否定检测整段不抄**。蓝本否定词表末位裸「不」→「不得不立即买入」被判否定→护栏漏放，
+>    且 grep 确认蓝本自己一个测试都没覆盖那段。我们的 action 结构化，只匹配正面「高把握」措辞。
+> 4. **硬传导用「追加更正 chunk」不用 nudge 重跑**。文本边流边发收不回，nudge 会让前端
+>    （append-only）同时挂两段文本。且顺带堵上 `_finalize`（熔断/保险丝）绕过校验的既有洞。
+> 5. **compute_quality 加 `scope` 参数**（本卡没写）。接 get_daily_data 时踩到：只查日线的
+>    工具被「没有实时行情块」扣分（健康茅台判 51/poor）。scope=本次该看哪些块，**必须显式传
+>    不许从 blocks 键自动推断**（否则漏填=静默豁免）。「不看」≠「该看却没有」，两条门禁钉住。
+> 6. **confirm_gate 不编 confidence**（本卡原写「补 confidence 0-100」）。交易确认没有结构化
+>    置信度，凭空塞是撒谎。改记「这笔交易在什么数据质量下确认的」，给 P0-3 与后验评估用。
+>
+> ### 顺带修的真问题（不在本卡范围，已解决）
+> - `quote_router` 三个源的 `as_of` 此前恒为 `now()` —— 实测 17:49 抓到的行新浪自报 15:34，
+>   凭空把收盘价说新两小时。新浪 [30]+[31] / 腾讯 [30] 字段实抓核实后接上真实报价时刻。
+> - `engine.get_realtime_quotes` 整个多市场循环包一个 try：港股 yfinance 抛异常→A股已拿到的
+>   数据全丢。拆成按市场分 try + `_with_status`（区分 fetch_failed / proxy_exhausted）。
+> - `portfolio_tools` 的 `except → "eod"`：盘中实时抓失败伪装成收盘价 → 改标 `eod_fetch_failed`。
+>
+> ### 遗留（不在本卡范围，想做时再说）
+> - **软约束层第三条 policy_checks 规则（百分比/金额无来源标注→纠偏）没做**：会在几乎每条
+>   MoneyBill 回答上误触发（它们都在引用工具返回的真实数字），假阳性噪声比价值大。
+>   monitor.md 的数据质量契约（软约束层的 prompt 那半）已做。
+> - **technical 块状态机没接**：目前只接了 quote / daily_bars 两个核心块。technical 走的是
+>   daily_bars 派生（日线陈旧则技术面必然陈旧），暂由 daily_bars 代表；要独立态另说。
+> - **P2-2 的 A（跨源抽检）另开卡**：回填期做抽检噪声淹没信号，等港美股数据齐了再做。
 
 # P0-2 数据质量状态机 + 置信度硬传导
 
