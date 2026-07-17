@@ -208,6 +208,31 @@ def test_win_rate_is_none_not_zero_when_nothing_evaluable(db):
     assert m["unable"] == 3
 
 
+def test_5d_win_rate_does_not_wait_for_the_20d_window(db):
+    """5 日胜率**不该被 20 日窗口挟持**。
+
+    `outcome_status=='completed'` 要 20 根 bar，但 `outcome_5d` 第 5 根就填好了。
+    若拿 completed 当 5 日胜率的分母，问「5 日胜率」要白等 15 个交易日才有答案 ——
+    明明数据早就有了。所以 evaluated 按**各 horizon 自己的标签**判。
+    """
+    s = db()
+    _seed_decision(s, symbol="600001.SH", entry=100.0, days_ago=8)
+    _seed_quotes(s, "600001.SH", n=8, start_days_ago=7, close=110.0)
+    s.commit()
+    s.close()
+
+    decision_log.backfill_outcomes()   # → pending（8 根 bar，20 日窗口没满）
+
+    h5 = decision_log.get_decision_stats(horizon=5)["overall"]
+    assert h5["evaluated"] == 1, "5 日窗口早就满了，别等 20 日"
+    assert h5["win_rate"] == 100.0
+
+    h20 = decision_log.get_decision_stats(horizon=20)["overall"]
+    assert h20["evaluated"] == 0, "20 日窗口确实没满"
+    assert h20["win_rate"] is None
+    assert h20["pending"] == 1
+
+
 def test_stats_grouped_by_source(db):
     """验收标准 1：按 source 分组回答「谁的胜率高」。"""
     s = db()

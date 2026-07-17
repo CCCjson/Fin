@@ -465,6 +465,10 @@ def get_decision_stats(
     **别直接抄 `prediction_engine/validator.py:246` 的桶** —— 那是 0-1 量纲的
     `[(0.5,0.6)...(0.8,1.01)]`，会把所有 0-100 的 confidence 全塞进末桶。
 
+    `evaluated` 的口径是「**这个 horizon 的标签有值**」，不是 `outcome_status=='completed'`
+    —— completed 要 20 根 bar，而 `outcome_5d` 第 5 根就填好了。拿 completed 当 5 日
+    胜率的分母，会让「5 日胜率」白等 15 个交易日才有答案。
+
     Returns:
         `{"engine_version": [...], "horizon_days": 20, "overall": {...}, "by_source": {...}}`。
         `engine_version` 是**数据里实际 distinct 的版本集合**而不是硬编码常量 ——
@@ -489,25 +493,31 @@ def get_decision_stats(
     def _cnt(cond):
         return func.sum(sql_case((cond, 1), else_=0))
 
-    _completed = DecisionLog.outcome_status == "completed"
+    # 「可评」= **这个窗口的标签有值**，而不是 outcome_status=='completed'。
+    #
+    # 这个区别很重要：`completed` 要 20 根 bar 才成立，但 `outcome_5d` 在第 5 根就
+    # 填好了。若拿 completed 当 5 日胜率的分母，问「5 日胜率」会白等 15 个交易日
+    # 才有答案 —— 明明数据早就有了。所以按 horizon 各自的标签判。
+    _judged = outcome_col.isnot(None)
     agg_cols = [
         func.count(DecisionLog.id).label("total"),
-        _cnt(_completed).label("evaluated"),
-        _cnt(DecisionLog.outcome_status == "pending").label("pending"),
+        _cnt(_judged).label("evaluated"),
+        # pending = 还没到能评这个窗口的时候（含「20 日窗口没满」和「刚发出来」）
+        _cnt(and_(DecisionLog.outcome_status != "unable", ~_judged)).label("pending"),
         _cnt(DecisionLog.outcome_status == "unable").label("unable"),
-        _cnt(and_(_completed, outcome_col == "win")).label("win"),
-        _cnt(and_(_completed, outcome_col == "loss")).label("loss"),
-        _cnt(and_(_completed, outcome_col == "neutral")).label("neutral"),
-        func.avg(sql_case((_completed, return_col))).label("avg_return"),
-        _cnt(and_(_completed, DecisionLog.hit_stop == 1)).label("hit_stop"),
-        _cnt(and_(_completed, DecisionLog.hit_target == 1)).label("hit_target"),
-        _cnt(and_(_completed, DecisionLog.hit_stop.isnot(None))).label("has_stop"),
-        _cnt(and_(_completed, DecisionLog.hit_target.isnot(None))).label("has_target"),
-        _cnt(and_(_completed, DecisionLog.first_hit == "stop_loss")).label("fh_stop"),
-        _cnt(and_(_completed, DecisionLog.first_hit == "take_profit")).label("fh_target"),
-        _cnt(and_(_completed, DecisionLog.first_hit == "ambiguous")).label("fh_ambiguous"),
-        _cnt(and_(_completed, DecisionLog.first_hit == "none")).label("fh_none"),
-        func.avg(sql_case((_completed, DecisionLog.first_hit_days))).label("avg_first_hit_days"),
+        _cnt(and_(_judged, outcome_col == "win")).label("win"),
+        _cnt(and_(_judged, outcome_col == "loss")).label("loss"),
+        _cnt(and_(_judged, outcome_col == "neutral")).label("neutral"),
+        func.avg(sql_case((_judged, return_col))).label("avg_return"),
+        _cnt(and_(_judged, DecisionLog.hit_stop == 1)).label("hit_stop"),
+        _cnt(and_(_judged, DecisionLog.hit_target == 1)).label("hit_target"),
+        _cnt(and_(_judged, DecisionLog.hit_stop.isnot(None))).label("has_stop"),
+        _cnt(and_(_judged, DecisionLog.hit_target.isnot(None))).label("has_target"),
+        _cnt(and_(_judged, DecisionLog.first_hit == "stop_loss")).label("fh_stop"),
+        _cnt(and_(_judged, DecisionLog.first_hit == "take_profit")).label("fh_target"),
+        _cnt(and_(_judged, DecisionLog.first_hit == "ambiguous")).label("fh_ambiguous"),
+        _cnt(and_(_judged, DecisionLog.first_hit == "none")).label("fh_none"),
+        func.avg(sql_case((_judged, DecisionLog.first_hit_days))).label("avg_first_hit_days"),
     ]
 
     session = get_session()
