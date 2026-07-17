@@ -38,7 +38,7 @@ _PINNED = {
     "cockpit_engine/prompt_builder.py": "cockpit-v1",
     "report_engine/prompt_builder.py": "report-v1",
     "cockpit_engine/scorer.py": "rule:cockpit-v2",
-    "agents/skills/monitor.md": "moneybill-v1",
+    "agents/skills/monitor.md": "moneybill-v2",
 }
 
 _HASHES = {
@@ -46,7 +46,7 @@ _HASHES = {
     "cockpit_engine/prompt_builder.py": "c263d993c5879a7e",
     "report_engine/prompt_builder.py": "7e39b2d330db4ac9",
     "cockpit_engine/scorer.py": "d8e8c86955bb3a7d",
-    "agents/skills/monitor.md": "f03417e49059a8cf",
+    "agents/skills/monitor.md": "3866170a014c1258",
 }
 
 

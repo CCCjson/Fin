@@ -13,7 +13,8 @@ def script_stream_chat(script: list) -> Callable[..., Any]:
     """按脚本逐次返回的 fake stream_chat。
 
     Args:
-        script: 每个元素代表一轮 LLM 响应。`None` = 只吐纯文本收尾；
+        script: 每个元素代表一轮 LLM 响应。`None` = 只吐纯文本收尾「好的」；
+            `str` = 吐这段自定义纯文本收尾（测收尾文本判定时用）；
             `[{"id":..., "name":..., "args": {...}}, ...]` = 吐 tool_calls。
 
     Returns:
@@ -23,9 +24,10 @@ def script_stream_chat(script: list) -> Callable[..., Any]:
 
     def fake(messages, model=None, tools=None, **kw):
         step = next(it)
-        if step is None:
-            yield {"type": "text", "content": "好的"}
-            yield {"type": "done", "message": {"role": "assistant", "content": "好的"},
+        if step is None or isinstance(step, str):
+            text = "好的" if step is None else step
+            yield {"type": "text", "content": text}
+            yield {"type": "done", "message": {"role": "assistant", "content": text},
                    "tool_calls": [], "prompt_tokens": 10, "completion_tokens": 5}
         else:
             msg = {"role": "assistant", "content": None,

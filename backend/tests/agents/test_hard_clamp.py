@@ -159,3 +159,80 @@ def test_raw_composite_survives_for_calibration():
     out = score_cockpit(_BULLISH, quality=_STALE)
     assert out["raw_composite"] == 85.0
     assert out["composite"] != out["raw_composite"]
+
+
+# ════════════════ 层2：MoneyBill 主循环收尾更正 ════════════════
+
+from agents.quality_guard import (  # noqa: E402
+    claims_high_confidence,
+    correction_for,
+    worst_turn_quality,
+)
+
+_Q_DEGRADED = {"overall_score": 50, "level": "poor", "core_degraded": True,
+               "limitations": ["daily_bars: stale"]}
+_Q_HEALTHY = {"overall_score": 100, "level": "good", "core_degraded": False,
+              "limitations": []}
+
+
+def test_correction_fires_on_degraded_plus_high_confidence():
+    """🔒 数据降级 + 声称高把握 → 追加更正。"""
+    out = correction_for("我非常有把握，这只票会涨。", _Q_DEGRADED)
+    assert out is not None
+    assert "系统更正" in out
+    assert "daily_bars: stale" in out
+
+
+def test_no_correction_when_answer_is_already_humble():
+    """🔒 数据降级但回答本来就谨慎 → 不更正。
+
+    它已经诚实了，再挂一句系统提示就是啰嗦。狼来了喊多了没人听。
+    """
+    assert correction_for("数据不太新，仅供参考，建议等更新后再看。", _Q_DEGRADED) is None
+
+
+def test_no_correction_when_data_is_healthy():
+    """数据健康时随便它多自信。"""
+    assert correction_for("我非常有把握，这只票会涨。", _Q_HEALTHY) is None
+
+
+def test_no_correction_without_quality_evidence():
+    """🔒 本轮没有任何工具上报质量 → 不许瞎报。没有证据说数据不好就是没有。"""
+    assert correction_for("我非常有把握。", None) is None
+
+
+def test_worst_quality_wins_not_averaged():
+    """🔒 木桶取短板：一个健康工具不许把一个烂工具冲淡成「大体还行」。"""
+    worst = worst_turn_quality([_Q_HEALTHY, _Q_DEGRADED, _Q_HEALTHY])
+    assert worst["core_degraded"] is True
+
+
+def test_worst_quality_empty_is_none():
+    assert worst_turn_quality([]) is None
+
+
+def test_high_confidence_detection_is_narrow():
+    """🔒 宁可漏判也不误伤。
+
+    「这只票很强势」是对标的的判断，不是对自己判断的元断言 —— 不该触发更正。
+    每次正常回答后面挂一句莫名其妙的系统提示，比偶尔漏一条更坏。
+    """
+    assert claims_high_confidence("我非常有把握") is True
+    assert claims_high_confidence("置信度：高") is True
+    assert claims_high_confidence("强烈建议买入") is True
+    # 不该命中的
+    assert claims_high_confidence("这只票走势很强") is False
+    assert claims_high_confidence("成交量很高") is False
+    assert claims_high_confidence("建议观望") is False
+
+
+def test_no_negation_detection_copied_from_blueprint():
+    """🔒 不抄蓝本的否定检测 —— 它有 bug 且未经测试。
+
+    蓝本靠「marker + 回看窗口 endswith 否定词」在中文里猜方向，否定词表末位有个
+    裸「不」，于是 "不得不立即买入" 的 prefix "不得不" endswith "不" → 判成否定
+    → 护栏漏放。我们只匹配正面的「声称高把握」措辞，不涉及否定，所以这个坑
+    结构上就不存在。
+    """
+    # 这句在蓝本里会被误判成「否定」而漏放；我们压根不走那条路
+    assert claims_high_confidence("不得不说，我非常有把握") is True

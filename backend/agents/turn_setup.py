@@ -177,3 +177,6 @@ def prepare_turn(
     session.turn_monitor = (
         turn_monitor.TurnMonitor(turn_start_idx=session.turn_start_idx)
         if turn_monitor.monitor_enabled() else None)
+    # 新 turn = 数据质量重新开始记（P0-2）。与 turn_start_idx 必须同步清 ——
+    # 不清的话上一轮「行情抓失败」会一直挂着，把后面每一轮都误报成降级。
+    session.turn_quality.clear()

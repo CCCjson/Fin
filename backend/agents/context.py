@@ -50,6 +50,11 @@ class AgentSession:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     turn_start_idx: int = 0                             # 本 turn 首条消息下标（trace 用）
+    # 本 turn 各工具上报的数据质量（P0-2）。**每 turn 开头必须清空** ——
+    # 上一轮的降级不该影响这一轮的收尾判定。刻意不进 messages：`llm_client` 把
+    # messages 整个透传给 API，多塞键就是白烧 token。也刻意不持久化：它是
+    # turn 内的临时事实，跨 turn 复活反而会造成误报。
+    turn_quality: list[dict] = field(default_factory=list, repr=False)
     # 同一 session 同时只允许一个 turn 在跑：并发会踩坏 messages 的 tool 配对
     # 与 pending_tool_call（钱路状态）。抢不到锁的请求直接被拒，不排队。
     run_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)

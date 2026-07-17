@@ -21,6 +21,11 @@ from agents.confirm_gate import ConfirmationGate, tool_msg_content
 from agents.events import EV, emit
 from agents.registry import REGISTRY
 from agents.context import AgentSession
+from agents.quality_guard import (
+    correction_for,
+    quality_guard_enabled,
+    worst_turn_quality,
+)
 from agents.tool_descs import done_desc
 from agents.tool_dispatch import ToolDispatcher
 from agents.tool_envelope import ErrorCode, ToolEnvelope, to_legacy_dict
@@ -100,11 +105,33 @@ class MonitorOrchestrator:
                              turn_usage={"prompt_tokens": turn_prompt,
                                          "completion_tokens": turn_completion})
 
+        def _quality_correction(assistant_msg: Optional[dict]) -> Generator[str, None, None]:
+            """数据降级 + 回答声称高把握 → **代码自己追加一条更正**（P0-2 硬传导）。
+
+            不走 PolicyChecker 那条「注入 system 让 LLM 重答」的路：文本边流边发
+            （见下方 stream_chat 的 EV.CHUNK），已发的收不回；重答一遍只会让前端
+            （append-only 累加）同时挂着两段文本。追加更正 = 零 LLM 依赖、不重跑。
+
+            **两条收尾路径都要调**：正常收尾 与 `_finalize`（max_rounds 保险丝 /
+            token 熔断）。此前 `_finalize` 完全绕过 PolicyChecker —— 熔断路径上的
+            最终回答不受任何校验，那是个洞，别只堵一半。
+            """
+            if not quality_guard_enabled() or assistant_msg is None:
+                return
+            try:
+                text = assistant_msg.get("content") or ""
+                correction = correction_for(text, worst_turn_quality(session.turn_quality))
+                if correction:
+                    logger.info(f"MoneyBill 数据质量硬传导触发 session={session.session_id}")
+                    yield emit(EV.CHUNK, content=correction)
+            except Exception as e:  # noqa: BLE001 — 护栏坏了不许把主流程带崩（fail-open）
+                logger.warning(f"数据质量硬传导失败（已忽略）: {e}")
+
         def _finalize(reason: str, notice: str) -> Generator[str, None, None]:
             """强制无工具收尾 + 用量/汇总/DONE（max_rounds 与硬熔断共用）。"""
             nonlocal turn_prompt, turn_completion
             try:
-                p, c = yield from self._finalize_no_tools(session, model, notice=notice)
+                p, c, msg = yield from self._finalize_no_tools(session, model, notice=notice)
             except Exception as e:
                 logger.error(f"MoneyBill 收尾调用失败: {e}")
                 yield emit(EV.ERROR, message=f"AI 调用失败：{e}")
@@ -114,6 +141,7 @@ class MonitorOrchestrator:
             turn_completion += c
             if mon:
                 mon.record_llm_round(p, c)
+            yield from _quality_correction(msg)      # ← 堵上「熔断路径不受校验」那个洞
             yield _usage_event()
             if mon:
                 yield emit(EV.MONITOR, kind="turn_summary", **mon.summary_fields())
@@ -192,6 +220,9 @@ class MonitorOrchestrator:
                         policy_nudged = True
                         session.messages.append({"role": "system", "content": violation})
                         continue  # 强制多跑一轮重新收尾，不发 DONE
+                # 硬传导必须在 policy nudge **之后**：nudge 会让模型重答一整段，
+                # 得对最终那段文本判，不然判的是一段已经被推翻的话。
+                yield from _quality_correction(assistant_msg)
                 if mon:
                     yield emit(EV.MONITOR, kind="turn_summary", **mon.summary_fields())
                 yield emit(EV.DONE, session_id=session.session_id)
@@ -254,6 +285,14 @@ class MonitorOrchestrator:
                 session.messages.append({
                     "role": "tool", "tool_call_id": tc["id"],
                     "content": tool_msg_content(result["summary"])})
+                if result.get("quality"):
+                    # 记在 session 上而**不是塞进 message dict**：`llm_client`
+                    # 把 messages 整个透传给 API（`llm_client.py:130` 的
+                    # `messages=messages`），多塞一个键就是白烧 token，还可能被
+                    # 拒。LLM 那份质量信息已经通过 summary 的 ⚠️ 前缀送到了；
+                    # 这份是给 quality_guard 收尾时判「这轮数据到底可不可信」用的
+                    # **结构化事实**，不能靠正则回去扒文本。
+                    session.turn_quality.append(result["quality"])
                 _ok = result.get("ok", True)
                 _rec = mon.record_result(
                     tc, td, result, _elapsed_ms,
@@ -276,8 +315,13 @@ class MonitorOrchestrator:
 
     def _finalize_no_tools(
         self, session: AgentSession, model: str, *, notice: str,
-    ) -> Generator[str, None, tuple[int, int]]:
-        """注入收尾提示并做一次不带 tools 的 LLM 调用（只能出文本），返回 (p, c)。
+    ) -> Generator[str, None, "tuple[int, int, Optional[dict]]"]:
+        """注入收尾提示并做一次不带 tools 的 LLM 调用（只能出文本）。
+
+        Returns:
+            `(prompt_tokens, completion_tokens, assistant_msg)` —— 第三个是这条
+            路径的最终回答，调用方拿它跑数据质量硬传导（此前不返回，于是熔断/
+            保险丝路径上的回答不受任何校验，是个洞）。
 
         max_rounds 保险丝与 token 硬预算熔断共用；异常向上抛，由调用方兜底。
         """
@@ -299,7 +343,7 @@ class MonitorOrchestrator:
                     USAGE.record(model, p, c)
         if assistant_msg is not None:
             session.messages.append(assistant_msg)
-        return (p, c)
+        return (p, c, assistant_msg)
 
     @staticmethod
     def _envelope_from_subagent_result(res: dict) -> ToolEnvelope:

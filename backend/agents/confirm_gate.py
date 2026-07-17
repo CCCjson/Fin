@@ -91,10 +91,16 @@ class ConfirmationGate:
             # 判成 unable/no_action **不进胜率分母**，而不是算成「判错」——
             # 这正是 unable≠miss 的意义（见 common/outcome_eval.py）。
             try:
+                from agents.quality_guard import worst_turn_quality
                 from agents.skills_loader import MONITOR_PROMPT_VERSION
                 from decision_log import record_decision
                 _summ = result.get("data", {}) if isinstance(result, dict) else {}
                 _summ = _summ if isinstance(_summ, dict) else {}
+                # **不编 confidence**：这是一笔交易确认，MoneyBill 没有产出结构化的
+                # 置信度数值，凭空塞一个 0-100 是撒谎。真正有价值、也诚实的是记下
+                # 「这笔交易是在什么数据质量下确认的」——P0-3 校准与后验评估要据此
+                # 分辨「数据降级时确认的单子」和「数据齐全时确认的单子」的胜率差异。
+                _q = worst_turn_quality(session.turn_quality)
                 record_decision(
                     source="moneybill",
                     symbol=_summ.get("symbol") or pending.args.get("symbol"),
@@ -102,7 +108,7 @@ class ConfirmationGate:
                     entry_price=_summ.get("price") or pending.args.get("price"),
                     model_id=model,
                     prompt_version=MONITOR_PROMPT_VERSION,
-                    input_snapshot=pending.args,
+                    input_snapshot={**pending.args, "data_quality": _q},
                     output_summary=_summ,
                     executed=bool(_summ.get("executed")),
                     latency_ms=_elapsed_ms,
