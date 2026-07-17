@@ -3,6 +3,7 @@
 """
 from typing import Literal, Optional
 
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from agents.registry import tool
@@ -23,6 +24,15 @@ def _overlay_realtime_prices(held: list) -> str:
     """盘中用实时价覆盖持仓的市值/浮盈亏，并补当日盈亏；返回 price_as_of。
 
     不动 PortfolioCalculator 本体（EOD 口径别处还在用），只在工具层叠加。
+
+    返回值三态（2026-07-17，P0-2 拆开）：
+      `realtime`         盘中且实时价拿到了
+      `eod`              **非盘中** —— EOD 就是正确口径，这是正常态不是降级
+      `eod_fetch_failed` **盘中但实时价没拿到** —— 你正盯着一个昨收价当现价看
+
+    此前三者都返回 `eod`：`except Exception: return "eod"` 把「市场关着呢，昨收
+    天经地义」和「盘中实时抓挂了，你看的是昨天的价」说成同一件事。前者无需任何
+    动作，后者是**必须让人知道**的降级 —— 这正是 P0-2 要消灭的那类塌缩。
     """
     from agents.tools.recommend_tools import _session_phase
     if _session_phase() != "intraday" or not held:
@@ -31,10 +41,12 @@ def _overlay_realtime_prices(held: list) -> str:
         from acquisition.markets.realtime import fetch_quotes_by_symbols
         quotes = {q["symbol"]: q for q in
                   fetch_quotes_by_symbols([p["symbol"] for p in held])}
-    except Exception:  # noqa: BLE001 — 实时失败静默回退 EOD
-        return "eod"
+    except Exception as e:  # noqa: BLE001 — 取价失败不该掀翻整个持仓查询
+        logger.warning(f"持仓实时价叠加失败，回退 EOD（盘中，已如实标记）: {e}")
+        return "eod_fetch_failed"
     if not quotes:
-        return "eod"
+        logger.warning("持仓实时价一只都没拿到，回退 EOD（盘中，已如实标记）")
+        return "eod_fetch_failed"
     for p in held:
         q = quotes.get(p["symbol"])
         price = (q or {}).get("price")
@@ -61,8 +73,11 @@ class GetPositionsArgs(BaseModel):
     name="get_positions",
     description=(
         "获取用户当前所有持仓（代码、名称、数量、成本均价、浮动/已实现盈亏）。"
-        "盘中自动用实时价计算市值与当日盈亏（price_as_of=realtime）。"
+        "盘中自动用实时价计算市值与当日盈亏。"
         "回答「我现在持有什么/仓位多少/今天赚亏多少」时用。"
+        "**price_as_of 三态**：realtime=盘中实时价；eod=非盘中，收盘价是正确口径；"
+        "eod_fetch_failed=盘中但实时价没取到，数字是昨收——**这种情况必须告诉 Jason，"
+        "别把昨收当现价讲**。"
     ),
     args_model=GetPositionsArgs,
     category="portfolio",

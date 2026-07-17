@@ -9,6 +9,7 @@
 可与东财结果按 symbol 直接合并。
 """
 import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -58,7 +59,18 @@ def _empty_row(symbol: str) -> Dict[str, Any]:
         "name": None, "high": None, "low": None, "open": None,
         "prev_close": None, "total_mv": None, "circ_mv": None,
         "pb_ratio": None, "pe_ttm": None, "symbol": symbol,
+        # 源自报的报价时刻（不是我们的抓取时刻）。取不到就是 None ——
+        # 调用方据此判「这个价到底是几点的」，绝不许拿 now() 顶替。
+        "quote_time": None,
     }
+
+
+def _parse_quote_dt(raw: str, fmt: str) -> Optional[str]:
+    """源自报的时间字符串 → ISO8601；解析不了返回 None（不猜、不兜底 now()）。"""
+    try:
+        return datetime.strptime(raw.strip(), fmt).isoformat()
+    except (ValueError, AttributeError):
+        return None
 
 
 def _parse_tencent_line(line: str) -> Optional[Dict[str, Any]]:
@@ -93,6 +105,10 @@ def _parse_tencent_line(line: str) -> Optional[Dict[str, Any]]:
         "circ_mv": _num(fields[44], lambda v: float(v) * 1e8),  # 亿元 → 元
         "total_mv": _num(fields[45], lambda v: float(v) * 1e8),
         "pb_ratio": _num(fields[46]),
+        # [30] = "20260717161459"（2026-07-17 实抓核实）。腾讯自报的刷新时刻，
+        # 收盘后不等于最后成交时刻，但**远比 now() 诚实**：实测 17:49 抓到的行
+        # 自报 16:14，拿 now() 当报价时间会凭空把数据说新 1.5 小时。
+        "quote_time": _parse_quote_dt(fields[30], "%Y%m%d%H%M%S"),
     })
     return row
 
@@ -130,6 +146,10 @@ def _parse_sina_line(line: str) -> Optional[Dict[str, Any]]:
         "amount": _num(fields[9]),                             # 元
         "change_amount": change_amount,
         "change_pct": change_pct,
+        # [30]="2026-07-17" + [31]="15:34:59"（2026-07-17 实抓核实）。三源里新浪
+        # 最诚实：它给的是真实报价时刻，收盘后就一直停在收盘那一刻不动。
+        "quote_time": (_parse_quote_dt(f"{fields[30]} {fields[31]}", "%Y-%m-%d %H:%M:%S")
+                       if len(fields) > 31 else None),
     })
     return row
 

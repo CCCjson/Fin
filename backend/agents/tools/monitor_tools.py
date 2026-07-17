@@ -90,9 +90,15 @@ def get_system_pulse(limit: int = 5) -> ToolEnvelope:
 
     events = _recent_events(max(0, min(int(limit or 5), 50)))
     summary = {
+        # 木桶取短板：三个市场里最落后的那个。**别拿它当「A股更到哪天」用** ——
+        # 分市场的实情在 data_by_market 里（A股天天更、港美股靠 16:30 的独立 job）。
         "data_latest_date": freshness.get("latest_date"),
         "data_is_stale": freshness.get("is_stale"),
         "is_weekday": freshness.get("is_weekday"),
+        "data_by_market": {
+            m: {"reference_date": v.get("reference_date"), "is_stale": v.get("is_stale")}
+            for m, v in (freshness.get("by_market") or {}).items()
+        },
         "coverage": coverage.get("coverage_pct"),
         "signals_today": signal_count,
         "tracking_win_rate": win_rate,

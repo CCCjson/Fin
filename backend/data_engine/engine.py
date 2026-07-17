@@ -7,6 +7,7 @@ import pandas as pd
 from loguru import logger
 
 from acquisition.markets import FetcherFactory, MarketDataRequest
+from net import ProxyExhaustedError
 from data_engine.storage import (
     get_session,
     StockInfo,
@@ -253,43 +254,63 @@ class DataEngine:
             return []
 
     def get_realtime_quotes(self, symbols: List[str]) -> List[Dict]:
-        """
-        获取实时行情
+        """获取实时行情（只要行，不要状态）。
 
-        Args:
-            symbols: 股票代码列表
+        老调用方的形状保持不变；要知道「谁没拿到、为什么」用
+        `get_realtime_quotes_with_status`。
+        """
+        quotes, _ = self.get_realtime_quotes_with_status(symbols)
+        return quotes
+
+    def get_realtime_quotes_with_status(
+        self, symbols: List[str]
+    ) -> "tuple[List[Dict], Dict[str, str]]":
+        """获取实时行情，**并如实上报每个市场的失败原因**。
 
         Returns:
-            实时行情列表
+            `(quotes, failures)` —— `failures` 是 `{market: reason}`，reason ∈
+            `fetch_failed`（抓取真失败）/ `proxy_exhausted`（代理额度耗尽，
+            一个请求都没发出去）。**拿到数据的市场不进 failures**。
+
+        为什么拆成按市场分别 try（2026-07-17，P0-2）：此前整个多市场循环包在
+        **一个** try 里，`except Exception: return []` —— 意味着**港股 yfinance
+        抛个异常，就把 A 股已经拿到的行情全部丢弃**，调用方收到一个空列表，
+        既不知道丢了什么也不知道为什么。而 `ProxyExhaustedError`（额度耗尽，
+        是「一个请求都没发」）与普通抓取失败的区别，也在这里被抹平成同一个 `[]`。
+
+        现在：一个市场炸不影响另一个市场的结果，失败原因原样上报给调用方。
         """
+        if not symbols:
+            return [], {}
+
         logger.info(f"获取实时行情: {symbols}")
 
-        try:
-            if not symbols:
-                return []
+        # 按市场分组
+        market_symbols: Dict[str, List[str]] = {}
+        for symbol in symbols:
+            if symbol.endswith(('.SH', '.SZ')):
+                market_symbols.setdefault('a_share', []).append(symbol)
+            elif symbol.endswith('.HK'):
+                market_symbols.setdefault('hk_stock', []).append(symbol)
+            else:
+                market_symbols.setdefault('us_stock', []).append(symbol)
 
-            # 按市场分组
-            market_symbols = {}
-            for symbol in symbols:
-                if symbol.endswith(('.SH', '.SZ')):
-                    market_symbols.setdefault('a_share', []).append(symbol)
-                elif symbol.endswith('.HK'):
-                    market_symbols.setdefault('hk_stock', []).append(symbol)
-                else:
-                    market_symbols.setdefault('us_stock', []).append(symbol)
-
-            # 分市场获取
-            all_quotes = []
-            for market, syms in market_symbols.items():
+        all_quotes: List[Dict] = []
+        failures: Dict[str, str] = {}
+        for market, syms in market_symbols.items():
+            try:
                 fetcher = FetcherFactory.create(market, self.config)
-                quotes = fetcher.fetch_realtime(syms)
-                all_quotes.extend(quotes)
+                all_quotes.extend(fetcher.fetch_realtime(syms))
+            except ProxyExhaustedError as e:
+                # 额度耗尽 ≠ 抓取失败：一个请求都没发出去，重试也没用（铁律：
+                # 绝不降级直连）。这个区分此前在这里被 except Exception 抹平了。
+                logger.warning(f"实时行情/{market}：代理耗尽，{len(syms)} 只未取到: {e}")
+                failures[market] = "proxy_exhausted"
+            except Exception as e:  # noqa: BLE001 — 一个市场炸不许拖垮其它市场
+                logger.error(f"实时行情/{market} 失败（其它市场不受影响）: {e}")
+                failures[market] = "fetch_failed"
 
-            return all_quotes
-
-        except Exception as e:
-            logger.error(f"获取实时行情失败: {e}")
-            return []
+        return all_quotes, failures
 
     def get_latest_date(self, symbol: str) -> Optional[datetime]:
         """获取最新数据日期"""

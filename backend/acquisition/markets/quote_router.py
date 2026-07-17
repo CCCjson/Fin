@@ -18,6 +18,10 @@ IP 照抛 `ProxyExhaustedError`（铁律，见 `net._rotate` / CODING_STANDARDS 
 输出口径 = `realtime.fetch_quotes_by_symbols` 的历史形状（`change_percent` / `change`
 / `is_index` / `timestamp`），实盘监控（position_guardian / price_alert_monitor /
 intraday）全靠这几个键，三个源的原始形状都在此归一。
+
+**数据血缘（2026-07-17，P0-2）**：每行额外带 `source`（哪个源出的）与 `as_of`
+（**源自报的报价时刻**，不是抓取时刻 `timestamp`）。缺失字段一律 None，不再用 0
+顶替 —— 详见 `_canonical` 的 docstring。
 """
 from collections.abc import Callable
 from datetime import datetime
@@ -75,28 +79,43 @@ def _canonical(symbol: str, *, name: Any = None, price: Any = None,
                change: Any = None, change_percent: Any = None, volume: Any = None,
                amount: Any = None, open_: Any = None, high: Any = None,
                low: Any = None, prev_close: Any = None, amplitude: Any = None,
-               turnover: Any = None) -> dict[str, Any]:
-    """归一到 `fetch_quotes_by_symbols` 的历史输出形状。"""
+               turnover: Any = None, source: str | None = None,
+               as_of: str | None = None) -> dict[str, Any]:
+    """归一到 `fetch_quotes_by_symbols` 的历史输出形状。
+
+    **缺失字段一律留 None，绝不用 0 顶替**（2026-07-17，P0-2）。此前
+    `change`/`change_percent`/`volume`/`open`/`high`/`low` 都写着
+    `x if x is not None else 0`，注释说是「归一到历史形状」——代价是
+    **「今天平盘」与「源没返回这个字段」在归一化的第一跳就不可分辨**。
+    下游拿着一个 0 无从判断该信还是该疑，涨幅预警因此静默失效
+    （`0 >= 5%` 永远不触发，而且看不出来）。
+
+    `as_of` = **源自报的报价时刻**；`timestamp` = 我们的抓取时刻。两者必须
+    分开：实测 17:49 抓到的行新浪自报 15:34，混为一谈等于凭空把收盘价说新
+    两小时。源没给 `as_of` 就是 None —— **不许拿 `timestamp` 顶替**。
+    """
     return {
         "symbol": symbol,
         "name": name or "",
         "price": price,
-        "change": change if change is not None else 0,
-        "change_percent": change_percent if change_percent is not None else 0,
-        "volume": volume if volume is not None else 0,
-        "amount": amount if amount is not None else 0,
-        "open": open_ if open_ is not None else 0,
-        "high": high if high is not None else 0,
-        "low": low if low is not None else 0,
+        "change": change,
+        "change_percent": change_percent,
+        "volume": volume,
+        "amount": amount,
+        "open": open_,
+        "high": high,
+        "low": low,
         "prev_close": prev_close,
         "amplitude": amplitude,
         "turnover": turnover,
+        "source": source,
+        "as_of": as_of,
         "timestamp": datetime.now().isoformat(),
         "is_index": _looks_like_index(symbol),
     }
 
 
-def _from_china_batch(row: dict[str, Any]) -> dict[str, Any]:
+def _from_china_batch(row: dict[str, Any], source: str | None = None) -> dict[str, Any]:
     """腾讯/新浪解析器的形状（change_pct/change_amount）→ canonical。"""
     return _canonical(
         row["symbol"], name=row.get("name"), price=row.get("price"),
@@ -104,7 +123,8 @@ def _from_china_batch(row: dict[str, Any]) -> dict[str, Any]:
         volume=row.get("volume"), amount=row.get("amount"),
         open_=row.get("open"), high=row.get("high"), low=row.get("low"),
         prev_close=row.get("prev_close"), amplitude=row.get("amplitude"),
-        turnover=row.get("turnover"),
+        turnover=row.get("turnover"), source=source,
+        as_of=row.get("quote_time"),
     )
 
 
@@ -124,7 +144,7 @@ def _run_tencent(symbols: list[str], proxies: dict[str, str] | None) -> list[dic
             for line in resp.text.splitlines():
                 row = _parse_tencent_line(line)
                 if row and row.get("price"):
-                    out.append(_from_china_batch(row))
+                    out.append(_from_china_batch(row, "tencent"))
     finally:
         session.close()
     return out
@@ -145,7 +165,7 @@ def _run_sina(symbols: list[str], proxies: dict[str, str] | None) -> list[dict[s
             for line in resp.text.splitlines():
                 row = _parse_sina_line(line)
                 if row and row.get("price"):
-                    out.append(_from_china_batch(row))
+                    out.append(_from_china_batch(row, "sina"))
     finally:
         session.close()
     return out
@@ -194,10 +214,14 @@ def _parse_baidu(symbol: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     return _canonical(
         symbol, name=(result.get("basicinfos") or {}).get("name"),
         price=price, change=_num(cur.get("increase")), change_percent=change_pct,
-        volume=_num(cur.get("volume"), int, 0), amount=_num(cur.get("amount"), float, 0),
-        open_=_num(pankou.get("open"), float, 0), high=_num(pankou.get("high"), float, 0),
-        low=_num(pankou.get("low"), float, 0), prev_close=_num(pankou.get("preClose")),
+        # 默认值一律 None 不是 0 —— 同 `_canonical` 的理由：百度没给的字段
+        # 说成 0 就是拿「缺失」冒充「真的是零」。
+        volume=_num(cur.get("volume"), int), amount=_num(cur.get("amount"), float),
+        open_=_num(pankou.get("open"), float), high=_num(pankou.get("high"), float),
+        low=_num(pankou.get("low"), float), prev_close=_num(pankou.get("preClose")),
         amplitude=_num(pankou.get("amplitudeRatio")), turnover=_num(pankou.get("turnoverRatio")),
+        # 百度这个接口不给报价时刻 → as_of 就是 None（诚实地说「不知道几点的」）。
+        source="baidu",
     )
 
 

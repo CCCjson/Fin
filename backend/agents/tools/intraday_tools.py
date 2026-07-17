@@ -76,7 +76,11 @@ def get_intraday_check(symbol: str) -> ToolEnvelope:
         "symbol": symbol, "name": q.get("name"),
         "price": price, "day_change_pct": q.get("change_percent"),
         "turnover_pct": q.get("turnover"), "amplitude_pct": q.get("amplitude"),
-        "as_of": now.strftime("%H:%M"),
+        # 优先用**源自报的报价时刻**；源没给才退回本机时钟，且明确标出来。
+        # 此前恒为 now()：17:49 抓到的 15:34 收盘价会被标成 17:49，凭空说新两小时。
+        "as_of": q.get("as_of") or now.strftime("%H:%M"),
+        "as_of_is_fetch_time": q.get("as_of") is None,
+        "source": q.get("source"),
     }
     notes = []
 
@@ -130,7 +134,12 @@ def get_intraday_check(symbol: str) -> ToolEnvelope:
     summary["reading"] = "；".join(notes) if notes else "分钟线数据不足，仅有快照信息"
 
     cards = [
-        {"label": "现价", "value": f"{price}（{q.get('change_percent', 0):+.2f}%）",
+        # `.get(k, 0)` 只在**键不存在**时兜底；键在而值是 None 会让 `:+.2f` 直接
+        # TypeError。行情源没返回涨跌幅时该字段就是 None（quote_router 不再用 0 冒充
+        # 缺失），所以这里必须显式判 None 而不是靠 get 的默认值。
+        {"label": "现价",
+         "value": (f"{price}（{_pct:+.2f}%）"
+                   if (_pct := q.get("change_percent")) is not None else f"{price}（涨跌幅缺失）"),
          "type": "neutral", "positive": (q.get("change_percent") or 0) >= 0},
         {"label": "分时均价", "value": str(vwap) if vwap else "—", "type": "neutral"},
         {"label": "量比", "value": str(summary.get("volume_ratio", "—")), "type": "neutral"},

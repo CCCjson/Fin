@@ -13,7 +13,7 @@ from net import ProxyExhaustedError
 CANONICAL_KEYS = {
     "symbol", "name", "price", "change", "change_percent", "volume", "amount",
     "open", "high", "low", "prev_close", "amplitude", "turnover", "timestamp",
-    "is_index",
+    "is_index", "source", "as_of",
 }
 
 
@@ -21,6 +21,37 @@ def test_canonical_shape_is_frozen():
     """实盘监控靠这套键；少一个 position_guardian/price_alert 就读到 None。"""
     row = qr._canonical("600519.SH", price=1.0)
     assert set(row.keys()) == CANONICAL_KEYS
+
+
+def test_missing_numeric_fields_stay_none_not_zero():
+    """🔒 P0-2 门禁：源没给的字段必须是 None，**不许用 0 冒充**。
+
+    此前 `change`/`change_percent`/`volume`/`open`/`high`/`low` 都是
+    `x if x is not None else 0` —— 「今天平盘」与「源没返回这字段」在归一化第一跳
+    就不可分辨。后果不是理论上的：涨幅预警 `change_pct >= 5%` 拿到 0 永远不触发，
+    静默失效且看不出来。别为了「形状好看」把这条改回去。
+    """
+    row = qr._canonical("600519.SH", price=1.0)
+    for key in ("change", "change_percent", "volume", "amount", "open", "high", "low"):
+        assert row[key] is None, f"{key} 必须留 None，不许用 0 顶替缺失"
+
+
+def test_as_of_is_source_reported_not_fetch_time():
+    """🔒 P0-2 门禁：`as_of`（源自报的报价时刻）与 `timestamp`（我们的抓取时刻）
+    是两回事，源没给 as_of 就得是 None。
+
+    实测：17:49 抓到的行，新浪自报报价时刻 15:34 —— 拿 now() 当报价时间等于凭空
+    把收盘价说新两小时，正是「数据看着新鲜实际是三天前收盘价」那个病的源头。
+    """
+    row = qr._canonical("600519.SH", price=1.0)
+    assert row["as_of"] is None            # 没传就是不知道，不许拿 timestamp 顶
+    assert row["timestamp"] is not None    # 抓取时刻照常有
+
+    row2 = qr._canonical("600519.SH", price=1.0, as_of="2026-07-17T15:34:59",
+                         source="sina")
+    assert row2["as_of"] == "2026-07-17T15:34:59"
+    assert row2["source"] == "sina"
+    assert row2["as_of"] != row2["timestamp"]
 
 
 def test_from_china_batch_maps_pct_and_amount():
@@ -33,6 +64,20 @@ def test_from_china_batch_maps_pct_and_amount():
     assert out["change"] == -5.0
     assert out["prev_close"] == 1204.98
     assert set(out.keys()) == CANONICAL_KEYS
+
+
+def test_from_china_batch_carries_source_and_quote_time():
+    """解析器的 quote_time（源自报报价时刻）要流到 canonical 的 as_of，并带上源名。"""
+    src = {"symbol": "600519.SH", "price": 1200.0,
+           "quote_time": "2026-07-17T15:34:59"}
+    out = qr._from_china_batch(src, "sina")
+    assert out["as_of"] == "2026-07-17T15:34:59"
+    assert out["source"] == "sina"
+
+    # 源没给报价时刻 → as_of 是 None，不许悄悄拿抓取时刻顶替
+    out2 = qr._from_china_batch({"symbol": "600519.SH", "price": 1.0}, "tencent")
+    assert out2["as_of"] is None
+    assert out2["source"] == "tencent"
 
 
 def test_index_flag_disambiguates_same_code():
