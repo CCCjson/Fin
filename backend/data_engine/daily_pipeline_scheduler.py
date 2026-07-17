@@ -47,6 +47,17 @@ _AUTO_HOUR = int(os.getenv("DAILY_AUTO_UPDATE_HOUR", "15"))
 _AUTO_MINUTE = int(os.getenv("DAILY_AUTO_UPDATE_MINUTE", "35"))
 JOB_ID = "daily_data_pipeline"
 CATCHUP_JOB_ID = "daily_data_pipeline_catchup"
+OVERSEAS_JOB_ID = "overseas_daily_update"
+
+# ── 港美股：独立 job、独立时点（2026-07-17 Jason 拍板）─────────────────────
+# **为什么不并进主链**，两个理由：
+# 1. **港股 16:00 HKT 才收盘**，主链 15:35 跑，那会儿拉港股拿到的是没收盘的半截子。
+#    （美股无此问题：美东 16:00 收盘 = 北京凌晨 4-5 点，15:35 拿到的是 11h 前已收的
+#    完整日线。所以 16:30 对两个市场都成立。）
+# 2. 港美股 ~16k 只要跑 10-15 分钟，串在主链里会把后面的信号回补/追踪/涨停预测/
+#    估值刷新全部推迟。
+_OVERSEAS_HOUR = int(os.getenv("OVERSEAS_AUTO_UPDATE_HOUR", "16"))
+_OVERSEAS_MINUTE = int(os.getenv("OVERSEAS_AUTO_UPDATE_MINUTE", "30"))
 
 # 启动后隔多久做补跑检查。默认 3 分钟：避开后端启动高峰（约 20-34s 才就绪）+
 # 前端首屏抢资源，也让「开关窗抖动」不会连着触发几次（每次都会被 _is_updating 挡，
@@ -63,6 +74,18 @@ _CATCHUP_DELAY_SEC = int(os.getenv("DAILY_AUTO_UPDATE_CATCHUP_DELAY", "180"))
 #
 # 取 80 而不是 100：每天总有几十只停牌/退市/新股抓不到，强求 100% 会天天空转。
 _CATCHUP_COVERAGE_PCT = float(os.getenv("DAILY_AUTO_UPDATE_CATCHUP_COVERAGE_PCT", "80"))
+
+# 港美股启动补跑的门槛：落后**多少天**才补。
+#
+# ⚠️ **刻意比 A 股钝得多**，因为假阳性代价不是一个量级：
+#   - A 股误判 = 几秒空转（DailyUpdater 探到真实交易日，全部 already_fresh 立即 complete）
+#   - 港美股误判 = **10-15 分钟白打 Yahoo**（~16k 只全被判为待更新，逐批拉、逐批空手而归）
+# 而美股/港股各有独立假期（美股还有夏令时），**没有交易日历就分不清「今天是假期」
+# 和「job 没跑」** —— 项目里根本没有交易日历模块。
+#
+# 取 3：1-2 天落后是常态（周末 / 假期 / 今天 16:30 还没到点），交给 cron 管；
+# ≥3 天才说明是真出事了（实测发现时港股落后 9 天、美股 11 天）。
+_OVERSEAS_CATCHUP_STALE_DAYS = int(os.getenv("OVERSEAS_CATCHUP_STALE_DAYS", "3"))
 
 
 def _last_expected_trading_day(now: datetime) -> date:
@@ -96,6 +119,9 @@ class DailyPipelineScheduler:
         self._chain_tracking = _env_bool("DAILY_AUTO_UPDATE_CHAIN_TRACKING", True)
         self._chain_valuation = _env_bool("DAILY_AUTO_UPDATE_CHAIN_VALUATION", True)
         self._chain_decision_outcome = _env_bool("DAILY_AUTO_UPDATE_CHAIN_DECISION_OUTCOME", True)
+        self._overseas_enabled = _env_bool("OVERSEAS_AUTO_UPDATE_ENABLED", True)
+        self._overseas_last_run: Optional[Dict] = None
+        self._overseas_updating = False   # 防重入（定时 + 补跑同时触发）
         # 最近一次链条运行的结果快照（供前端展示）
         self._last_run: Optional[Dict] = None
         self._is_updating = False  # 防重入（定时 + 手动同时触发）
@@ -133,6 +159,11 @@ class DailyPipelineScheduler:
             "chain_tracking": self._chain_tracking,
             "chain_valuation": self._chain_valuation,
             "chain_decision_outcome": self._chain_decision_outcome,
+            # 港美股是独立 job（独立 cron 16:30），不是链的一步，所以单独一组字段
+            "overseas_enabled": self._overseas_enabled,
+            "overseas_cron": f"{_OVERSEAS_MINUTE} {_OVERSEAS_HOUR} * * 1-5",
+            "overseas_is_updating": self._overseas_updating,
+            "overseas_last_run": self._overseas_last_run,
             "next_run": next_run,
             "jobs": jobs,
             "last_run": self._last_run,
@@ -168,7 +199,11 @@ class DailyPipelineScheduler:
         scheduler = self._get_scheduler()
         if self._enabled:
             self._add_job(scheduler)
-            # 补跑检查：cron 兜不住「15:35 那会儿进程没起」，这里兜
+        if self._overseas_enabled:
+            self._add_overseas_job(scheduler)
+        # 补跑检查：cron 兜不住「触发点那会儿进程没起」，这里兜。
+        # 只要 A 股/港美股任一开着就要挂 —— 它内部各自判 enabled。
+        if self._enabled or self._overseas_enabled:
             self._add_catchup_job(scheduler)
         scheduler.start()
         self._running = True
@@ -202,6 +237,37 @@ class DailyPipelineScheduler:
             misfire_grace_time=3600,
             coalesce=True,
         )
+
+    def _add_overseas_job(self, scheduler):
+        """港美股增量：独立 job、独立 cron（默认 16:30）。理由见文件顶部常量处。"""
+        from apscheduler.triggers.cron import CronTrigger
+        scheduler.add_job(
+            self._overseas_job,
+            CronTrigger(hour=_OVERSEAS_HOUR, minute=_OVERSEAS_MINUTE, day_of_week="mon-fri"),
+            id=OVERSEAS_JOB_ID,
+            name="港美股日线增量",
+            replace_existing=True,
+            misfire_grace_time=3600,   # 同 JOB_ID：兜不住「进程没起」，那种靠 _catchup_job
+            coalesce=True,
+        )
+
+    async def _overseas_job(self):
+        """港美股增量入口：同步任务丢线程池，绝不阻塞事件循环。"""
+        if self._overseas_updating:
+            logger.warning("[港美股增量] 上一次尚未结束，跳过本次触发")
+            return
+        self._overseas_updating = True
+        loop = asyncio.get_event_loop()
+        try:
+            from data_engine.overseas_daily_updater import update_overseas_daily
+            result = await loop.run_in_executor(None, update_overseas_daily)
+            self._overseas_last_run = result
+            logger.info(f"[港美股增量] 完成: {result}")
+        except Exception as e:  # noqa: BLE001 — 定时任务绝不抛出
+            logger.exception(f"[港美股增量] 异常: {e}")
+            self._overseas_last_run = {"ok": False, "error": str(e)}
+        finally:
+            self._overseas_updating = False
 
     def _add_catchup_job(self, scheduler):
         """挂一个一次性的启动补跑检查（延迟执行）。"""
@@ -249,12 +315,69 @@ class DailyPipelineScheduler:
         finally:
             session.close()
 
+    @staticmethod
+    def _overseas_frontier() -> Dict[str, Optional[date]]:
+        """港美股各自的「最新行情日期」（前沿）。
+
+        这里用 `max(date)` 是**安全的**，与 A 股那边刻意不用 max 的理由不冲突：
+        A 股要判的是「今天这批跑完整没有」（少数领跑者会把 max 拉高、掩盖整体陈旧），
+        这里判的是「整个市场是不是被落下好几天了」—— max 恰好是「最乐观的估计」，
+        连最乐观的都落后 3 天，那就是真落后了。**宁可漏判不可误判**（误判要白烧
+        10-15 分钟 Yahoo 请求）。
+        """
+        from sqlalchemy import func
+        from data_engine.storage.database import get_session
+        from data_engine.storage.models import DailyQuote
+        session = get_session()
+        try:
+            out: Dict[str, Optional[date]] = {}
+            for mkt in ("hk_stock", "us_stock"):
+                d = session.query(func.max(DailyQuote.date)).filter(
+                    DailyQuote.market == mkt
+                ).scalar()
+                if isinstance(d, datetime):
+                    d = d.date()
+                out[mkt] = d
+            return out
+        finally:
+            session.close()
+
+    async def _overseas_catchup(self):
+        """港美股启动补跑：落后 >= _OVERSEAS_CATCHUP_STALE_DAYS 天才补。
+
+        门槛比 A 股钝得多，理由见 `_OVERSEAS_CATCHUP_STALE_DAYS` 的注释。
+        """
+        if not self._overseas_enabled or self._overseas_updating:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+            frontier = await loop.run_in_executor(None, self._overseas_frontier)
+            today = date.today()
+            stale = {
+                mkt: (today - d).days
+                for mkt, d in frontier.items()
+                if d and (today - d).days >= _OVERSEAS_CATCHUP_STALE_DAYS
+            }
+            if not stale:
+                logger.info(f"[港美股增量] 启动检查：无需补跑（前沿 {frontier}）")
+                return
+            logger.warning(
+                f"[港美股增量] 启动检查：{stale}（落后天数）→ 立即补跑。"
+                f"港美股没有别的增量通道，不补就一直不会新"
+            )
+            await self._overseas_job()
+        except Exception as e:  # noqa: BLE001 — 补跑失败绝不能拖垮启动
+            logger.exception(f"[港美股增量] 启动检查异常: {e}")
+
     async def _catchup_job(self):
         """启动补跑：数据落后于最近该有的交易日就补一次链。
 
         存在的理由见模块 docstring —— cron 只在进程活着时触发，而本项目后端跟着
         桌面 App 起停，没有这个兜底就会**无声无息**地丢掉整天的数据。
+
+        港美股走 `_overseas_catchup`（门槛不同，见那里）。
         """
+        await self._overseas_catchup()
         if not self._enabled or self._is_updating:
             return
         try:

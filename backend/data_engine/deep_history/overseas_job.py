@@ -238,6 +238,25 @@ class OverseasDeepHistoryJob(BaseSingletonJob):
             self.market = market
         fetch_start = FETCH_START[market]
 
+        # Yahoo 跨 job 互斥：每日增量（data_engine/overseas_daily_updater.py）也在打
+        # Yahoo。同时跑 = 两倍请求量，两边都可能被限速。本 job 的单例锁只管住了
+        # 「hk/us 不同时跑」（见 :97 的注释），管不到别的 job —— 这里补上。
+        #
+        # 抢不到就明确停下并报错（形状同下方连通性预检失败：logger.error + status
+        # stopped）。每日增量只跑 ~15 分钟，等一会儿重开即可。
+        from acquisition.markets.yf_batch import yahoo_job_lock
+        with yahoo_job_lock(f"{market} 深历史回补") as ok:
+            if not ok:
+                logger.error(
+                    f"{market} 深历史回补：港美股每日增量正在跑（Yahoo 互斥），本次不启动。"
+                    f"它约 15 分钟跑完，稍后重开即可"
+                )
+                with self._state_lock:
+                    self.status = "stopped"
+                return
+            self._execute_locked(market, fetch_start, cfg)
+
+    def _execute_locked(self, market: str, fetch_start: str, cfg: Dict) -> None:
         todo, already_done, progress = self._resolve_universe(market, cfg)
         confirmed_no_data = set(progress[market]["confirmed_no_data"])
 

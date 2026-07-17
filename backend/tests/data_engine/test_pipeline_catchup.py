@@ -183,6 +183,72 @@ def test_coverage_excludes_etf_from_denominator(db):
     assert have / total * 100 == 100.0
 
 
+def test_overseas_catchup_threshold_is_blunter_than_a_share():
+    """港美股补跑门槛必须**明显钝于** A 股 —— 假阳性代价不是一个量级。
+
+    A 股误判 = 几秒空转；港美股误判 = 10-15 分钟白打 Yahoo（~16k 只逐批空手而归）。
+    且港美股各有独立假期，没交易日历就分不清「今天是假期」和「job 没跑」。
+    """
+    assert sched_mod._OVERSEAS_CATCHUP_STALE_DAYS >= 3, (
+        "调低这个值会让每个港股/美股假期都白跑一次 10-15 分钟的全量拉取"
+    )
+
+
+def test_overseas_job_is_registered_and_separate_from_the_chain(monkeypatch):
+    """港美股必须是**独立 job**，不是链的一步。
+
+    并进链里有两个问题：① 港股 16:00 HKT 才收盘，链 15:35 跑拿到的是半截子；
+    ② ~16k 只跑 10-15 分钟，会把链后面的信号回补/追踪/估值刷新全部推迟。
+    """
+    s = DailyPipelineScheduler()
+    jobs = {}
+
+    class _FakeScheduler:
+        def add_job(self, fn, trigger, *, id, name, **kw):
+            jobs[id] = (name, trigger)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(s, "_get_scheduler", lambda: _FakeScheduler())
+    s.start()
+
+    assert sched_mod.OVERSEAS_JOB_ID in jobs, "港美股 job 没注册"
+    assert sched_mod.JOB_ID in jobs, "A 股主链 job 没注册"
+    assert jobs[sched_mod.OVERSEAS_JOB_ID][1] is not jobs[sched_mod.JOB_ID][1], \
+        "两个 job 必须各自独立的 trigger"
+
+
+def test_overseas_cron_is_after_hk_close():
+    """港股 16:00 HKT 收盘 —— 早于此跑拿到的是没收盘的半截子日线。"""
+    assert (sched_mod._OVERSEAS_HOUR, sched_mod._OVERSEAS_MINUTE) >= (16, 0), (
+        "港美股 job 不能早于港股 16:00 收盘"
+    )
+    # 也必须晚于 A 股链，否则两个重活撞一起
+    assert (sched_mod._OVERSEAS_HOUR, sched_mod._OVERSEAS_MINUTE) > (_AUTO_HOUR, _AUTO_MINUTE)
+
+
+def test_catchup_registered_even_if_only_overseas_enabled(monkeypatch):
+    """A 股自动更新被关掉时，港美股的补跑不该跟着失踪。"""
+    s = DailyPipelineScheduler()
+    s._enabled = False
+    s._overseas_enabled = True
+    jobs = []
+
+    class _FakeScheduler:
+        def add_job(self, fn, trigger, *, id, name, **kw):
+            jobs.append(id)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(s, "_get_scheduler", lambda: _FakeScheduler())
+    s.start()
+
+    assert sched_mod.CATCHUP_JOB_ID in jobs
+    assert sched_mod.JOB_ID not in jobs, "A 股关了就不该注册主链 job"
+
+
 def test_misfire_grace_does_not_cover_a_dead_process():
     """回归钉子：别再有人以为 misfire_grace_time 能兜「进程没起」。
 

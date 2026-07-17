@@ -8,12 +8,45 @@ yfinance 批量实时行情助手 — 美股/港股共用
 返回 dict 形状与原 fetch_realtime 完全一致：
 {symbol, price, change, change_percent, volume, timestamp}
 """
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Dict, List
 
 from loguru import logger
 
 _yf_proxy_configured = False
+
+# ── Yahoo 跨 job 互斥锁 ────────────────────────────────────────────────────
+# 打 Yahoo 的**长任务**有两个：深历史回补（deep_history/overseas_job.py）和每日增量
+# （data_engine/overseas_daily_updater.py）。两者各有各的锁，但**互不认识** ——
+# 同时跑就是两倍请求量砸向 Yahoo，两边都可能被限速（overseas_job 自己的注释早就
+# 点破过这个风险：「hk/us 共用一个单例，避免两个方向同时叠加 Yahoo 限速风险」，
+# 只是那个单例管不到别的 job）。
+#
+# 锁放在 yf_batch 是因为它是**唯一的 Yahoo 出网门面**，两个 job 本来就都 import 它，
+# 不引入新的依赖方向（engines → acquisition，合规）。
+#
+# 粒度是**整个 job 跑一趟**，不是单次请求 —— 单请求粒度只会让两个 job 交替轰炸，
+# 该防的没防住。
+_JOB_LOCK = threading.Lock()
+
+
+@contextmanager
+def yahoo_job_lock(label: str, blocking: bool = False):
+    """抢 Yahoo 长任务的互斥锁。`with yahoo_job_lock("每日增量") as ok:` 判 ok。
+
+    默认 **非阻塞**：抢不到就让调用方自己决定跳过（定时任务宁可跳过本次等下一轮，
+    也不要堆在这儿等半小时——等到了数据也过时了，还占着线程）。
+    """
+    acquired = _JOB_LOCK.acquire(blocking=blocking)
+    if not acquired:
+        logger.warning(f"[Yahoo 互斥] {label} 抢锁失败：另一个 Yahoo 长任务正在跑，本次跳过")
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            _JOB_LOCK.release()
 
 
 def configure_yf_proxy() -> None:
