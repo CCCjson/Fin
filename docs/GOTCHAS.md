@@ -140,3 +140,18 @@
 ## async 边界（域9 已彻底清零 api/routes）
 
 `async def` 内一切同步阻塞 IO（`session.query`/`repo.*` 落库方法/`data_engine.get_*`/重计算）必须走 `await asyncio.to_thread(...)`，模板见 `api/routes/data.py`。多条连续 DB 操作用**一个闭包整段包**（SQLAlchemy session 生命周期留在同一线程，不可跨线程共享）。**唯一保守未动**：`automation/scheduler.py` 的 config `session.query`（session 跨多个 await 存活、域7 已裁定本地 sqlite 轻 IO、不在 §5 原清单内）。新增 async route handler 别再裸调同步 DB/IO。
+
+## 港美股行情更新（2026-07-17 建成，动港美股/Yahoo 出网前必读）
+
+**港美股此前根本没有增量通道**：`DailyUpdater` 硬过滤 `market == "a_share"`；唯一通道 `deep_history/overseas_job.py` **结构上不可能做增量**（`_resolve_universe` = 「只要这只票在 `daily_quotes` 里有任意一行就永远跳过」，只能把票从「零数据」拉到「有数据」）。所以港股一度停在 07-08、美股停在 07-06 —— 那是深历史最后一次跑完的日子，**不会自己变新**。现由 `data_engine/overseas_daily_updater.py` 补上（独立 job + cron 16:30，不是每日链的一步）。
+
+- 🔴 **`common/market.py::to_yf_symbol()` 是「去掉首位」不是「补零到 4 位」**：`09988.HK` → `9988.HK`。港股库里统一存 5 位、yfinance 只认 4 位，**喂 5 位进去 yfinance 回「possibly delisted; no price data found」——全军拉不到且不抛异常**。静默失败，最坏的那种。任何新的港股 yfinance 调用点都必须过它。
+- 🔴 **港美股靠 `stock_type` 排除，不靠 `is_active`**：美股 914 只 `excluded_bond_note`/`excluded_leveraged_etf` **也是 `is_active=1`**。universe 过滤必须写 `stock_type.in_(["stock","etf"])`，只看 `is_active` 会把债券/杠杆 ETF 全捞进来。
+- 🔴 **REIT 不是 ETF**：`00823.HK 领展房产基金`、`02778.HK 冠君产业信托` 是正经权益资产（领展是港股大蓝筹）。**按「基金」「信托」关键词筛 ETF 会误杀它们** —— `hk_filter.py` 的 ETF 关键词只认 `ETF` 本身。代价是 `02800.HK 盈富基金` 被标成 `stock`，**无害**（stock/etf 都在抓取范围内，承重的区分是「excluded 与否」）。有测试钉死这个取舍。
+- **港股代码段**（按库里真实数据核实，非凭印象）：`0xxxx` 正股（含 GEM `08xxx`，5 位归一后仍 0 开头）/ `8xxxx` **人民币柜台**（`89988.HK 阿里巴巴-WR` = `09988.HK` 的重复，抓两遍还会重复计数；`89021.HK 国债四一零四-R`）/ `4xxxx` 债券票据。清洗后 4699 → 3978 只值得抓。
+- ⛔ **不许 `import yfinance`**：`tests/net/test_egress_single_entry.py` 在 **AST 层面**检测 import（不看是否真调用），只有 `acquisition`/`net` 顶包豁免。一律走 `acquisition/markets/yf_batch.py` 门面（代理由 `configure_yf_proxy()` 按 net.overseas 注入，且必须赶在任何 yf 调用前——yfinance 底层 curl_cffi 单例只在首次建 session 时读一次代理）。
+- ⚠️ **§8.2 代理铁律（国内抓取失败只换 IP 不许直连）不管海外**：海外走 `channels.resolve_overseas_proxy()`，返回 None 就是**合法直连**。
+- **Yahoo 跨 job 互斥** `yf_batch.yahoo_job_lock()`：深历史回补与每日增量同时打 Yahoo = 两倍请求量，两边都可能被限。`overseas_job` 自己的单例锁只管「hk/us 不同时跑」，**管不到别的 job**。优先级：**自动的让位于手动的**（增量抢不到就跳过、明天还有机会；深历史抢不到明确报错停下、Jason 在旁边等着）。**互斥必须双向**，只有一边抢锁等于没锁，有测试钉死。
+- **别让一只掉队的票拖累全体**：拉取起点若取全局 `min(latest)`，一只落后一年的票会把所有票的起点拖到 90 天前 → 只缺 9 天的票也拉 90 根 bar，16k 只上是 **10 倍流量**。已改成 todo 按落后程度排序 + **每批各算起点**。
+- **零数据的票跳过**（港股 ~817 只）：那是**深历史的活**，增量不该去拉十年数据把一次运行拖死。
+- **启动补跑门槛比 A 股钝得多**（`_OVERSEAS_CATCHUP_STALE_DAYS=3`）：A 股误判 = 几秒空转（`DailyUpdater` 探到真实交易日、全部 `already_fresh` 立即 complete）；港美股误判 = **10-15 分钟白打 Yahoo**。而港美股各有独立假期（美股还有夏令时），**没交易日历就分不清「今天是假期」和「job 没跑」** —— 项目里根本没有交易日历模块（`repository.py` / `recommend_engine/session.py` 两处注释都是「没有」的自白）。
