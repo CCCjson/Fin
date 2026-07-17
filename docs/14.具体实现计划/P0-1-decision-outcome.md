@@ -5,9 +5,41 @@ size: 小
 depends: 无
 blocks: P0-3
 paths_verified: 2026-07-17
+status: ✅ 已完工 2026-07-17（commit ee561a1 → f95c08d，六笔）
 ---
 
 # P0-1 建议后验评估器
+
+> ## ✅ 已完工（2026-07-17）—— 下方是原始计划，实施时的偏离见本框
+>
+> **四条验收标准全部达成**，代码承载物：
+> - 评估内核 `backend/common/outcome_eval.py`（纯逻辑/DB 无关/Protocol 入参/`age_days` 而非 `date.today()`）
+> - 回填 + 胜率 `backend/decision_log.py`：`backfill_outcomes()` / `get_decision_stats()` / `_OUTCOME_WRITE_FIELDS` 白名单
+> - schema：`DecisionLog` 加 12 列 + `idx_decision_outcome_scan`；`init_db()` 幂等 ALTER
+> - 每日链第⑥步；门禁 `tests/baseline/test_prompt_version_pinned.py`
+>
+> ### 实施时对本卡的五处偏离（都已跟 Jason 逐条确认，别改回去）
+>
+> 1. **cockpit 留痕接在工具层 `agents/tools/analysis_tools.py`，不在 `aggregator.py`**（本卡原文写的是后者）。因为 `aggregate()` 另一个调用方是 `recommend_engine/scoring.py` 的批量选股循环（4 线程、每轮几十只），写在 aggregator 里会灌爆 DecisionLog 且与 `moneybill_recommend` 重复计数。**已加门禁 `test_cockpit_provenance_is_not_in_aggregator` 防复发**，并实测回归。
+> 2. **`completed` 的门槛是「方向可评」（action + entry_price + 够 bar），不是「止损止盈齐全」**。实锤：`recommend_engine/engine.py:142` 构造 buys 时压根没 take_profit 键 —— 照本卡字面判会让主力 source 100% unable。
+> 3. **多加了 `return_5d`/`return_20d` 两列**（本卡字段清单只有 label）。归因要 `avg_return`，且以后调中性带能直接重算 label 不必重跑行情。范式同 `SignalTracking`。
+> 4. **`no_entry_price` 判不可重试**（外部蓝本判可重试）。它的锚定价是现拉行情、可能暂时缺；我们的 `entry_price` 是被 `_IMMUTABLE_REFRESH_FIELDS` 冻结的存量字段，NULL 就永远是 NULL。
+> 5. **`hit_stop`/`hit_target` 首次命中就 break**，不记全窗口（照蓝本）。止损出局后已空仓，后面再碰止盈跟你没关系；记全窗口会让 `hit_target_rate` 虚高。
+>
+> ### `prompt_version` 取值：**常量 bump + baseline 测试钉源文件 hash**（运行时不算 hash）
+> 五个常量就近落在「它所版本化的东西」旁：三个 prompt_builder + `cockpit_engine/scorer.py`（版本化的是权重表）+ `agents/skills_loader.py`（版本化的是 `monitor.md`）。
+> 不用运行时 hash 的决定性理由：report 的 prompt 是**逐股动态渲染**的 → 对渲染后文本取 hash = 每只股票一个 hash = 不是版本号是随机数，`GROUP BY prompt_version` 碎成 N 组，归因废掉。
+>
+> ### 首跑真库（25 条）的发现 —— 全部可解释，且都是 `unable≠miss` 的价值现场
+> - **`moneybill` 7 条里 6 条 `no_action`**：`confirm_gate` 把「加/删自选股」这类**非交易确认**也记成 decision。旧口径会把它们算成「判错」稀释胜率，现在诚实地不进分母。
+> - **`report_picks` 10 条 `no_quotes`**：库里行情停在 07-09、建议是 07-10 发的，建议日之后一根 bar 都没有。判**可重试**，每日链第①步更新完日线第⑥步就能评 —— 印证了「第⑥步必须排在第①步之后」。
+>
+> ### 遗留（不在本卡范围，想做时再说）
+> - **advisor v1 恒为 `unable/no_action`**：不传 action/entry_price，本卡明确不做「解析中文自由文本猜方向」。要让它可评得在流式结束后跑结构化抽取 —— 另开卡。
+> - **重复跑选股会重复计数同一条建议**：真库里 601156.SH 07-02 那条被记了 3 次（同一入场价）。这是 `recommend_engine` 既有的记录方式，不是本卡引入的，但会让胜率分母虚高。
+> - **`engine_version` 混版本**：bump 后老 `completed` 行不重算。本卡只做「可见」（`get_decision_stats` 返回数据里实际 distinct 的版本集合）。
+> - **`record_decision` 的 `finally` 缺 rollback**（`decision_log.py`）：commit 抛异常时连接带脏事务被 close。SQLite+NullPool 下危害有限。
+> - **P0-3 的量纲雷**：做置信度分桶校准时**别抄 `validator.py:246` 的桶**（那是 0-1 量纲），`confidence` 这列是 0-100。
 
 > **一句话**：MoneyBill 说完「茅台买入，止损 1580，目标 1750」就完事了，**没人回头问一句后来对不对**。这一项给 AI 装上记性。
 >
