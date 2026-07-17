@@ -46,6 +46,7 @@ class DailyPipelineScheduler:
         self._chain_signals = _env_bool("DAILY_AUTO_UPDATE_CHAIN_SIGNALS", True)
         self._chain_tracking = _env_bool("DAILY_AUTO_UPDATE_CHAIN_TRACKING", True)
         self._chain_valuation = _env_bool("DAILY_AUTO_UPDATE_CHAIN_VALUATION", True)
+        self._chain_decision_outcome = _env_bool("DAILY_AUTO_UPDATE_CHAIN_DECISION_OUTCOME", True)
         # 最近一次链条运行的结果快照（供前端展示）
         self._last_run: Optional[Dict] = None
         self._is_updating = False  # 防重入（定时 + 手动同时触发）
@@ -82,6 +83,7 @@ class DailyPipelineScheduler:
             "chain_signals": self._chain_signals,
             "chain_tracking": self._chain_tracking,
             "chain_valuation": self._chain_valuation,
+            "chain_decision_outcome": self._chain_decision_outcome,
             "next_run": next_run,
             "jobs": jobs,
             "last_run": self._last_run,
@@ -251,6 +253,22 @@ class DailyPipelineScheduler:
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"[每日链] 估值快照刷新失败: {e}")
                 summary["steps"]["valuation"] = {"error": str(e)}
+
+        # 6) 回填 AI 建议的后验结果（「上周说买茅台，对了吗」）
+        #
+        # ⚠️ **必须排在第 1 步「更新日线」之后** —— 回填读 DailyQuote 判建议日之后的
+        # 走势，放前面会永远少最新一根 bar。（实测过：库里行情停在 07-09 时，07-10 发的
+        # 建议全判 no_quotes；那是**可重试**的 unable，等日线更新完这一步就能评出来。）
+        #
+        # 不出网：直接 ORM 查 DailyQuote，不走 DataEngine.get_daily_data（那条路在库里
+        # 没数据时会自动联网拉）。
+        if self._chain_decision_outcome:
+            try:
+                from decision_log import backfill_outcomes
+                summary["steps"]["decision_outcome"] = backfill_outcomes()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[每日链] 决策后验回填失败: {e}")
+                summary["steps"]["decision_outcome"] = {"error": str(e)}
 
         summary["completed_at"] = datetime.now().isoformat()
 
