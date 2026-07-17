@@ -294,10 +294,13 @@ def test_stop_first_rate_counts_ambiguous_as_stop():
 
     分母是 stop+target+ambiguous（不含 none —— 那些根本没决出胜负）。
     """
-    bars_stop = _flat_bars(20); bars_stop[2] = _bar(100, 79, 85)
-    bars_amb = _flat_bars(20); bars_amb[1] = _bar(125, 75, 100)
-    bars_tp = _flat_bars(20); bars_tp[4] = _bar(121, 100, 118)
-    adv = dict(stop_loss=80.0, take_profit=120.0)
+    bars_stop = _flat_bars(20)
+    bars_stop[2] = _bar(100, 79, 85)
+    bars_amb = _flat_bars(20)
+    bars_amb[1] = _bar(125, 75, 100)
+    bars_tp = _flat_bars(20)
+    bars_tp[4] = _bar(121, 100, 118)
+    adv = {"stop_loss": 80.0, "take_profit": 120.0}
     results = [
         evaluate_single(_advice(**adv), bars_stop),
         evaluate_single(_advice(**adv), bars_amb),

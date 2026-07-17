@@ -184,6 +184,19 @@ def _to_dict(r: DecisionLog) -> Dict[str, Any]:
         "turn_start_idx": r.turn_start_idx,
         "executed": r.executed,
         "risk_passed": r.risk_passed,
+        # 后验评估（P0-1）
+        "return_5d": r.return_5d,
+        "return_20d": r.return_20d,
+        "outcome_5d": r.outcome_5d,
+        "outcome_20d": r.outcome_20d,
+        "hit_stop": r.hit_stop,
+        "hit_target": r.hit_target,
+        "first_hit": r.first_hit,
+        "first_hit_days": r.first_hit_days,
+        "outcome_status": r.outcome_status,
+        "unable_reason": r.unable_reason,
+        "engine_version": r.engine_version,
+        "evaluated_at": r.evaluated_at.isoformat() if r.evaluated_at else None,
     }
 
 
@@ -194,10 +207,11 @@ def query_decisions(
     action: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    outcome_status: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> Dict[str, Any]:
-    """按 symbol/来源/动作/日期过滤，倒序返回决策记录。"""
+    """按 symbol/来源/动作/日期/评估状态过滤，倒序返回决策记录。"""
     session = get_session()
     try:
         q = session.query(DecisionLog)
@@ -207,6 +221,8 @@ def query_decisions(
             q = q.filter(DecisionLog.source == source)
         if action:
             q = q.filter(DecisionLog.action == action)
+        if outcome_status:
+            q = q.filter(DecisionLog.outcome_status == outcome_status)
         if start_date:
             q = q.filter(DecisionLog.created_at >= datetime.fromisoformat(start_date))
         if end_date:
@@ -351,5 +367,147 @@ def backfill_outcomes() -> Dict[str, int]:
     except Exception:
         session.rollback()
         raise
+    finally:
+        session.close()
+
+
+def _row_to_metrics(row: Any, horizon: int) -> Dict[str, Any]:
+    """一行 SQL 聚合结果 → 指标 dict。整体与按 source 两趟共用。"""
+    win, loss, neutral = int(row.win or 0), int(row.loss or 0), int(row.neutral or 0)
+    judged = win + loss + neutral
+    sl, tp, amb, none_ = (
+        int(row.fh_stop or 0), int(row.fh_target or 0),
+        int(row.fh_ambiguous or 0), int(row.fh_none or 0),
+    )
+    decided = sl + tp + amb
+    # 分母只数**真有对应价位**的行（hit_* 为 NULL = 建议里没写这个价位，无从判起），
+    # 口径同 signal_tracker.py:250 的 sl_total。
+    has_stop, has_target = int(row.has_stop or 0), int(row.has_target or 0)
+    hit_stop, hit_target = int(row.hit_stop or 0), int(row.hit_target or 0)
+
+    return {
+        "total": int(row.total or 0),
+        "evaluated": int(row.evaluated or 0),
+        "pending": int(row.pending or 0),
+        "unable": int(row.unable or 0),
+        "win": win, "loss": loss, "neutral": neutral,
+        # **分母是 judged（可评的），不是 total。** 整张卡的题眼：
+        # 60/100 = 60% 是自己冤枉自己，60/80 = 75% 才是真的。
+        #
+        # judged == 0 → None 而不是 0.0。这里**刻意偏离** signal_tracker.py:243
+        # （那里 judged==0 返 0.0），采用 validator.py:255 空桶返 None 的做法：
+        # 0.0 会被 LLM 读成「这个 source 烂透了」，真相是「一条都没法评」——
+        # advisor 现在就是这个格子，返 0.0 等于让 MoneyBill 当着 Jason 的面
+        # 说「advisor 历史胜率 0%」。unable_breakdown 一起返回，让它有话可说。
+        "win_rate": round(win / judged * 100, 2) if judged else None,
+        "avg_return": round(float(row.avg_return), 2) if row.avg_return is not None else None,
+        "hit_stop_rate": round(hit_stop / has_stop * 100, 2) if has_stop else None,
+        "hit_target_rate": round(hit_target / has_target * 100, 2) if has_target else None,
+        "first_hit": {"stop_loss": sl, "take_profit": tp, "ambiguous": amb, "none": none_},
+        # **ambiguous 算进止损** —— 「保守假设先止损」的落地点。这是**口径**不是事实
+        # （事实诚实地存在 first_hit='ambiguous' 里），由 engine_version 背书。
+        # 分母不含 none —— 那些根本没决出胜负。
+        "stop_first_rate": round((sl + amb) / decided * 100, 2) if decided else None,
+        "avg_first_hit_days": round(float(row.avg_first_hit_days), 2) if row.avg_first_hit_days is not None else None,
+    }
+
+
+def get_decision_stats(
+    *,
+    symbol: Optional[str] = None,
+    source: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    horizon: int = 20,
+) -> Dict[str, Any]:
+    """AI 建议的历史胜率，按 source 分组 —— 「MoneyBill 的推荐历史胜率是多少」。
+
+    ⚠️ **不接 `limit`，这是刻意的。** 胜率是过滤条件下的**全量事实**；`get_decision_history`
+    的 limit 只管返回几条样本给 LLM 看。两者混淆 → 「MoneyBill 推荐胜率」会变成
+    「最近 10 条的胜率」且随 limit 变 —— 比没有还糟。
+
+    ⚠️ **量纲雷**：`confidence` 这一列是 **0-100**。以后若做置信度分桶校准（P0-3），
+    **别直接抄 `prediction_engine/validator.py:246` 的桶** —— 那是 0-1 量纲的
+    `[(0.5,0.6)...(0.8,1.01)]`，会把所有 0-100 的 confidence 全塞进末桶。
+
+    Returns:
+        `{"engine_version": [...], "horizon_days": 20, "overall": {...}, "by_source": {...}}`。
+        `engine_version` 是**数据里实际 distinct 的版本集合**而不是硬编码常量 ——
+        bump 之后老 completed 行不会重算，库里会混着两版；本卡不做重算，
+        但至少让「你正在跨版本混算」这件事可见。
+    """
+    if horizon not in (5, 20):
+        horizon = 20
+    outcome_col = getattr(DecisionLog, f"outcome_{horizon}d")
+    return_col = getattr(DecisionLog, f"return_{horizon}d")
+
+    filters = []
+    if symbol:
+        filters.append(DecisionLog.symbol == symbol)
+    if source:
+        filters.append(DecisionLog.source == source)
+    if start_date:
+        filters.append(DecisionLog.created_at >= datetime.fromisoformat(start_date))
+    if end_date:
+        filters.append(DecisionLog.created_at <= datetime.fromisoformat(end_date + " 23:59:59"))
+
+    def _cnt(cond):
+        return func.sum(sql_case((cond, 1), else_=0))
+
+    _completed = DecisionLog.outcome_status == "completed"
+    agg_cols = [
+        func.count(DecisionLog.id).label("total"),
+        _cnt(_completed).label("evaluated"),
+        _cnt(DecisionLog.outcome_status == "pending").label("pending"),
+        _cnt(DecisionLog.outcome_status == "unable").label("unable"),
+        _cnt(and_(_completed, outcome_col == "win")).label("win"),
+        _cnt(and_(_completed, outcome_col == "loss")).label("loss"),
+        _cnt(and_(_completed, outcome_col == "neutral")).label("neutral"),
+        func.avg(sql_case((_completed, return_col))).label("avg_return"),
+        _cnt(and_(_completed, DecisionLog.hit_stop == 1)).label("hit_stop"),
+        _cnt(and_(_completed, DecisionLog.hit_target == 1)).label("hit_target"),
+        _cnt(and_(_completed, DecisionLog.hit_stop.isnot(None))).label("has_stop"),
+        _cnt(and_(_completed, DecisionLog.hit_target.isnot(None))).label("has_target"),
+        _cnt(and_(_completed, DecisionLog.first_hit == "stop_loss")).label("fh_stop"),
+        _cnt(and_(_completed, DecisionLog.first_hit == "take_profit")).label("fh_target"),
+        _cnt(and_(_completed, DecisionLog.first_hit == "ambiguous")).label("fh_ambiguous"),
+        _cnt(and_(_completed, DecisionLog.first_hit == "none")).label("fh_none"),
+        func.avg(sql_case((_completed, DecisionLog.first_hit_days))).label("avg_first_hit_days"),
+    ]
+
+    session = get_session()
+    try:
+        overall_row = session.query(*agg_cols).filter(*filters).one()
+        overall = _row_to_metrics(overall_row, horizon)
+
+        by_source: Dict[str, Any] = {}
+        for r in (session.query(DecisionLog.source, *agg_cols)
+                  .filter(*filters).group_by(DecisionLog.source).all()):
+            by_source[r.source] = _row_to_metrics(r, horizon)
+
+        # unable 的原因分布单独一趟（要按 reason 分组，塞不进上面的聚合）
+        unable_q = (session.query(DecisionLog.source, DecisionLog.unable_reason,
+                                  func.count(DecisionLog.id).label("n"))
+                    .filter(DecisionLog.outcome_status == "unable", *filters)
+                    .group_by(DecisionLog.source, DecisionLog.unable_reason).all())
+        overall_breakdown: Dict[str, int] = {}
+        for row in unable_q:
+            key = row.unable_reason or "unknown"
+            overall_breakdown[key] = overall_breakdown.get(key, 0) + row.n
+            if row.source in by_source:
+                by_source[row.source].setdefault("unable_breakdown", {})[key] = row.n
+        overall["unable_breakdown"] = overall_breakdown
+        for m in by_source.values():
+            m.setdefault("unable_breakdown", {})
+
+        versions = [v[0] for v in session.query(distinct(DecisionLog.engine_version))
+                    .filter(DecisionLog.engine_version.isnot(None), *filters).all()]
+
+        return {
+            "engine_version": sorted(versions),
+            "horizon_days": horizon,
+            "overall": overall,
+            "by_source": by_source,
+        }
     finally:
         session.close()

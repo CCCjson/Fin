@@ -96,7 +96,7 @@ _TEMPLATES: Dict[str, Callable[[dict], str]] = {
     # review
     "get_daily_review": lambda a: "已调出当日复盘",
     "request_review_ai_score": lambda a: "已完成 AI 交易打分",
-    "get_decision_history": lambda a: "已调出历史决策记录",
+    "get_decision_history": lambda a: "已调出历史决策记录与胜率",
     # backtest_ml
     "run_backtest": lambda a: "已跑完策略回测",
     "predict_stock": _with("已生成涨跌预测："),

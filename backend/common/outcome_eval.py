@@ -20,8 +20,9 @@
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Protocol, Sequence
+from typing import Any, Protocol
 
 # 判定口径的版本戳。**改窗口天数 / 中性带 / ambiguous 策略 / 方向公式 = 必须 bump。**
 # 不 bump 就等于让新口径的结果和旧口径的结果混在一张表里，跨版本混算胜率 ——
@@ -70,36 +71,36 @@ RETRYABLE_UNABLE_REASONS = frozenset({
 
 class BarLike(Protocol):
     """一根日线。`DailyQuote` 直接满足。"""
-    high: Optional[float]
-    low: Optional[float]
-    close: Optional[float]
+    high: float | None
+    low: float | None
+    close: float | None
 
 
 class AdviceLike(Protocol):
     """一条建议。`DecisionLog` 直接满足。"""
-    action: Optional[str]
-    entry_price: Optional[float]
-    stop_loss: Optional[float]
-    take_profit: Optional[float]
+    action: str | None
+    entry_price: float | None
+    stop_loss: float | None
+    take_profit: float | None
 
 
 @dataclass(frozen=True)
 class OutcomeResult:
     """评估产出。字段名与 `DecisionLog` 的 outcome 列一一对应，便于整体 setattr。"""
     outcome_status: str                       # completed | pending | unable
-    unable_reason: Optional[str] = None
-    return_5d: Optional[float] = None
-    return_20d: Optional[float] = None
-    outcome_5d: Optional[str] = None          # win | loss | neutral
-    outcome_20d: Optional[str] = None
-    hit_stop: Optional[int] = None            # 0/1；None = 建议里没写止损位，无从判起
-    hit_target: Optional[int] = None
-    first_hit: Optional[str] = None           # stop_loss | take_profit | ambiguous | none
-    first_hit_days: Optional[int] = None
+    unable_reason: str | None = None
+    return_5d: float | None = None
+    return_20d: float | None = None
+    outcome_5d: str | None = None          # win | loss | neutral
+    outcome_20d: str | None = None
+    hit_stop: int | None = None            # 0/1；None = 建议里没写止损位，无从判起
+    hit_target: int | None = None
+    first_hit: str | None = None           # stop_loss | take_profit | ambiguous | none
+    first_hit_days: int | None = None
     engine_version: str = ENGINE_VERSION
 
 
-def is_retryable(reason: Optional[str]) -> bool:
+def is_retryable(reason: str | None) -> bool:
     """这条 unable 明天补了数据还值得再评吗？
 
     可重试性是 `unable_reason` 的**函数**，不是独立事实 —— 所以它不是一个数据库列。
@@ -108,7 +109,7 @@ def is_retryable(reason: Optional[str]) -> bool:
     return reason in RETRYABLE_UNABLE_REASONS
 
 
-def _label(ret: Optional[float]) -> Optional[str]:
+def _label(ret: float | None) -> str | None:
     """收益率 → win/loss/neutral。
 
     中性带**在评估期定死**、由 `ENGINE_VERSION` 背书，不能挪到查询期动态算 ——
@@ -174,7 +175,7 @@ def evaluate_single(
     # 符号已按方向归一：**SELL 说跌、后来真跌了 → 正收益 → win。**
     # 这不是 bug，别「修」。归一之后 win_rate / avg_return 才能跨 BUY/SELL 混算。
     # 公式与 signal_tracker.py:146-152 逐字一致（全项目同一把尺子）。
-    rets: Dict[int, Optional[float]] = {}
+    rets: dict[int, float | None] = {}
     for n in HORIZONS:
         if len(window) >= n:
             close = window[n - 1].close
@@ -195,10 +196,10 @@ def evaluate_single(
     # 这样 hit_stop_rate 的分母才能只数真有止损位的行。照抄外部蓝本的
     # `hit_sl = None if stop_loss is None else False`，也照抄 signal_tracker.py:250
     # 那段 `stop_loss.isnot(None)` 的分母口径。
-    hit_stop: Optional[int] = None if stop is None else 0
-    hit_target: Optional[int] = None if target is None else 0
-    first_hit: Optional[str] = None if (stop is None and target is None) else "none"
-    first_hit_days: Optional[int] = None
+    hit_stop: int | None = None if stop is None else 0
+    hit_target: int | None = None if target is None else 0
+    first_hit: str | None = None if (stop is None and target is None) else "none"
+    first_hit_days: int | None = None
 
     for i, bar in enumerate(window, start=1):
         low, high = bar.low, bar.high
@@ -248,7 +249,7 @@ def evaluate_single(
     )
 
 
-def compute_summary(results: Sequence[OutcomeResult], *, horizon: int = 20) -> Dict[str, Any]:
+def compute_summary(results: Sequence[OutcomeResult], *, horizon: int = 20) -> dict[str, Any]:
     """一批评估结果 → 汇总指标（纯内存版，给回测和单测用）。
 
     线上查询走 `decision_log.get_decision_stats` 的 SQL 聚合版，**两者口径必须一致**。
@@ -257,7 +258,7 @@ def compute_summary(results: Sequence[OutcomeResult], *, horizon: int = 20) -> D
     evaluated = [r for r in results if r.outcome_status == "completed"]
     unable = [r for r in results if r.outcome_status == "unable"]
 
-    breakdown: Dict[str, int] = {}
+    breakdown: dict[str, int] = {}
     for r in unable:
         key = r.unable_reason or "unknown"
         breakdown[key] = breakdown.get(key, 0) + 1
@@ -274,7 +275,7 @@ def compute_summary(results: Sequence[OutcomeResult], *, horizon: int = 20) -> D
 
     # first_hit 分布：只数**真有价位可判**的行（first_hit is None = 建议里没写价位）
     hits = [r.first_hit for r in evaluated if r.first_hit is not None]
-    fh: Dict[str, int] = {k: hits.count(k) for k in ("stop_loss", "take_profit", "ambiguous", "none")}
+    fh: dict[str, int] = {k: hits.count(k) for k in ("stop_loss", "take_profit", "ambiguous", "none")}
     decided = fh["stop_loss"] + fh["take_profit"] + fh["ambiguous"]
 
     days = [r.first_hit_days for r in evaluated if r.first_hit_days is not None]
