@@ -38,7 +38,7 @@ def _never_touch_yahoo(monkeypatch):
     def _boom(*a, **k):
         raise AssertionError("测试不许真打 Yahoo")
     monkeypatch.setattr(m.OverseasDailyUpdater, "_fetch_batch", _boom)
-    monkeypatch.setattr(m.OverseasDailyUpdater, "_precheck", _boom)
+    monkeypatch.setattr(m.OverseasDailyUpdater, "_probe_frontier", _boom)
 
 
 def _seed(s, market, symbol, name="X", stype="stock", latest=None, active=1):
@@ -154,6 +154,45 @@ def test_lookback_is_capped(db):
     _, _, stats = _plan(db)
     floor = (TODAY - timedelta(days=m.MAX_LOOKBACK_DAYS)).isoformat()
     assert stats["start"] == floor, f"起点应被钳到 {floor}，而不是 2020"
+
+
+def test_frontier_not_calendar_today_decides_freshness(db):
+    """⚠️ **这条是「全量重跑 28 分钟」bug 的修复钉子。**
+
+    港美股因时区/收盘时点，`latest` 天然 < 日历今天（美股尤甚）。若用今天判「已最新」，
+    每只票都被判为待更新 → 每次全量重跑。必须用**市场真实最新交易日**（frontier，
+    锚点票探来）当基准：已到 frontier 的票 skip，补完后不再重跑。
+    """
+    s = db()
+    frontier = date(2026, 7, 17)      # 锚点票（AAPL）的 yahoo 最新交易日
+    _seed(s, "us_stock", "AAPL", latest=frontier)                    # 已到前沿
+    _seed(s, "us_stock", "MSFT", latest=frontier - timedelta(days=1))  # 落后一天
+    s.commit()
+    s.close()
+
+    # 用 frontier 判：AAPL skip，只有 MSFT 待更新
+    sess = db()
+    todo, _, stats = m.OverseasDailyUpdater()._plan(sess, "us_stock", frontier)
+    sess.close()
+    assert todo == ["MSFT"], "已到前沿的 AAPL 必须 skip"
+    assert stats["skipped_fresh"] == 1
+    assert stats["frontier"] == "2026-07-17"
+
+
+def test_frontier_all_fresh_means_no_run(db):
+    """补完之后再点刷新：全部到前沿 → todo 空 → 不重跑（这才是修复的价值所在）。"""
+    s = db()
+    frontier = date(2026, 7, 17)
+    for i in range(50):
+        _seed(s, "us_stock", f"T{i}", latest=frontier)
+    s.commit()
+    s.close()
+
+    sess = db()
+    todo, _, stats = m.OverseasDailyUpdater()._plan(sess, "us_stock", frontier)
+    sess.close()
+    assert todo == []
+    assert stats["skipped_fresh"] == 50
 
 
 def test_todo_sorted_by_staleness_so_batches_are_homogeneous(db):

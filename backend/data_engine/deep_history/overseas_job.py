@@ -21,7 +21,7 @@ from loguru import logger
 from data_engine.base_job import BaseSingletonJob
 from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo, DailyQuote
-from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes
+from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, yf_df_to_records
 from data_engine.deep_history.us_filter import classify_and_persist_us_universe
 from common.market import to_yf_symbol
 
@@ -217,20 +217,14 @@ class OverseasDeepHistoryJob(BaseSingletonJob):
 
     @staticmethod
     def _df_to_records(symbol: str, market: str, df) -> List[Dict]:
-        records = []
-        for idx, row in df.iterrows():
-            try:
-                records.append({
-                    "symbol": symbol, "market": market,
-                    "date": idx.date().isoformat() if hasattr(idx, "date") else str(idx)[:10],
-                    "open": float(row["Open"]), "high": float(row["High"]),
-                    "low": float(row["Low"]), "close": float(row["Close"]),
-                    "volume": float(row["Volume"]) if row.get("Volume") == row.get("Volume") else 0,
-                    "amount": None, "turnover": None,
-                })
-            except (KeyError, ValueError, TypeError):
-                continue
-        return records
+        """真源在 `bulk_upsert.yf_df_to_records`（与每日增量共用）。
+
+        **这里原本是一份独立副本，只防了 Volume 的 NaN、没防 OHLC 的** —— 一行 NaN
+        close 就会让下方 `bulk_upsert_quotes` 抛 IntegrityError，被那个 try/except
+        接住后**整批 50 只票的数据全被丢弃**，日志只留一句「丢弃 N 条」。收口到共用
+        实现后逐行跳过坏行，同批其它票不再陪葬。
+        """
+        return yf_df_to_records(symbol, market, df)
 
     def _execute(self, cfg: Dict) -> None:
         market = cfg["market"]

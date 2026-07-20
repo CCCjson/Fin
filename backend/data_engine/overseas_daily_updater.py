@@ -47,7 +47,7 @@ from datetime import date, datetime, timedelta
 from loguru import logger
 
 from common.market import to_yf_symbol
-from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes
+from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, yf_df_to_records
 from data_engine.storage.database import get_session
 from data_engine.storage.models import DailyQuote, StockInfo
 
@@ -126,8 +126,13 @@ class OverseasDailyUpdater:
         start = max(latest + timedelta(days=1), today - timedelta(days=MAX_LOOKBACK_DAYS))
         return start.isoformat()
 
-    def _plan(self, session, market: str, today: date) -> tuple[list[str], dict[str, date], dict]:
+    def _plan(self, session, market: str, frontier: date) -> tuple[list[str], dict[str, date], dict]:
         """挑出该更新的票 + 每只票在库里的最新日期。
+
+        `frontier` = 这个市场**真实可用的最新交易日**（`_probe_frontier` 探来）。
+        `latest >= frontier` 的票已经跟上了，skip；否则待更新。**用 frontier 而不是
+        日历今天** —— 否则港美股因时区永远 `latest < today`，每次全量重跑（见
+        `_probe_frontier` 的注释）。
 
         **todo 按落后程度排序**（最新的在前），这样 `run()` 分批时同一批里的票
         落后天数相近，每批能各算各的起点 —— 否则一只落后一年的票会把**所有**票的
@@ -151,7 +156,7 @@ class OverseasDailyUpdater:
                 # 会把一次运行拖死，而且深历史有断点续跑/confirmed_no_data 那套。
                 skipped_no_data += 1
                 continue
-            if d >= today:
+            if d >= frontier:
                 skipped_fresh += 1
                 continue
             todo.append(s.symbol)
@@ -161,13 +166,14 @@ class OverseasDailyUpdater:
             "todo": len(todo),
             "skipped_fresh": skipped_fresh,
             "skipped_no_data": skipped_no_data,
+            "frontier": frontier.isoformat(),
         }
         if not todo:
             return [], {}, stats
 
         todo.sort(key=lambda s: latest[s], reverse=True)   # 最新的在前，同批落后程度相近
         oldest = min(latest[s] for s in todo)
-        stats["start"] = self._start_for(oldest, today)
+        stats["start"] = self._start_for(oldest, frontier)
         stats["oldest_latest"] = oldest.isoformat()
         return todo, latest, stats
 
@@ -195,49 +201,52 @@ class OverseasDailyUpdater:
 
     @staticmethod
     def _df_to_records(symbol: str, market: str, df) -> list[dict]:
-        """DataFrame → bulk_upsert 认的 records。逐字照抄 overseas_job._df_to_records。"""
-        records = []
-        for idx, row in df.iterrows():
-            try:
-                records.append({
-                    "symbol": symbol, "market": market,
-                    "date": idx.date().isoformat() if hasattr(idx, "date") else str(idx)[:10],
-                    "open": float(row["Open"]), "high": float(row["High"]),
-                    "low": float(row["Low"]), "close": float(row["Close"]),
-                    "volume": float(row["Volume"]) if row.get("Volume") == row.get("Volume") else 0,
-                    "amount": None, "turnover": None,
-                })
-            except (KeyError, ValueError, TypeError):
-                continue
-        return records
+        """DataFrame → bulk_upsert 认的 records。
 
-    def _precheck(self, market: str, start: str) -> bool:
-        """连通性预检：拿一只肯定有数据的锚点票探路。
+        真源在 `bulk_upsert.yf_df_to_records`（与深历史回补共用）——**别再在这里复制
+        一份**：原本两处各存一份逐字相同的副本，于是 OHLC 的 NaN 漏防这个 bug 也存了
+        两份，实测把美股整个 run 干掉过。
+        """
+        return yf_df_to_records(symbol, market, df)
 
-        照抄 overseas_job:255 的做法，理由也一样（那边注释记着一次真实事故）：
-        代理挂了会让**每一只**票都拉不到数据，若不预检，就会把「网络坏了」
-        误当成「这些票都没数据」。这里虽然不写 confirmed_no_data，但没有预检
-        就会在网络坏时白跑 160 批、刷一屏 warning，还可能招 Yahoo 的黑名单。
+    def _probe_frontier(self, market: str, today: date) -> date | None:
+        """探这个市场**当前真实可用的最新交易日** —— 拿一只肯定有数据的锚点票问 yahoo。
+
+        一箭双雕，替代原来只返回 bool 的 `_precheck`：
+
+        1. **连通性预检**（原职责）：代理挂了会让**每一只**票都拉不到数据，不预检
+           就会把「网络坏了」误当成「这些票都没数据」，白跑 160 批还招 Yahoo 黑名单。
+           返回 None 即连不通/无数据 → 调用方中止。（理由同 overseas_job:255 那次事故。）
+
+        2. **给 skip 判断一个正确的基准**（新增，修全量重跑 bug）：原来 `_plan` 用
+           **日历今天**判「已最新」。但港美股因时区/收盘时点，`latest` 天然 < 今天
+           （美股尤其：美东 16:00 收 = 北京凌晨，白天跑时今天那场还没开）→ 每只票都
+           被判为待更新 → 每次全量重跑（实测美股 28 分钟）。
+           锚点票的 yahoo 最新交易日才是真基准：AAPL 到 07-17，那 `latest >= 07-17`
+           的票就该 skip。既能追到 07-17，补完后又不会再全量重跑。
         """
         from acquisition.markets.yf_batch import fetch_daily_history
         from data_engine.deep_history.overseas_job import SINGLE_FETCH_TIMEOUT, _call_with_timeout
 
         anchor = _ANCHOR[market]
+        # 起点回看 30 天足够拿到最近几根（含长假）；只为读最后一根的日期
+        start = (today - timedelta(days=30)).isoformat()
         try:
             df = _call_with_timeout(
                 lambda: fetch_daily_history(_to_yf(anchor, market), start),
-                SINGLE_FETCH_TIMEOUT, f"{market} 增量预检",
+                SINGLE_FETCH_TIMEOUT, f"{market} 前沿探测",
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"[港美股增量] {market} 连通性预检异常: {e}")
-            return False
+            logger.warning(f"[港美股增量] {market} 前沿探测异常: {e}")
+            return None
         if df is None or df.empty:
             logger.error(
-                f"[港美股增量] {market} 连通性预检失败（{anchor} 拉不到数据），"
+                f"[港美股增量] {market} 前沿探测失败（{anchor} 拉不到数据），"
                 f"疑似代理/网络问题，本次不处理任何股票"
             )
-            return False
-        return True
+            return None
+        last = df.index[-1]
+        return last.date() if hasattr(last, "date") else None
 
     def run(self, market: str, *, today: date | None = None,
             limit: int | None = None) -> dict:
@@ -255,9 +264,15 @@ class OverseasDailyUpdater:
             raise ValueError(f"不支持的市场: {market}（只接受 {MARKETS}）")
         today = today or date.today()
 
+        # 先探前沿：兼连通性预检 + 给 skip 判断正确的基准（见 _probe_frontier）
+        frontier = self._probe_frontier(market, today)
+        if frontier is None:
+            return {"market": market, "updated": 0, "rows": 0, "failed": 0,
+                    "error": "前沿探测失败"}
+
         session = get_session()
         try:
-            todo, latest, stats = self._plan(session, market, today)
+            todo, latest, stats = self._plan(session, market, frontier)
             result = {"market": market, "updated": 0, "rows": 0, "failed": 0, **stats}
             if not todo:
                 logger.info(f"[港美股增量] {market} 无需更新: {stats}")
@@ -265,13 +280,10 @@ class OverseasDailyUpdater:
             if limit:
                 todo = todo[:limit]
 
-            if not self._precheck(market, stats["start"]):
-                result["error"] = "连通性预检失败"
-                return result
-
             logger.info(
-                f"[港美股增量] {market} 开跑: {len(todo)} 只待更新（最早起点 {stats['start']}，"
-                f"已最新 {stats['skipped_fresh']} 只，无数据跳过 {stats['skipped_no_data']} 只）"
+                f"[港美股增量] {market} 开跑: {len(todo)} 只待更新（前沿 {frontier}，"
+                f"最早起点 {stats['start']}，已最新 {stats['skipped_fresh']} 只，"
+                f"无数据跳过 {stats['skipped_no_data']} 只）"
             )
 
             from data_engine.deep_history.overseas_job import _call_with_timeout
@@ -280,7 +292,7 @@ class OverseasDailyUpdater:
                 batch = todo[i:i + BATCH_SIZE]
                 # 每批各算各的起点（todo 已按落后程度排序，同批相近）——
                 # 用全局起点会让只缺 9 天的票也拉 90 根 bar，白烧 10 倍流量
-                batch_start = self._start_for(min(latest[s] for s in batch), today)
+                batch_start = self._start_for(min(latest[s] for s in batch), frontier)
                 try:
                     got = _call_with_timeout(
                         lambda b=batch, st=batch_start: self._fetch_batch(market, b, st),
@@ -301,8 +313,20 @@ class OverseasDailyUpdater:
                         result["updated"] += 1
                 if records:
                     # 幂等：靠 daily_quotes 的 idx_symbol_date 唯一索引 INSERT OR REPLACE，
-                    # 重复区间重跑不会重复落行
-                    result["rows"] += bulk_upsert_quotes(session, records)
+                    # 重复区间重跑不会重复落行。
+                    #
+                    # 写库失败**不许冒出去**：一批坏数据不该让整个市场的 run 挂掉。
+                    # （实测教训：美股跑了 18 分钟后死在一行 NaN close 上，前面的
+                    #  成果虽然已 commit，但后面 1 万只票一只都没跑到。）
+                    try:
+                        result["rows"] += bulk_upsert_quotes(session, records)
+                    except Exception as e:  # noqa: BLE001 — 单批写库失败不中断整轮
+                        session.rollback()
+                        result["failed"] += len(batch)
+                        logger.warning(
+                            f"[港美股增量] {market} 批 {i // BATCH_SIZE} 写库失败"
+                            f"（丢弃 {len(records)} 行）: {e}"
+                        )
 
                 if i + BATCH_SIZE < len(todo):
                     time.sleep(SLEEP_BETWEEN_BATCHES + random.uniform(0, 1))
