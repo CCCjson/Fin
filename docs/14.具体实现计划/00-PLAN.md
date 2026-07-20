@@ -41,14 +41,16 @@ MoneyBill 给建议
    MoneyBill 下次的置信度更诚实
 ```
 
-**现在这个闭环是断的——只有「给建议」一步，后面全空。** 做完 P0 三项，才第一次能回答立项根本问题：**这系统到底能不能盈利。**
+**✅ 2026-07-20：P0 三项全部完工，闭环已通。** 剩下的是「养数据」——真库已评样本还太少（20 日窗口 8 月才满），闭环虽通但还答不出「能不能盈利」。这是数据成熟度问题，不是代码缺口。
 
 （P0-2 排在 P0-1 之前是逻辑顺序；施工上 P0-1 无依赖可先做，P0-3 硬依赖 P0-1 产出。）
 
 > **进度（2026-07-17）**：**P0-1 ✅ 已完工**（`ee561a1`→`f95c08d`）。闭环的「回头看」那一环已通：`get_decision_history` 能按 source 报胜率，回填每天 15:35 自动跑。
 > **但现在还答不出「能不能盈利」**——真库里绝大多数建议是 `unable`（advisor 不记方向、confirm_gate 把加自选股也记成决策、行情落后一周导致新建议还没 bar 可评），且 20 日窗口要等到 8 月才满。**这不是 bug，是这套东西第一次把「我们其实没在评自己」这件事显式化了。**
 > **P0-2 ✅ 已完工**（2026-07-17，四笔 `d216c4e`→`030cdd3`，含 P2-2 的 B+C）：数据不可信时 MoneyBill 不许再说「有把握」——cockpit composite 被代码强行钳制（实测 BUY→HOLD），主循环收尾追加系统更正；**港股财务恒缺不被系统性降级**（避开了蓝本那个 bug）。
-> 下一步 **P0-3**（闭环最后一环，硬依赖 P0-1，已可开工）。开工前先读 P0-2 卡顶「实施偏离」第 6 条（confirm_gate 记的是数据质量不是 confidence）+ P0-1 卡的量纲雷（confidence 是 0-100 别抄 validator 的 0-1 桶）。
+> **P0-3 ✅ 已完工**（2026-07-20）：历史命中率反哺 cockpit composite（`decision_log.compute_calibration` + scorer 加 `calibration_factor`，SCORER_VERSION v3）。**只下调不上抬**、校准在硬钳之前、≥30 已评样本才生效（当前 cockpit 0 条 → 惰性 factor=1.0）。**校准点在 cockpit scorer 不在 orchestrator**（对话 confidence 是自由文本无法校准，见 P0-3 卡「实施偏离」第 1 条）。`get_decision_history` 暴露分桶校准表。
+>
+> **🎉 P0 三项闭环已通**：给建议 → 数据质量事前防线（P0-2）→ 落 DecisionLog → 后验评估（P0-1）→ 校准反哺（P0-3）。**但「能不能盈利」还答不出**：真库 cockpit 已评样本仍近 0（多为 unable/pending，20 日窗口 8 月才满）。闭环是通的，数据要养。
 
 ## 4. 任务卡索引
 
@@ -56,7 +58,7 @@ MoneyBill 给建议
 |---|---|---|---|---|---|
 | ~~**P0-1**~~ | ✅ **已完工 07-17**：建议后验评估器（内核 `common/outcome_eval.py` + `backfill_outcomes`/`get_decision_stats` + cockpit 留痕接**工具层** + 每日链第⑥步）。**开工 P0-3 前先读它卡片顶部的「实施偏离」框** | 小 | 无 | ✅ 07-17 | `P0-1-decision-outcome.md` |
 | ~~**P0-2**~~ | ✅ **已完工 07-17**：字段级八态 + 质量分 + 硬传导（cockpit composite 钳制 + MoneyBill 收尾更正）。含 P2-2 的 B+C。**开工 P0-3 前先读它卡片顶部的「实施偏离」框**（尤其第 6 条：confirm_gate 记的是数据质量不是 confidence） | 中 | 无 | ✅ 07-17 | `P0-2-data-quality.md` |
-| **P0-3** | 置信度校准反哺：历史命中率 → calibration_factor 反调置信度 | 小 | **P0-1** | ✅ 07-17 | `P0-3-calibration.md` |
+| ~~**P0-3**~~ | ✅ **已完工 07-20**：历史命中率 → calibration_factor 反调 cockpit composite（只下调、校准在硬钳前、≥30 样本才生效）。**校准点在 scorer 不在 orchestrator**，见卡「实施偏离」第 1 条 | 小 | **P0-1** | ✅ 07-17 | `P0-3-calibration.md` |
 | **P1-5** | NewsNow 资讯源接入（方案已勘察定稿，可立即开工） | 小 | 无 | ✅ 07-17 | `P1-5-newsnow.md` |
 | **P1-1** | 反方 subagent `run_devils_advocate` + 主结论/反方并排 | 中 | 无 | ⚠️ 待核实 | `P1-1-devils-advocate.md` |
 | **P1-2** | 港美股财务 + 宏观表 + 舆情摄入 | 中 | 无 | ⚠️ 待核实 | `P1-2-data-expansion.md` |

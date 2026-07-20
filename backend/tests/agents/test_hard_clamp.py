@@ -161,6 +161,42 @@ def test_raw_composite_survives_for_calibration():
     assert out["composite"] != out["raw_composite"]
 
 
+# ════════════════ P0-3 历史命中率校准 ════════════════
+
+def test_calibration_discounts_composite():
+    """校准因子 < 1.0 → composite 被下调；raw_composite 留钳前原始分。"""
+    out = score_cockpit(_BULLISH, calibration_factor=0.8)
+    assert out["composite"] == 68.0                 # 85 * 0.8
+    assert out["raw_composite"] == 85.0             # 原始分不动
+    assert out["calibration_factor"] == 0.8
+    assert "confidence_calibrated_by_history" in out["adjustments"]
+
+
+def test_calibration_default_is_inert():
+    """默认因子 1.0（样本不足）→ 完全不动，老行为不变。"""
+    out = score_cockpit(_BULLISH)
+    assert out["composite"] == 85.0
+    assert out["calibration_factor"] == 1.0
+    assert "confidence_calibrated_by_history" not in out["adjustments"]
+
+
+def test_calibration_then_clamp_both_apply():
+    """🔒 校准在硬钳之前：先打折 85→68，数据降级再钳到 60。两个 adjustment 都在。"""
+    out = score_cockpit(_BULLISH, quality=_STALE, calibration_factor=0.8)
+    assert out["composite"] == CLAMP_CAP            # 68 > 60 → 被钳到 60
+    assert out["raw_composite"] == 85.0
+    assert "confidence_calibrated_by_history" in out["adjustments"]
+    assert "composite_capped_core_data_degraded" in out["adjustments"]
+
+
+def test_calibration_below_cap_needs_no_clamp():
+    """校准已把分打到 CLAMP_CAP 之下 → 硬钳不再触发（钳只封顶不抬分）。"""
+    out = score_cockpit(_BULLISH, quality=_STALE, calibration_factor=0.6)
+    assert out["composite"] == 51.0                 # 85 * 0.6，已低于 60
+    assert "confidence_calibrated_by_history" in out["adjustments"]
+    assert "composite_capped_core_data_degraded" not in out["adjustments"]
+
+
 # ════════════════ 层2：MoneyBill 主循环收尾更正 ════════════════
 
 from agents.quality_guard import (  # noqa: E402

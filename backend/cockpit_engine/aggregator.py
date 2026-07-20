@@ -322,8 +322,14 @@ class CockpitAggregator:
         quality = compute_quality(
             {"daily_bars": daily_bars_block(symbol)}, scope=["daily_bars"])
 
+        # ---- 历史命中率校准（P0-3）----
+        # cockpit 历史说得不准 → 这次 composite 先打个折（样本 <30 时因子=1.0 不动）。
+        # 带 TTL 缓存，批量选股循环里不会每只都查库。
+        from decision_log import get_calibration_factor
+        calibration_factor = get_calibration_factor("cockpit")
+
         scored = score_cockpit(dimensions, dynamic_levels, current_pct, max_pct,
-                               quality=quality)
+                               quality=quality, calibration_factor=calibration_factor)
 
         # 把「建议加仓 %」按真实资金换算成可执行金额/股数（硬约束：现金 + 风控）
         sizing = size_position(

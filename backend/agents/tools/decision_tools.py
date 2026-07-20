@@ -39,6 +39,8 @@ class GetDecisionHistoryArgs(BaseModel):
         "返回的 stats 是**全量**胜率（不受 limit 影响）；decisions 只是最近几条样本。"
         "注意 win_rate=null 表示「一条都没法评」而不是「胜率 0%」，"
         "看 unable_breakdown 说明为什么评不了。"
+        "calibration=置信度校准（**你说高置信度时实际准多少**，按分桶）+ 反哺因子；"
+        "样本<30 时 calibration_factor=1.0（不校准）。"
     ),
     args_model=GetDecisionHistoryArgs,
     category="review",
@@ -63,6 +65,10 @@ def get_decision_history(symbol: Optional[str] = None, source: Optional[str] = N
         start_date=start_date, end_date=end_date, horizon=horizon,
     )
 
+    # P0-3 置信度校准：「你说高置信度时实际准多少」。校准是 per-source 的（cockpit 的
+    # composite 才是结构化置信度），不指定 source 时默认看 cockpit。
+    calibration = decision_log.compute_calibration(source=source or "cockpit", horizon=horizon)
+
     if not r.get("total"):
         # 注意这里**仍然带上 stats**：「有 12 条建议但全都没法评」是个**有内容的**
         # negative —— 让 LLM 能说「advisor 那 12 条都没记方向和入场价，评不了」，
@@ -70,7 +76,7 @@ def get_decision_history(symbol: Optional[str] = None, source: Optional[str] = N
         return ToolEnvelope(
             business_result="negative",
             message="没有符合条件的决策记录。",
-            data={"stats": stats},
+            data={"stats": stats, "calibration": calibration},
         )
 
     # 精简回灌 LLM：去掉大字段（完整快照留在 /decisions 页面看）
@@ -102,4 +108,5 @@ def get_decision_history(symbol: Optional[str] = None, source: Optional[str] = N
         for d in r.get("decisions", [])
     ]
     return ToolEnvelope(data={"total": r["total"], "returned": len(decisions),
-                              "stats": stats, "decisions": decisions})
+                              "stats": stats, "calibration": calibration,
+                              "decisions": decisions})

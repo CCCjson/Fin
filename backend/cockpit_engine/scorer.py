@@ -28,7 +28,10 @@ if TYPE_CHECKING:      # 只为类型标注 —— 运行时不 import，本模�
 #
 # v2（2026-07-17）：加数据质量硬钳 + dimension_coverage。判定口径变了 → 必须 bump，
 # 否则 v1 那些「没被钳过」的历史决策会和 v2 的混在一起算胜率。
-SCORER_VERSION = "rule:cockpit-v2"
+# v3（2026-07-20，P0-3）：加历史命中率校准（confidence 反哺）。判定口径又变了 → 再 bump。
+#   校准因子由调用方（aggregator）从 DecisionLog 历史胜率算出并传入；样本 <30 时恒为
+#   1.0（口径不变），但一旦生效 composite 会被下调，故历史决策必须能按版本区分。
+SCORER_VERSION = "rule:cockpit-v3"
 
 # 核心数据降级时 composite 的上限。
 #
@@ -73,7 +76,8 @@ def score_cockpit(dimensions: Dict[str, Optional[float]],
                   dynamic_levels: Optional[Dict] = None,
                   current_position_pct: float = 0.0,
                   max_position_pct: float = 0.5,
-                  quality: Optional["DataQuality"] = None) -> Dict:
+                  quality: Optional["DataQuality"] = None,
+                  calibration_factor: float = 1.0) -> Dict:
     """
     Args:
         dimensions: {technical, ml, fundamental, sentiment, position} → 分值或 None
@@ -84,11 +88,17 @@ def score_cockpit(dimensions: Dict[str, Optional[float]],
         quality: `common.context_quality.compute_quality` 的产出。给了且核心数据
             降级 → composite 被强行钳到 `CLAMP_CAP`。**不给 = 不钳**（老调用方
             行为不变）。
+        calibration_factor: P0-3 历史命中率校准因子（0.5-1.0，1.0=不动）。由调用方
+            （aggregator）从 DecisionLog 历史胜率算出（`decision_log.get_calibration_factor`）。
+            **只下调 composite 不上抬**，作用在硬钳之前 —— 校准是「模型自信但历史不准
+            就打折」，硬钳是「数据不可信就封顶」，两道各管各的，硬钳仍是最后安全网。
+            纯函数不查库：本模块零依赖，样本量门槛/窗口都在调用侧决定。
 
     Returns:
         {composite, recommendation, suggested_position_pct, suggested_add_pct,
          current_position_pct, stop_loss, take_profit, weights_used,
-         available_dimensions, dimension_coverage, raw_composite, adjustments}
+         available_dimensions, dimension_coverage, raw_composite,
+         calibration_factor, adjustments}
 
         - `dimension_coverage`: 实际可用维度占总权重的比例。**此前不存在** ——
           一维算出的 65 与五维算出的 65 在下游长得一模一样。批量选股走 `light=True`
@@ -113,6 +123,7 @@ def score_cockpit(dimensions: Dict[str, Optional[float]],
             "available_dimensions": [],
             "dimension_coverage": 0.0,
             "raw_composite": None,
+            "calibration_factor": 1.0,
             "adjustments": (),
         }
 
@@ -124,10 +135,21 @@ def score_cockpit(dimensions: Dict[str, Optional[float]],
     # 这次的分是拿多少权重的数据算出来的。1.0 = 五维齐全；light 档 = 0.6。
     dimension_coverage = round(total_w / sum(WEIGHTS.values()), 4)
 
-    # ── 数据质量硬钳 ──
-    # LLM 不参与这条路径，所以这里没有「求它诚实」的余地，也不需要 —— 直接改数。
+    # `raw_composite` = 未经任何调整的模型原始分（校准前 + 钳前）。P0-3 校准要审计
+    # 「打压前是多少」，钳的口径以后也会改 —— 只留调整后的分等于把原始信息永久丢掉。
     raw_composite = composite
     adjustments: list[str] = []
+
+    # ── P0-3 历史命中率校准（在硬钳之前）──
+    # 「你历史上说得不准 → 这次的分先打个折」。只下调不上抬（factor <= 1.0），
+    # 样本不足时调用方给的就是 1.0（不动）。放在硬钳之前：校准后仍要过硬钳这道
+    # 安全网（数据降级 → 无论校准怎么算都压到 CLAMP_CAP）。
+    if calibration_factor is not None and calibration_factor != 1.0:
+        composite = round(composite * calibration_factor, 1)
+        adjustments.append("confidence_calibrated_by_history")
+
+    # ── 数据质量硬钳 ──
+    # LLM 不参与这条路径，所以这里没有「求它诚实」的余地，也不需要 —— 直接改数。
     if quality is not None and quality.core_degraded and composite > CLAMP_CAP:
         composite = CLAMP_CAP
         adjustments.append("composite_capped_core_data_degraded")
@@ -163,5 +185,6 @@ def score_cockpit(dimensions: Dict[str, Optional[float]],
         "available_dimensions": list(available.keys()),
         "dimension_coverage": dimension_coverage,
         "raw_composite": raw_composite,
+        "calibration_factor": calibration_factor,
         "adjustments": tuple(adjustments),
     }

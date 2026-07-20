@@ -11,6 +11,7 @@
 按 source 算胜率。判定内核在 `common/outcome_eval.py`（纯逻辑、DB 无关）。
 """
 import json
+import time
 import uuid
 from collections import defaultdict
 from datetime import date, datetime
@@ -556,3 +557,121 @@ def get_decision_stats(
         }
     finally:
         session.close()
+
+
+# ── P0-3 置信度校准反哺 ──────────────────────────────────────────────────────
+#
+# 拿一个 source 最近 window 条**已评**决策的真实命中率，反过来调它下次输出的
+# confidence（`calibration_factor`），并给出「你说高置信度时实际准多少」的分桶表
+# （`buckets`，criterion 3）。闭环最后一环：MoneyBill 下次的置信度更诚实。
+
+_MIN_CALIBRATION_SAMPLES = 30   # 样本不足就不动它（3 条错 2 条 → 33% 是噪声不是信号）
+_CALIBRATION_WINDOW = 50        # 滚动窗口：只看最近这么多条已评决策
+_CALIBRATION_FACTOR_FLOOR = 0.5  # 校准因子下限（再差也不至于把 confidence 抹到 0）
+
+# ⚠️ **0-100 量纲的桶**（DecisionLog.confidence 是 0-100）。**刻意不抄
+# `prediction_engine/validator.py:246` 的 0-1 桶** —— 那会把所有分全塞进末桶
+# （见 get_decision_stats docstring 的量纲雷）。
+_CONFIDENCE_BUCKETS = [(0, 50), (50, 60), (60, 70), (70, 80), (80, 101)]
+
+
+def _calibration_factor_from_accuracy(accuracy: Optional[float]) -> float:
+    """历史命中率（0-1）→ 校准因子。
+
+    **只下调不上抬**（`min(1.0, ...)`）：胜率 >= 50%（比抛硬币好）→ 因子 1.0 不动；
+    低于 50% → 按 `0.5 + 命中率` 打折（命中率 0.4 → 0.9，0.3 → 0.8）。
+    上抬 confidence 是危险的（把一段走运的连胜当成本事），所以封在 1.0。
+    与蓝本 `daily_stock_analysis/skills/aggregator.py` 的 `0.5 + win_rate` 同源，
+    但那是给「技能权重」用的可>1；置信度只许打折，这是本卡的实施偏离。
+    """
+    if accuracy is None:
+        return 1.0
+    return round(min(1.0, max(_CALIBRATION_FACTOR_FLOOR, 0.5 + accuracy)), 4)
+
+
+def compute_calibration(source: str, *, window: int = _CALIBRATION_WINDOW,
+                        horizon: int = 20) -> Dict[str, Any]:
+    """一个 source 最近 `window` 条**已评**决策的置信度校准。
+
+    命中口径复用 `outcome_eval`：`outcome_{horizon}d == "win"` 算命中，分母只数
+    「该 horizon 有标签」的（unable/pending 不进），与 `get_decision_stats` 一致；
+    空样本命中率返 `None` 不返 0.0（0.0 会被读成「烂透了」）。
+
+    Returns:
+        `{source, horizon_days, window, total_samples, historical_accuracy,
+          calibrated, calibration_factor, buckets}`。
+        - `total_samples` < `_MIN_CALIBRATION_SAMPLES` → `calibrated=False`、
+          `calibration_factor=1.0`（样本不足不动它）。
+        - `buckets`: 每个 0-100 置信度桶的实际命中率（criterion 3 的「你说高置信度
+          时实际准多少」）。
+    """
+    if horizon not in (5, 20):
+        horizon = 20
+    outcome_col = getattr(DecisionLog, f"outcome_{horizon}d")
+
+    session = get_session()
+    try:
+        rows = (session.query(DecisionLog.confidence, outcome_col.label("outcome"))
+                .filter(DecisionLog.source == source,
+                        DecisionLog.confidence.isnot(None),
+                        outcome_col.isnot(None))
+                .order_by(DecisionLog.created_at.desc())
+                .limit(max(1, int(window))).all())
+    finally:
+        session.close()
+
+    samples = [(float(c), o) for c, o in rows if c is not None]
+    total = len(samples)
+    wins = sum(1 for _, o in samples if o == "win")
+    accuracy = (wins / total) if total else None
+
+    buckets = []
+    for lo, hi in _CONFIDENCE_BUCKETS:
+        in_bucket = [o for c, o in samples if lo <= c < hi]
+        n = len(in_bucket)
+        acc = (sum(1 for o in in_bucket if o == "win") / n) if n else None
+        buckets.append({
+            "bucket": f"{lo}-{hi if hi <= 100 else 100}",
+            "count": n,
+            "actual_accuracy": round(acc, 4) if acc is not None else None,
+        })
+
+    calibrated = total >= _MIN_CALIBRATION_SAMPLES
+    factor = _calibration_factor_from_accuracy(accuracy) if calibrated else 1.0
+
+    return {
+        "source": source,
+        "horizon_days": horizon,
+        "window": window,
+        "total_samples": total,
+        "historical_accuracy": round(accuracy, 4) if accuracy is not None else None,
+        "calibrated": calibrated,
+        "calibration_factor": factor,
+        "buckets": buckets,
+    }
+
+
+# 校准因子的进程内 TTL 缓存：批量选股循环里每只都算一次 cockpit 打分，别每只都
+# 查一次库。校准只在每日 `backfill_outcomes` 后变，缓存久一点无妨。
+_CALIB_CACHE: Dict[tuple, tuple] = {}   # key -> (factor, expires_at_monotonic)
+_CALIB_CACHE_TTL = 600.0
+
+
+def get_calibration_factor(source: str, *, window: int = _CALIBRATION_WINDOW,
+                           horizon: int = 20) -> float:
+    """`compute_calibration` 的带缓存瘦封装，只取 `calibration_factor`。
+
+    给 cockpit 打分链用（`aggregator.aggregate` 里每只都调）。失败 fail-open 返 1.0
+    （校准算不出来绝不能弄坏打分）。
+    """
+    key = (source, window, horizon)
+    now = time.monotonic()
+    hit = _CALIB_CACHE.get(key)
+    if hit and hit[1] > now:
+        return hit[0]
+    try:
+        factor = float(compute_calibration(source, window=window, horizon=horizon)["calibration_factor"])
+    except Exception:  # noqa: BLE001 — 校准失败不可弄坏打分
+        factor = 1.0
+    _CALIB_CACHE[key] = (factor, now + _CALIB_CACHE_TTL)
+    return factor

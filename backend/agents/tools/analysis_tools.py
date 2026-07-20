@@ -95,6 +95,9 @@ def _record_cockpit_decision(r: dict) -> None:
                 # 改（CLAMP_CAP / core_degraded 的定义），只留钳后的分 = 把原始
                 # 信息永久丢掉，将来重算都没得算。
                 "raw_composite": r.get("raw_composite"),
+                # P0-3：本次用的历史命中率校准因子（<30 样本时为 1.0=没校准）。
+                # 留痕便于审计「这条建议的 confidence 被历史打了几折」。
+                "calibration_factor": r.get("calibration_factor"),
                 "adjustments": list(r.get("adjustments") or ()),
                 "suggested": sizing,
             },
