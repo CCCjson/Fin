@@ -10,13 +10,20 @@
 from typing import Literal
 
 # canonical 市场标识
-Market = Literal["a_share", "hk_stock", "us_stock"]
+Market = Literal["a_share", "hk_stock", "us_stock", "crypto"]
 
 A_SHARE = "a_share"
 HK_STOCK = "hk_stock"
 US_STOCK = "us_stock"
+CRYPTO = "crypto"
 
-CANONICAL_MARKETS = (A_SHARE, HK_STOCK, US_STOCK)
+CANONICAL_MARKETS = (A_SHARE, HK_STOCK, US_STOCK, CRYPTO)
+
+# 股票三市场（工作日交易 + 固定收盘）。crypto 是 7×24 独立链，不属此列 ——
+# 凡是「按交易日历/全局新鲜度聚合」的口径都该用这个，而非含 crypto 的 CANONICAL_MARKETS
+# （否则空/滞后的 crypto 表会永久拉红全局 is_stale）。data_engine.market_refresh /
+# health.get_freshness 聚合处复用本常量。
+STOCK_MARKETS = (A_SHARE, HK_STOCK, US_STOCK)
 
 # 各种历史/外部写法 → canonical 的别名表（比较前统一 strip + lower；中文无大小写）
 _MARKET_ALIASES = {
@@ -41,6 +48,13 @@ _MARKET_ALIASES = {
     "us": US_STOCK,
     "usstock": US_STOCK,
     "美股": US_STOCK,
+    # 加密货币（币安现货）
+    "crypto": CRYPTO,
+    "binance": CRYPTO,
+    "bn": CRYPTO,
+    "币": CRYPTO,
+    "加密货币": CRYPTO,
+    "数字货币": CRYPTO,
 }
 
 
@@ -65,7 +79,7 @@ def normalize_market(raw: str | None, default: str = A_SHARE) -> str:
 # C++ 回测服务(backtest_cpp/src/server.cpp)分派用的是短写：us / hk / a_share，
 # 与项目 canonical(us_stock/hk_stock)不同。所有发往 C++ 的请求 body 都要经本函数翻译，
 # 把这个 wire 协议差异隔离在边界，业务层一律传 canonical。
-_CPP_WIRE = {A_SHARE: "a_share", HK_STOCK: "hk", US_STOCK: "us"}
+_CPP_WIRE = {A_SHARE: "a_share", HK_STOCK: "hk", US_STOCK: "us", CRYPTO: "crypto"}
 
 
 def to_cpp_market(raw: str | None) -> str:
@@ -74,9 +88,12 @@ def to_cpp_market(raw: str | None) -> str:
 
 
 def infer_market_from_symbol(symbol: str | None) -> str:
-    """按 symbol 后缀推断市场：.SH/.SZ/.BJ = A股，.HK = 港股，其余（纯字母 ticker）= 美股。
+    """按 symbol 后缀推断市场：.SH/.SZ/.BJ = A股，.HK = 港股，.BN = 加密货币，其余（纯字母 ticker）= 美股。
 
     symbol 为空时兜底返回 a_share。全项目后缀推断的唯一实现，其余处委托本函数。
+
+    加密货币统一带 `.BN` 后缀存（`BTCUSDT.BN`）——币安交易对本身无后缀，裸 `BTCUSDT`
+    会落进美股兜底分支，故必须带后缀显式标识，调币安 API 前用 `to_binance_symbol()` 剥。
     """
     if not symbol:
         return A_SHARE
@@ -85,6 +102,8 @@ def infer_market_from_symbol(symbol: str | None) -> str:
         return HK_STOCK
     if s.endswith((".SH", ".SZ", ".BJ")):
         return A_SHARE
+    if s.endswith(".BN"):
+        return CRYPTO
     return US_STOCK
 
 
@@ -172,4 +191,17 @@ def to_yf_symbol(symbol: str) -> str:
         code = s[:-3]
         if len(code) == 5 and code.isdigit():
             return f"{code[1:]}.HK"
+    return s
+
+
+def to_binance_symbol(symbol: str) -> str:
+    """转成币安 API 认的交易对：项目内 `BTCUSDT.BN` → 币安 `BTCUSDT`。
+
+    加密货币项目内统一带 `.BN` 后缀（供市场推断），但币安 REST 只认裸交易对。
+    只在实际调币安 API 前转换，数据库/前端展示不受影响。非加密 symbol 原样返回。
+    与 `to_yf_symbol` 同一模式：symbol 双形态，出网前剥后缀。
+    """
+    s = str(symbol).strip()
+    if s.upper().endswith(".BN"):
+        return s[:-3]
     return s

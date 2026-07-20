@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy import func
 
-from common.market import CANONICAL_MARKETS
+from common.market import CANONICAL_MARKETS, CRYPTO, STOCK_MARKETS
 from common.market_freshness import (
     BASELINE_DAYS,
     FRESHNESS_VERSION,
@@ -69,11 +69,13 @@ def get_market_freshness(session, market: str, today: "date | None" = None) -> d
     today = today or date.today()
     day_counts = _day_counts(session, market, today)
     ref, ratio = reference_trading_date(day_counts)
+    # crypto 7×24 用自然日口径（周末也该有 bar）；股票用工作日口径（周末不算落后）。
+    weekend_aware = market != CRYPTO
     return {
         "market": market,
         "reference_date": ref.isoformat() if ref else None,
         "coverage_ratio_of_baseline": ratio,
-        "is_stale": is_stale(ref, today),
+        "is_stale": is_stale(ref, today, weekend_aware=weekend_aware),
         "version": FRESHNESS_VERSION,
     }
 
@@ -103,8 +105,12 @@ def get_freshness(session, today: "date | None" = None) -> dict:
     today = today or date.today()
     by_market = {m: get_market_freshness(session, m, today) for m in CANONICAL_MARKETS}
 
+    # 全局 is_stale / latest_date 只在**股票三市场**上聚合：crypto 是 7×24 独立链，
+    # 调度器常关或币安不可达时其表为空 → is_stale 恒 True，若并入 any() 会把全局
+    # 永久拉红，使新鲜度信号失效。crypto 自身陈旧仍在 by_market["crypto"] 单独体现。
+    stock = {m: by_market[m] for m in STOCK_MARKETS if m in by_market}
     refs = [date.fromisoformat(v["reference_date"])
-            for v in by_market.values() if v["reference_date"]]
+            for v in stock.values() if v["reference_date"]]
     # 木桶取短板：报最落后的那个市场。原来的全表 max 取的是最长板 —— 正好反了，
     # 这就是「一只领跑票盖住全市场陈旧」的机理。
     worst = min(refs) if refs else None
@@ -112,7 +118,7 @@ def get_freshness(session, today: "date | None" = None) -> dict:
     return {
         "latest_date": worst.isoformat() if worst else None,
         "today": today.isoformat(),
-        "is_stale": any(v["is_stale"] for v in by_market.values()),
+        "is_stale": any(v["is_stale"] for v in stock.values()),
         "is_weekday": today.weekday() < 5,
         "by_market": by_market,
         "version": FRESHNESS_VERSION,
@@ -132,8 +138,9 @@ def get_symbol_staleness(session, symbol: str, market: str,
     row = (session.query(func.max(DailyQuote.date))
            .filter(DailyQuote.symbol == symbol).first())
     latest = _to_date(row[0]) if row and row[0] else None
+    # crypto 7×24 按自然日数落后，股票按工作日 —— 与 is_stale 同口径
     return {
         "reference_date": ref.isoformat() if ref else None,
         "symbol_latest": latest.isoformat() if latest else None,
-        "bars_behind": bars_behind(latest, ref),
+        "bars_behind": bars_behind(latest, ref, weekend_aware=(market != CRYPTO)),
     }

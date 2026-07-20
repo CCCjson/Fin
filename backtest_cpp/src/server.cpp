@@ -374,6 +374,8 @@ void Server::setup_routes() {
                 comm = CommissionConfig::us_stock();
             } else if (market == "hk") {
                 comm = CommissionConfig::hk_stock();
+            } else if (market == "crypto") {
+                comm = CommissionConfig::crypto();
             } else {
                 comm = CommissionConfig::a_share();
             }
@@ -489,6 +491,8 @@ void Server::setup_routes() {
                 comm = CommissionConfig::us_stock();
             } else if (market == "hk") {
                 comm = CommissionConfig::hk_stock();
+            } else if (market == "crypto") {
+                comm = CommissionConfig::crypto();
             } else {
                 comm = CommissionConfig::a_share();
             }

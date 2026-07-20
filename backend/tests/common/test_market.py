@@ -6,7 +6,14 @@
 """
 import pytest
 
-from common.market import add_exchange_suffix, to_bare_code, to_yf_symbol
+from common.market import (
+    CRYPTO,
+    add_exchange_suffix,
+    infer_market_from_symbol,
+    to_bare_code,
+    to_binance_symbol,
+    to_yf_symbol,
+)
 
 
 class TestToBareCode:
@@ -133,6 +140,30 @@ class TestToYfSymbol:
     ])
     def test_conversion(self, symbol, expected):
         assert to_yf_symbol(symbol) == expected
+
+
+class TestCryptoSymbol:
+    """加密货币走 `.BN` 后缀：市场推断 + 出网前剥后缀，双形态锁死。"""
+
+    @pytest.mark.parametrize("symbol, market", [
+        ("BTCUSDT.BN", CRYPTO),
+        ("ETHUSDT.BN", CRYPTO),
+        ("btcusdt.bn", CRYPTO),      # 大小写不敏感
+        ("AAPL", "us_stock"),        # 裸 ticker 仍归美股（不误判成 crypto）
+        ("00700.HK", "hk_stock"),
+        ("600519.SH", "a_share"),
+    ])
+    def test_infer_market(self, symbol, market):
+        assert infer_market_from_symbol(symbol) == market
+
+    @pytest.mark.parametrize("symbol, expected", [
+        ("BTCUSDT.BN", "BTCUSDT"),   # 剥后缀调币安
+        ("ETHUSDT.BN", "ETHUSDT"),
+        ("AAPL", "AAPL"),            # 非加密原样
+        ("00700.HK", "00700.HK"),
+    ])
+    def test_to_binance_symbol(self, symbol, expected):
+        assert to_binance_symbol(symbol) == expected
 
 
 @pytest.mark.integration

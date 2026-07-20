@@ -1197,3 +1197,111 @@ class DecisionLog(Base):
 
     def __repr__(self):
         return f"<DecisionLog(source={self.source}, symbol={self.symbol}, action={self.action})>"
+
+
+# ── 加密货币情报层（排雷/择时）专用表 ──────────────────────────────────────
+# 行情复用 DailyQuote/StockInfo（market='crypto'）；下面三张装股票没有的加密独有维度。
+# symbol 统一带 `.BN` 后缀（与 DailyQuote 一致）；市场级指标用 symbol='MARKET' 哨兵。
+
+class CryptoMetric(Base):
+    """加密时间序列指标 —— 装衍生品/链上/情绪等按日的单值指标。
+
+    宽表按 (symbol, date, metric) 唯一。metric 例：fear_greed / btc_dominance /
+    stablecoin_supply / tvl / funding_rate / open_interest / long_short_ratio。
+    市场级指标（恐慌贪婪/主导率/稳定币供应）用 symbol='MARKET'。
+    """
+    __tablename__ = "crypto_metrics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True)   # BTCUSDT.BN 或 'MARKET'
+    market = Column(String(20), nullable=False, default="crypto", index=True)
+    date = Column(Date, nullable=False, index=True)
+    metric = Column(String(40), nullable=False, index=True)
+    value = Column(Float)
+    source = Column(String(30))                               # binance/defillama/coingecko/alternative.me/github
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_crypto_metric_uniq", "symbol", "date", "metric", unique=True),
+    )
+
+    def __repr__(self):
+        return f"<CryptoMetric({self.symbol} {self.date} {self.metric}={self.value})>"
+
+
+class TokenUnlock(Base):
+    """代币解锁时间表 —— 大量解锁常是砸盘前兆（排雷层核心信号之一）。
+
+    主流币（BTC/ETH）无解锁，此表主要给山寨。按 (symbol, unlock_date, category) 唯一。
+    """
+    __tablename__ = "token_unlocks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    unlock_date = Column(Date, nullable=False, index=True)
+    amount = Column(Float)                                    # 解锁数量（币）
+    pct_of_supply = Column(Float)                             # 占流通供应百分比
+    category = Column(String(40))                             # team/investors/ecosystem/...
+    source = Column(String(30), default="defillama")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_token_unlock_uniq", "symbol", "unlock_date", "category", unique=True),
+    )
+
+    def __repr__(self):
+        return f"<TokenUnlock({self.symbol} {self.unlock_date} {self.pct_of_supply}%)>"
+
+
+class CryptoAsset(Base):
+    """代币经济学静态快照 —— 供应机制/稀释风险/集中度（排雷层「会不会被稀释」）。
+
+    一 symbol 一行，每次刷新覆盖。max_supply=None 表示无上限（无限增发，稀释风险）。
+    """
+    __tablename__ = "crypto_assets"
+
+    symbol = Column(String(20), primary_key=True)            # BTCUSDT.BN
+    base_asset = Column(String(20))                          # BTC
+    name = Column(String(100))
+    coingecko_id = Column(String(60))
+    circulating_supply = Column(Float)
+    max_supply = Column(Float)                               # None = 无上限
+    total_supply = Column(Float)
+    market_cap = Column(Float)
+    fdv = Column(Float)                                      # 全稀释市值
+    inflation_flag = Column(Integer)                         # 1=可能增发/无上限；0=固定总量
+    github_repo = Column(String(120))                        # owner/repo，供开发活跃度用
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<CryptoAsset({self.symbol} mcap={self.market_cap})>"
+
+
+class CryptoTrade(Base):
+    """币安现货成交台账 —— crypto 独立成交记录（与 A 股 ManualTrade 分书本）。
+
+    只在**真实成交**（filled_quantity > 0）时落一行；挂盘未成交的限价单不记。
+    用途：给 RiskManager 的「连亏 3 次暂停」硬风控回放已实现盈亏（币安不给成本价，
+    盈亏靠本表加权成本另算），后续 crypto 持仓/对账也复用。数量是小数（0.0015 BTC），
+    故 quantity 用 Float（区别于 ManualTrade 面向 A 股整手的 Integer）。
+    """
+    __tablename__ = "crypto_trades"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True)   # BTCUSDT.BN
+    side = Column(String(10), nullable=False)                 # BUY / SELL
+    price = Column(Float, nullable=False)                     # 成交价（USDT）
+    quantity = Column(Float, nullable=False)                  # 成交币量（小数）
+    amount = Column(Float, nullable=False)                    # 成交额 = price * quantity
+    commission = Column(Float, default=0)
+    order_id = Column(String(50), nullable=True, index=True)  # 币安 orderId
+    trade_date = Column(Date, nullable=False, index=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_crypto_trade_symbol_date", "symbol", "trade_date"),
+    )
+
+    def __repr__(self):
+        return f"<CryptoTrade({self.symbol} {self.side} {self.quantity}@{self.price})>"

@@ -4,6 +4,7 @@
 from typing import Dict
 from acquisition.markets.base import BaseFetcher
 from acquisition.markets.a_share import AShareFetcher
+from acquisition.markets.crypto import CryptoFetcher
 from acquisition.markets.hk_stock import HKStockFetcher
 from acquisition.markets.us_stock import USStockFetcher
 
@@ -14,7 +15,8 @@ class FetcherFactory:
     _fetchers = {
         "a_share": AShareFetcher,
         "hk_stock": HKStockFetcher,
-        "us_stock": USStockFetcher
+        "us_stock": USStockFetcher,
+        "crypto": CryptoFetcher,
     }
 
     @classmethod

@@ -129,6 +129,25 @@ def test_no_reference_date_is_stale():
     assert is_stale(None, date(2026, 7, 17)) is True
 
 
+# ---------------- crypto 自然日口径（7×24）----------------
+
+def test_crypto_weekend_counts_as_stale():
+    """🔒 crypto 7×24：周末也该有 bar，周末断更用自然日口径应能报出（股票不报）。"""
+    from common.market_freshness import days_between
+    friday = date(2026, 7, 17)
+    # 工作日口径（股票）：周日不算落后
+    assert is_stale(friday, date(2026, 7, 19), weekend_aware=True) is False
+    # 自然日口径（crypto）：周五→周日 = 2 自然日 → stale
+    assert is_stale(friday, date(2026, 7, 19), weekend_aware=False) is True
+    assert days_between(friday, date(2026, 7, 19)) == 2
+
+
+def test_crypto_one_day_behind_not_stale():
+    """crypto 差 1 天不报（容忍今天的 bar 还没落库）。"""
+    d = date(2026, 7, 18)
+    assert is_stale(d, date(2026, 7, 19), weekend_aware=False) is False   # 差 1 自然日
+
+
 # ---------------- bars_behind ----------------
 
 def test_bars_behind_distinguishes_unknown_from_zero():
@@ -140,3 +159,14 @@ def test_bars_behind_distinguishes_unknown_from_zero():
 
 def test_bars_behind_counts_weekdays():
     assert bars_behind(date(2026, 7, 10), date(2026, 7, 17)) == 5
+
+
+def test_bars_behind_weekend_aware_matches_is_stale():
+    """🔒 bars_behind 与 is_stale 同口径：crypto 周末停更用自然日，别误报 fresh。
+
+    周五停更、参考日周日：工作日口径 = 0（会被误判 fresh），自然日口径 = 2。
+    """
+    friday = date(2026, 7, 17)
+    sunday = date(2026, 7, 19)
+    assert bars_behind(friday, sunday, weekend_aware=True) == 0    # 股票口径
+    assert bars_behind(friday, sunday, weekend_aware=False) == 2   # crypto 口径

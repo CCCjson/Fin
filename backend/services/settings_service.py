@@ -48,6 +48,27 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         ],
     },
     {
+        "group": "crypto",
+        "title": "加密货币（币安现货）",
+        "desc": ("加密模块的非敏感调优项。⚠️ 币安 API 密钥出于安全**不在此处配置**，"
+                 "请手动改 backend/.env 的 BINANCE_API_KEY / BINANCE_API_SECRET。"
+                 "风控（单仓/总仓/止损）与股票共用「AI 与风控」设置，此处不重复。"),
+        "fields": [
+            {"key": "CRYPTO_SCHEDULER_ENABLED", "label": "7×24 数据链开关", "type": "select",
+             "options": ["true", "false"], "default": "true"},
+            {"key": "CRYPTO_UPDATE_INTERVAL_MIN", "label": "数据刷新间隔（分钟）", "type": "text", "default": "30"},
+            {"key": "CRYPTO_QUOTES", "label": "计价币白名单（逗号分隔）", "type": "text", "default": "USDT"},
+            {"key": "CRYPTO_FOCUS", "label": "情报聚焦交易对（逗号分隔，留空=主流表）", "type": "text"},
+            {"key": "CRYPTO_DAILY_MAX_LOOKBACK", "label": "增量回补窗口（天）", "type": "text", "default": "30"},
+            {"key": "BINANCE_REST_BASE", "label": "币安行情基址（地域受限时切镜像）", "type": "text",
+             "default": "https://api.binance.com"},
+            {"key": "BINANCE_FAPI_BASE", "label": "币安合约基址（衍生品数据）", "type": "text",
+             "default": "https://fapi.binance.com"},
+            {"key": "BINANCE_TRADE_BASE", "label": "币安交易基址", "type": "text",
+             "default": "https://api.binance.com"},
+        ],
+    },
+    {
         "group": "secrets",
         "title": "API 密钥",
         "desc": "密钥类字段出于安全只显示是否已配置，留空表示不改动。",

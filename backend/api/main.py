@@ -196,6 +196,14 @@ async def startup_event():
         except Exception as e:
             logger.warning(f"新闻定时任务启动失败（不影响主服务）: {e}")
 
+    # 加密货币 7×24 数据链（独立 IntervalTrigger 常转，不挂主链、不用工作日 cron）
+    if schedulers_enabled:
+        try:
+            from data_engine.crypto_scheduler import crypto_scheduler
+            crypto_scheduler.start()
+        except Exception as e:
+            logger.warning(f"加密货币数据链启动失败（不影响主服务）: {e}")
+
     # 业务事件总线 → WebSocket 桥接：把 BizEvent 广播到前端活动流（复用 /ws/automation）
     try:
         loop = asyncio.get_running_loop()
@@ -243,6 +251,12 @@ async def shutdown_event():
         try:
             from news_engine.news_scheduler import news_scheduler
             news_scheduler.stop()
+        except Exception:
+            pass
+
+        try:
+            from data_engine.crypto_scheduler import crypto_scheduler
+            crypto_scheduler.stop()
         except Exception:
             pass
 

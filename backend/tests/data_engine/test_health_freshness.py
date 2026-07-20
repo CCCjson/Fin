@@ -116,3 +116,23 @@ def test_symbol_with_no_bars_is_unknown_not_zero(session):
     st = get_symbol_staleness(session, "NOSUCH", "a_share", date(2026, 7, 17))
     assert st["symbol_latest"] is None
     assert st["bars_behind"] is None
+
+
+def test_empty_crypto_does_not_poison_global_stale(session):
+    """🔒 crypto 表空（调度器关/币安不可达）不许把全局 is_stale 永久拉红。
+
+    全局 is_stale/latest_date 只在股票三市场上聚合；crypto 是 7×24 独立链，
+    其陈旧只在 by_market['crypto'] 单独体现，不并入 any()。
+    """
+    today = date(2026, 7, 17)
+    for d in (date(2026, 7, 17), date(2026, 7, 16), date(2026, 7, 15)):
+        _seed(session, "a_share", d, 30)
+        _seed(session, "hk_stock", d, 30, start=1000)
+        _seed(session, "us_stock", d, 30, start=2000)
+    # crypto 一行都不灌
+
+    fr = get_freshness(session, today)
+    assert fr["is_stale"] is False                      # 三股市全新鲜 → 全局不 stale
+    assert fr["latest_date"] == "2026-07-17"
+    assert "crypto" in fr["by_market"]                  # crypto 仍逐市场可见
+    assert fr["by_market"]["crypto"]["is_stale"] is True   # 空表自身报 stale

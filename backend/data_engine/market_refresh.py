@@ -28,7 +28,11 @@ from collections.abc import Generator, Sequence
 
 from loguru import logger
 
-from common.market import CANONICAL_MARKETS
+# 本端点只管**股票三市场**的日线增量刷新。加密货币不在此列 —— 它是 7×24 独立链
+# （`data_engine/crypto_scheduler.py` 常转、`crypto_updater.py` 落库），不共享股票的
+# 「交易日/收盘/Yahoo 锁」假设，也不该被这个股票刷新按钮编排。故用 canonical 的
+# `STOCK_MARKETS`（不含 crypto），而非含 crypto 的 `CANONICAL_MARKETS`。
+from common.market import STOCK_MARKETS as _STOCK_MARKETS
 from data_engine.storage.database import get_session
 
 _OVERSEAS = ("hk_stock", "us_stock")
@@ -50,14 +54,17 @@ def _inject_market(line: str, market: str) -> str:
 
 
 def resolve_scope(scope: Sequence[str] | None) -> list[str]:
-    """规整 scope → 有序市场列表。None/空 = 全部三个（canonical 顺序）。"""
+    """规整 scope → 有序市场列表。None/空 = 股票三市场（canonical 顺序）。
+
+    只接受股票三市场；crypto 走独立链，传进来按未知市场拒绝。
+    """
     if not scope:
-        return list(CANONICAL_MARKETS)
-    bad = [m for m in scope if m not in CANONICAL_MARKETS]
+        return list(_STOCK_MARKETS)
+    bad = [m for m in scope if m not in _STOCK_MARKETS]
     if bad:
-        raise ValueError(f"未知市场: {bad}（只接受 {CANONICAL_MARKETS}）")
+        raise ValueError(f"未知市场: {bad}（本端点只刷股票 {_STOCK_MARKETS}；加密货币走独立链）")
     # 去重但保留 canonical 顺序，避免调用方乱序/重复
-    return [m for m in CANONICAL_MARKETS if m in set(scope)]
+    return [m for m in _STOCK_MARKETS if m in set(scope)]
 
 
 def _freshness_snapshot() -> dict:

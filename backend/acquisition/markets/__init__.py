@@ -14,6 +14,7 @@ CODING_STANDARDS §8.4 的第三类合法例外：非 HTTP 协议数据源。引
 """
 from acquisition.markets.a_share import AShareFetcher
 from acquisition.markets.base import BaseFetcher, MarketDataRequest, MarketDataResponse
+from acquisition.markets.crypto import CryptoFetcher
 from acquisition.markets.factory import FetcherFactory
 from acquisition.markets.hk_stock import HKStockFetcher
 from acquisition.markets.us_stock import USStockFetcher
@@ -25,5 +26,6 @@ __all__ = [
     'AShareFetcher',
     'HKStockFetcher',
     'USStockFetcher',
+    'CryptoFetcher',
     'FetcherFactory',
 ]

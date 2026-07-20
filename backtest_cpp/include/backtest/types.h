@@ -298,6 +298,11 @@ struct CommissionConfig {
     static CommissionConfig hk_stock() {
         return { 0.0005, 0.001, false, 5.0, 0.001 };    // 滑点 0.1%
     }
+
+    // 加密货币（币安现货）：taker 万10(0.1%)，无印花税、无最低佣金，滑点 0.05%
+    static CommissionConfig crypto() {
+        return { 0.001, 0.0, false, 0.0, 0.0005 };
+    }
 };
 
 /*

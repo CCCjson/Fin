@@ -59,6 +59,11 @@ BASELINE_DAYS = 10
 # 里多报一次 stale，也不要漏报真的断更。
 STALE_AFTER_WEEKDAYS = 2
 
+# 加密货币（7×24 无休市）用**自然日**口径：币每天都有 bar，用工作日口径会把周末断更
+# 漏报（周五停更、周一才刚好差 1 个工作日）。取 2 自然日：容忍「今天的 bar 还没落库」，
+# 落后到前天才报警。crypto 没有交易日历困扰（天天开市），反而比股票口径更干净。
+STALE_AFTER_DAYS = 2
+
 
 def _median(values: Sequence[float]) -> float:
     """中位数。空序列返回 0（调用方据此判「压根没数据」）。"""
@@ -114,19 +119,40 @@ def weekdays_between(start: date, end: date) -> int:
                if (start.fromordinal(start.toordinal() + i)).weekday() < 5)
 
 
-def is_stale(reference_date: date | None, today: date) -> bool:
+def days_between(start: date, end: date) -> int:
+    """`start` 之后到 `end` 为止有几个**自然日**，不含 `start` 本身。`end <= start` 返回 0。
+
+    给 7×24 市场（crypto）用——周末也算，不跳。
+    """
+    if end <= start:
+        return 0
+    return (end - start).days
+
+
+def is_stale(reference_date: date | None, today: date, *, weekend_aware: bool = True) -> bool:
     """参考交易日是否已经落后到「该报警了」。
 
     `today` 是**显式入参**不是 `date.today()` —— 整个模块因此可以零 mock 地测。
     没有参考日（一天数据都没有）一律算 stale。
+
+    Args:
+        weekend_aware: True（默认，股票）按工作日数，周末不算落后；False（crypto 7×24）
+            按自然日数，周末也算——币每天都该有 bar。
     """
     if reference_date is None:
         return True
-    return weekdays_between(reference_date, today) >= STALE_AFTER_WEEKDAYS
+    if weekend_aware:
+        return weekdays_between(reference_date, today) >= STALE_AFTER_WEEKDAYS
+    return days_between(reference_date, today) >= STALE_AFTER_DAYS
 
 
-def bars_behind(symbol_latest: date | None, reference_date: date | None) -> int | None:
-    """这只票落后市场参考交易日几个工作日。
+def bars_behind(symbol_latest: date | None, reference_date: date | None,
+                *, weekend_aware: bool = True) -> int | None:
+    """这只票落后市场参考交易日几个 bar。
+
+    Args:
+        weekend_aware: True（默认，股票）按工作日数；False（crypto 7×24）按自然日数。
+            与 `is_stale` 同口径 —— 否则 crypto 票周五停更、参考日在周末时会被误报 fresh。
 
     Returns:
         `None` = 无从判断（没有参考日或这只票一根 bar 都没有）——**这不是 0**，
@@ -134,4 +160,6 @@ def bars_behind(symbol_latest: date | None, reference_date: date | None) -> int 
     """
     if reference_date is None or symbol_latest is None:
         return None
-    return weekdays_between(symbol_latest, reference_date)
+    if weekend_aware:
+        return weekdays_between(symbol_latest, reference_date)
+    return days_between(symbol_latest, reference_date)
