@@ -1,10 +1,19 @@
-"""启动补跑的判定逻辑 —— 纯规则测试，零 fixture 零 mock 零 DB。
+"""启动补跑的判定逻辑测试。
+
+分三层：① 纯规则（`_last_expected_trading_day`，零 DB）；② 内存库（`db` fixture，
+测 `_coverage_on` 日线覆盖率口径）；③ 下游新鲜度（`db_threadsafe` fixture，测
+`_downstream_frontier` + `_catchup_job` 会不会因下游落后而触发补跑）。
 
 **为什么有这套东西**（2026-07-17，别当成过度设计）：cron 只在进程活着的那一刻
 触发，而本项目后端跟着桌面 App 起停。15:35 那会儿后端不在 = 那天数据永久丢失，
 **且无声无息**。实测连丢 6 个交易日（07-10 起全市场只剩 2 只票）没有任何告警。
 `misfire_grace_time` 兜不住这个（内存 jobstore 下过去的触发点根本不进视野）。
+
+**下游那层（2026-07-20 加）**：日线覆盖率只量得到日线，量不到信号/追踪/涨停/估值
+这些下游步骤跑没跑。曾踩过手动只补日线把覆盖率顶到 99%、下游却永远卡在一周前 ——
+`_downstream_frontier` + `_catchup_job` 的 OR 判定就是堵这个洞的。
 """
+import asyncio
 import os
 import sys
 from datetime import date, datetime, timedelta
@@ -12,6 +21,7 @@ from datetime import date, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -19,11 +29,13 @@ import data_engine.daily_pipeline_scheduler as sched_mod  # noqa: E402
 from data_engine.daily_pipeline_scheduler import (  # noqa: E402
     _AUTO_HOUR,
     _AUTO_MINUTE,
+    _SIGNAL_BACKFILL_MAX_LOOKBACK,
+    _SIGNAL_BACKFILL_MIN_LOOKBACK,
     DailyPipelineScheduler,
     _last_expected_trading_day,
 )
 from data_engine.storage.database import Base  # noqa: E402
-from data_engine.storage.models import DailyQuote, StockInfo  # noqa: E402
+from data_engine.storage.models import DailyQuote, Signal, StockInfo  # noqa: E402
 
 # 2026-07-17 是周五；07-18 周六、07-19 周日、07-20 周一
 
@@ -269,3 +281,148 @@ def test_misfire_grace_does_not_cover_a_dead_process():
         "next_run 应该是下周一 —— 今天错过的那次不会被补跑。"
         "这就是为什么必须有 _catchup_job。"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 下游新鲜度（2026-07-20）：日线覆盖率之外，还要看信号/追踪/涨停/估值这些
+# **下游步骤**跑没跑。堵的是「手动只补日线把覆盖率顶到 99%、下游却永远卡在
+# 一周前」这个洞（Bug 2）。
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _seed_signals(s, day, n=50):
+    """往库里塞 `day` 当天的信号（整批全市场生成，模拟真实回补）。"""
+    for i in range(n):
+        s.add(Signal(symbol=f"6{i:05d}.SH", date=day, signal_type="BUY",
+                     strength=0.8, price=10.0, signal_id=f"sig-{day.isoformat()}-{i}"))
+    s.commit()
+
+
+# ---- _signal_backfill_lookback：纯计算，零 DB ----
+
+def test_lookback_floors_at_min_when_gap_is_tiny():
+    """标杆就是今天/昨天（gap 很小）→ 落到下限，保持原 5 天行为。"""
+    today = date(2026, 7, 17)
+    assert DailyPipelineScheduler._signal_backfill_lookback(today, today) == \
+        _SIGNAL_BACKFILL_MIN_LOOKBACK
+    # gap=1 → 1+3=4 仍 < MIN(5) → 被下限托住
+    assert DailyPipelineScheduler._signal_backfill_lookback(
+        today - timedelta(days=1), today) == _SIGNAL_BACKFILL_MIN_LOOKBACK
+
+
+def test_lookback_adapts_to_actual_gap():
+    """停机多日 → 窗口跟着放大（gap+3），这正是写死 5 天够不着的老缺口。"""
+    today = date(2026, 7, 17)
+    # 落后 8 天 → 8+3=11，介于 MIN 与 MAX 之间，原样返回
+    assert DailyPipelineScheduler._signal_backfill_lookback(
+        today - timedelta(days=8), today) == 11
+
+
+def test_lookback_caps_at_max_for_huge_gap():
+    """标杆是远古 → 封在 MAX，别一次触发全历史回填。"""
+    today = date(2026, 7, 17)
+    assert DailyPipelineScheduler._signal_backfill_lookback(
+        today - timedelta(days=9999), today) == _SIGNAL_BACKFILL_MAX_LOOKBACK
+
+
+def test_lookback_uses_max_when_table_empty():
+    """signals 表空（sig_latest is None）→ 用 MAX 兜底。"""
+    assert DailyPipelineScheduler._signal_backfill_lookback(None, date(2026, 7, 17)) == \
+        _SIGNAL_BACKFILL_MAX_LOOKBACK
+
+
+# ---- _downstream_frontier：查 max(Signal.date) ----
+
+def test_downstream_frontier_returns_max_signal_date(db):
+    """标杆 = 最新一批信号的日期（signals 整批生成，max 安全）。"""
+    s = db()
+    _seed_signals(s, date(2026, 7, 9))
+    _seed_signals(s, date(2026, 7, 7))
+    s.close()
+    assert DailyPipelineScheduler._downstream_frontier() == date(2026, 7, 9)
+
+
+def test_downstream_frontier_is_none_when_empty(db):
+    """表空 → None（调用侧据此判「落后」并用 MAX 兜底 lookback）。"""
+    assert DailyPipelineScheduler._downstream_frontier() is None
+
+
+# ---- _catchup_job：日线新鲜但下游落后必须触发（Bug 2 核心回归）----
+
+@pytest.fixture
+def db_threadsafe(monkeypatch):
+    """跨线程共享的内存库。
+
+    `_catchup_job` 用 `run_in_executor` 把 `_coverage_on`/`_downstream_frontier`
+    丢到线程池，而默认 `:memory:` 每个连接一个独立库、worker 线程看不到主线程 seed
+    的数据。StaticPool + check_same_thread=False = 全线程共用同一条连接、同一个库。
+    """
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+    import data_engine.storage.database as db_mod
+    monkeypatch.setattr(db_mod, "get_session", lambda: session_factory())
+    return session_factory
+
+
+def _run_catchup(monkeypatch, *, expected):
+    """跑一次 `_catchup_job`，返回它有没有触发整条链（`_daily_pipeline_job`）。
+
+    港美股补跑与真链本体都换成 no-op —— 这里只验「触发决策」，不跑真链。
+    """
+    sch = DailyPipelineScheduler()
+    sch._enabled = True
+    sch._is_updating = False
+    monkeypatch.setattr(sched_mod, "_last_expected_trading_day", lambda now: expected)
+
+    called = []
+
+    async def _noop_overseas():
+        pass
+
+    async def _fake_pipeline():
+        called.append(True)
+
+    monkeypatch.setattr(sch, "_overseas_catchup", _noop_overseas)
+    monkeypatch.setattr(sch, "_daily_pipeline_job", _fake_pipeline)
+    asyncio.run(sch._catchup_job())
+    return bool(called)
+
+
+def test_catchup_triggers_when_signals_lag_behind_fresh_daily(db_threadsafe, monkeypatch):
+    """⚠️ **Bug 2 核心回归**：日线 100% 新鲜，但信号卡在 8 天前 → 必须补跑。
+
+    没有下游检查时（旧代码只看覆盖率），这里会判「无需补跑」，下游永远卡死。
+    """
+    expected = date(2026, 7, 17)
+    s = db_threadsafe()
+    _seed(s, 100, 100, expected)                        # 日线覆盖率 100%
+    _seed_signals(s, expected - timedelta(days=8))      # 但信号落后 8 天
+    s.close()
+
+    assert _run_catchup(monkeypatch, expected=expected) is True, \
+        "日线新鲜但下游落后 → 必须触发补跑（别把这个检查删回只看覆盖率）"
+
+
+def test_catchup_skips_when_both_daily_and_downstream_fresh(db_threadsafe, monkeypatch):
+    """日线与下游都追平到 expected → 不补跑（别天天空转/thrashing）。"""
+    expected = date(2026, 7, 17)
+    s = db_threadsafe()
+    _seed(s, 100, 100, expected)
+    _seed_signals(s, expected)                          # 信号也到 expected
+    s.close()
+
+    assert _run_catchup(monkeypatch, expected=expected) is False, \
+        "都新鲜就不该触发"
+
+
+def test_catchup_triggers_when_signals_table_empty(db_threadsafe, monkeypatch):
+    """signals 表空（sig_latest is None）→ 判落后 → 触发补跑。"""
+    expected = date(2026, 7, 17)
+    s = db_threadsafe()
+    _seed(s, 100, 100, expected)                        # 日线新鲜，但没有任何信号
+    s.close()
+
+    assert _run_catchup(monkeypatch, expected=expected) is True, \
+        "下游从来没跑过 → 必须补跑"

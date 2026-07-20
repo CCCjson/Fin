@@ -75,6 +75,16 @@ _CATCHUP_DELAY_SEC = int(os.getenv("DAILY_AUTO_UPDATE_CATCHUP_DELAY", "180"))
 # 取 80 而不是 100：每天总有几十只停牌/退市/新股抓不到，强求 100% 会天天空转。
 _CATCHUP_COVERAGE_PCT = float(os.getenv("DAILY_AUTO_UPDATE_CATCHUP_COVERAGE_PCT", "80"))
 
+# 信号回补窗口（自然日）。step 2 按「下游标杆落后多少天」自适应算 lookback，钳在
+# [MIN, MAX] 之间：
+#   - MIN 保留原下限行为（此前硬编码 5）。
+#   - MAX 是安全阀：防止 signals 表空/远古时一次触发全历史回填。
+#     90 自然日 ≈ 60 交易日，够盖任何现实停机窗口。
+# `detect_signal_gaps` 用的是自然日 cutoff（now - timedelta(days=lookback)），故此处单位
+# 也是自然日 —— 与它对齐，别混进交易日语义。
+_SIGNAL_BACKFILL_MIN_LOOKBACK = int(os.getenv("DAILY_SIGNAL_BACKFILL_MIN_LOOKBACK", "5"))
+_SIGNAL_BACKFILL_MAX_LOOKBACK = int(os.getenv("DAILY_SIGNAL_BACKFILL_MAX_LOOKBACK", "90"))
+
 # 港美股启动补跑的门槛：落后**多少天**才补。
 #
 # ⚠️ **刻意比 A 股钝得多**，因为假阳性代价不是一个量级：
@@ -342,6 +352,56 @@ class DailyPipelineScheduler:
         finally:
             session.close()
 
+    @staticmethod
+    def _downstream_frontier() -> Optional[date]:
+        """下游链「上一次为哪个交易日跑完」的单一标杆 = `max(Signal.date)`。
+
+        **为什么用 signals 当唯一代理**（而不是逐个查信号/追踪/涨停/估值四步）：
+          - signals 是日线之后的第一步、最先落后，且**唯一能历史回填**的下游；它落后 =
+            整条下游都落后。
+          - tracking（`SignalTracker.update_all()` 无日期窗口、处理全部未完成信号）会随
+            信号补齐自动跟上，不必单独查。
+          - 估值只能从当天续（`refresh_all_valuations` 写 `snapshot_date=today`，历史不可
+            回填）、涨停默认只跑今天 —— 这两步不适合当「应回填到哪天」的标杆；但 signals
+            触发整条链后它们会顺带刷到当天。
+
+        这里 `func.max` 是**安全的**（与 `_coverage_on` 刻意不用 max 的理由不冲突）：
+        signals 是每个交易日**整批全市场**回填的，`max(date)` 反映「该交易日是否已回补」，
+        不存在「少数领跑票拉高 max」的问题 —— 与 `_overseas_frontier` 同理。
+
+        **不分市场是对的**：signals 全市场按交易日聚合，不像 `_coverage_on` 那样需要
+        `market == "a_share"` 过滤。
+
+        同步查询，调用方负责丢线程池。
+        """
+        from sqlalchemy import func
+        from data_engine.storage.database import get_session
+        from data_engine.storage.models import Signal
+        session = get_session()
+        try:
+            d = session.query(func.max(Signal.date)).scalar()
+            if isinstance(d, datetime):
+                d = d.date()
+            return d
+        finally:
+            session.close()
+
+    @staticmethod
+    def _signal_backfill_lookback(sig_latest: Optional[date], today: date) -> int:
+        """按下游标杆落后多少天算信号回补窗口（自然日），钳在 [MIN, MAX]。
+
+        写死 5 天的老毛病：停机多日后 5 天窗口够不着老缺口（`detect_signal_gaps` 用的是
+        自然日 cutoff）。这里按实际落后自适应，`+3` 是缓冲避免边界日刚好被切掉。
+        `sig_latest is None`（表空/异常）→ 用 MAX 兜底，防远古一次触发全历史回填。
+        """
+        if sig_latest is None:
+            return _SIGNAL_BACKFILL_MAX_LOOKBACK
+        gap_days = (today - sig_latest).days
+        return min(
+            max(gap_days + 3, _SIGNAL_BACKFILL_MIN_LOOKBACK),
+            _SIGNAL_BACKFILL_MAX_LOOKBACK,
+        )
+
     async def _overseas_catchup(self):
         """港美股启动补跑：落后 >= _OVERSEAS_CATCHUP_STALE_DAYS 天才补。
 
@@ -388,13 +448,23 @@ class DailyPipelineScheduler:
                 logger.warning("[启动补跑] 活跃 A 股列表为空，跳过（先跑全量导入脚本）")
                 return
             pct = have / total * 100
-            if pct >= _CATCHUP_COVERAGE_PCT:
+            daily_short = pct < _CATCHUP_COVERAGE_PCT
+
+            # 下游标杆：日线覆盖率只量得到「日线有没有」，量不到信号/追踪/涨停/估值这些
+            # **下游步骤跑没跑**。曾踩过：手动只填了日线把覆盖率顶到 99%，下游却永远
+            # 卡在一周前 —— 覆盖率一好就以为全身健康，是「体温计只量一个指标」的病。
+            sig_latest = await loop.run_in_executor(None, self._downstream_frontier)
+            downstream_stale = (sig_latest is None) or (sig_latest < expected)
+
+            if not daily_short and not downstream_stale:
                 logger.info(
-                    f"[启动补跑] {expected} 覆盖率 {pct:.1f}%（{have}/{total}），无需补跑"
+                    f"[启动补跑] {expected} 日线覆盖率 {pct:.1f}%（{have}/{total}）、"
+                    f"下游标杆 {sig_latest}，均新鲜，无需补跑"
                 )
                 return
             logger.warning(
-                f"[启动补跑] {expected} 覆盖率仅 {pct:.1f}%（{have}/{total}）→ 立即补跑每日链。"
+                f"[启动补跑] {expected} 日线覆盖率 {pct:.1f}%（{have}/{total}，短缺={daily_short}）、"
+                f"下游标杆 {sig_latest}（落后={downstream_stale}）→ 立即补跑每日链。"
                 f"cron 只在进程活着时触发，15:35 那会儿后端没起的天数只能靠这里捞回来"
             )
             await self._daily_pipeline_job()
@@ -459,13 +529,20 @@ class DailyPipelineScheduler:
             summary["ok"] = False
 
         # 2) 回补缺失信号
+        #
+        # lookback 自适应：按下游标杆实际落后多少天算，而非写死 5 自然日 —— 停机多日后
+        # 5 天的窗口够不着老缺口（`detect_signal_gaps` 用自然日 cutoff）。钳在
+        # [MIN, MAX] 之间：表空/异常兜底用 MAX，防远古触发全历史回填。
         if self._chain_signals:
             try:
                 from strategy.signal_generator import SignalGenerator
+                lookback = self._signal_backfill_lookback(
+                    self._downstream_frontier(), date.today()
+                )
                 generator = SignalGenerator()
                 complete_event = None
                 for chunk in generator.backfill_signals_stream(
-                    lookback_days=5, save_to_db=True, db_only=True, limit=None
+                    lookback_days=lookback, save_to_db=True, db_only=True, limit=None
                 ):
                     try:
                         evt = json.loads(chunk)
