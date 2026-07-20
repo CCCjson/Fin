@@ -178,6 +178,61 @@ async def get_update_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==================== 统一行情刷新（三市场一个入口） ====================
+
+class MarketRefreshRequest(BaseModel):
+    """统一行情刷新请求。
+
+    `scope`：市场名列表（如 `["a_share"]` 只刷 A 股），省略/空 = 三个市场都刷。
+    每个市场内部自动检查更新到哪天、只补落后的、差一天直接补一天 ——
+    这层不预筛，判定精度交给各 updater（见 data_engine/market_refresh.py）。
+    """
+    scope: list[str] | None = None
+
+
+@router.get("/freshness", summary="查询三市场行情新鲜度")
+async def get_market_freshness_ep():
+    """三个市场各自更新到哪个交易日、是否落后（判定内核在 common/market_freshness）。
+
+    只读、不触发更新 —— 前端「要不要点刷新」的依据。
+    """
+    try:
+        from data_engine.health import get_freshness
+        session = get_session()
+        try:
+            return await asyncio.to_thread(get_freshness, session)
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"查询行情新鲜度失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/refresh/stream", summary="统一流式刷新三市场行情")
+async def market_refresh_stream(request: MarketRefreshRequest | None = None):
+    """一个入口刷新 A 股 + 港股 + 美股日线（流式进度，事件带 market 字段区分市场）。
+
+    已到最新交易日的市场内部秒回（不白跑全量）；港美股共抢一次 Yahoo 互斥锁。
+    """
+    try:
+        from data_engine.market_refresh import refresh_stream, resolve_scope
+
+        scope = request.scope if request else None
+        # refresh_stream 是生成器（惰性），未知市场的 ValueError 要迭代才抛 —— 那时
+        # StreamingResponse 已经开始流、变不成 400 了。所以在这里提前校验一次。
+        resolve_scope(scope)
+        return StreamingResponse(
+            bridge_sync_stream(refresh_stream(scope)),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    except ValueError as e:      # 未知市场名 → 400，不是 500
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"统一行情刷新失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== 全市场财务数据回补 ====================
 
 class FinancialBackfillRequest(BaseModel):

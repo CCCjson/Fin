@@ -39,9 +39,11 @@ pytdx 指数路由。真正能复用的只有「分类 + 写库 + 事件」三�
 直连」）**管的是国内通道，不管这里** —— 海外走 `resolve_overseas_proxy()`，
 返回 None 就是合法直连。
 """
+import json
 import os
 import random
 import time
+from collections.abc import Generator
 from datetime import date, datetime, timedelta
 
 from loguru import logger
@@ -84,6 +86,13 @@ def _to_yf(symbol: str, market: str) -> str:
     必须过 `common.market.to_yf_symbol`。美股是裸 ticker，原样传。
     """
     return to_yf_symbol(symbol) if market == "hk_stock" else symbol
+
+
+def _evt(event: str, **fields) -> str:
+    """一行 NDJSON 事件。字段对齐 A 股 `DailyUpdater.update_stream`（event=start/
+    progress/complete/error + total/current...），额外带 `market` 区分市场，这样统一
+    刷新接口转发时前端一套 ProgressCard 就能渲染三个市场。"""
+    return json.dumps({"event": event, **fields}, ensure_ascii=False, default=str) + "\n"
 
 
 class OverseasDailyUpdater:
@@ -248,47 +257,54 @@ class OverseasDailyUpdater:
         last = df.index[-1]
         return last.date() if hasattr(last, "date") else None
 
-    def run(self, market: str, *, today: date | None = None,
-            limit: int | None = None) -> dict:
-        """跑一个市场的增量更新。
+    def run_stream(self, market: str, *, today: date | None = None,
+                   limit: int | None = None) -> Generator[str, None, None]:
+        """跑一个市场的增量更新，**流式** yield NDJSON 事件。
+
+        统一行情刷新接口（`data_engine/market_refresh.py`）的港美股侧走这个；`run()`
+        是它的同步消费者。事件格式对齐 A 股 `DailyUpdater.update_stream`。
 
         Args:
             market: hk_stock | us_stock
             today: 覆盖「今天」（测试用）
             limit: 只处理前 N 只（调试用）
-
-        Returns:
-            `{"market", "universe", "todo", "updated", "rows", "failed", "skipped_*"}`
         """
         if market not in MARKETS:
-            raise ValueError(f"不支持的市场: {market}（只接受 {MARKETS}）")
+            yield _evt("error", market=market, message=f"不支持的市场: {market}")
+            return
         today = today or date.today()
 
         # 先探前沿：兼连通性预检 + 给 skip 判断正确的基准（见 _probe_frontier）
         frontier = self._probe_frontier(market, today)
         if frontier is None:
-            return {"market": market, "updated": 0, "rows": 0, "failed": 0,
-                    "error": "前沿探测失败"}
+            yield _evt("error", market=market,
+                       message="前沿探测失败（锚点票拉不到数据，疑似网络/代理问题）")
+            return
 
         session = get_session()
         try:
             todo, latest, stats = self._plan(session, market, frontier)
-            result = {"market": market, "updated": 0, "rows": 0, "failed": 0, **stats}
             if not todo:
                 logger.info(f"[港美股增量] {market} 无需更新: {stats}")
-                return result
+                yield _evt("complete", market=market, updated=0, rows=0, failed=0, **stats)
+                return
             if limit:
                 todo = todo[:limit]
+            total = len(todo)
 
             logger.info(
-                f"[港美股增量] {market} 开跑: {len(todo)} 只待更新（前沿 {frontier}，"
+                f"[港美股增量] {market} 开跑: {total} 只待更新（前沿 {frontier}，"
                 f"最早起点 {stats['start']}，已最新 {stats['skipped_fresh']} 只，"
                 f"无数据跳过 {stats['skipped_no_data']} 只）"
             )
+            yield _evt("start", market=market, total=total,
+                       skipped_fresh=stats["skipped_fresh"],
+                       skipped_no_data=stats["skipped_no_data"], frontier=stats["frontier"])
 
             from data_engine.deep_history.overseas_job import _call_with_timeout
 
-            for i in range(0, len(todo), BATCH_SIZE):
+            updated = rows = failed = 0
+            for i in range(0, total, BATCH_SIZE):
                 batch = todo[i:i + BATCH_SIZE]
                 # 每批各算各的起点（todo 已按落后程度排序，同批相近）——
                 # 用全局起点会让只缺 9 天的票也拉 90 根 bar，白烧 10 倍流量
@@ -299,8 +315,10 @@ class OverseasDailyUpdater:
                         BATCH_FETCH_TIMEOUT, f"{market} batch{i // BATCH_SIZE}",
                     )
                 except Exception as e:  # noqa: BLE001 — 单批失败不拖垮整轮
-                    result["failed"] += len(batch)
+                    failed += len(batch)
                     logger.warning(f"[港美股增量] {market} 批 {i // BATCH_SIZE} 失败: {e}")
+                    yield _evt("progress", market=market, current=min(i + BATCH_SIZE, total),
+                               total=total, updated=updated, rows=rows, failed=failed)
                     continue
 
                 records: list[dict] = []
@@ -310,7 +328,7 @@ class OverseasDailyUpdater:
                     recs = self._df_to_records(sym, market, df)
                     if recs:
                         records.extend(recs)
-                        result["updated"] += 1
+                        updated += 1
                 if records:
                     # 幂等：靠 daily_quotes 的 idx_symbol_date 唯一索引 INSERT OR REPLACE，
                     # 重复区间重跑不会重复落行。
@@ -319,25 +337,46 @@ class OverseasDailyUpdater:
                     # （实测教训：美股跑了 18 分钟后死在一行 NaN close 上，前面的
                     #  成果虽然已 commit，但后面 1 万只票一只都没跑到。）
                     try:
-                        result["rows"] += bulk_upsert_quotes(session, records)
+                        rows += bulk_upsert_quotes(session, records)
                     except Exception as e:  # noqa: BLE001 — 单批写库失败不中断整轮
                         session.rollback()
-                        result["failed"] += len(batch)
+                        failed += len(batch)
                         logger.warning(
                             f"[港美股增量] {market} 批 {i // BATCH_SIZE} 写库失败"
                             f"（丢弃 {len(records)} 行）: {e}"
                         )
 
-                if i + BATCH_SIZE < len(todo):
+                yield _evt("progress", market=market, current=min(i + BATCH_SIZE, total),
+                           total=total, updated=updated, rows=rows, failed=failed)
+                if i + BATCH_SIZE < total:
                     time.sleep(SLEEP_BETWEEN_BATCHES + random.uniform(0, 1))
 
             logger.success(
-                f"[港美股增量] {market} 完成: 更新 {result['updated']} 只 / "
-                f"{result['rows']} 行 / 失败 {result['failed']} 只"
+                f"[港美股增量] {market} 完成: 更新 {updated} 只 / {rows} 行 / 失败 {failed} 只"
             )
-            return result
+            yield _evt("complete", market=market, updated=updated, rows=rows,
+                       failed=failed, **stats)
         finally:
             session.close()
+
+    def run(self, market: str, *, today: date | None = None,
+            limit: int | None = None) -> dict:
+        """同步跑一个市场 —— `run_stream` 的消费者。scheduler / `update_overseas_daily`
+        用这个。
+
+        Returns:
+            最终统计 dict：`{"market","updated","rows","failed","universe","todo",
+            "skipped_*","frontier",...}`，或 `{"market","error"}`。
+        """
+        if market not in MARKETS:
+            raise ValueError(f"不支持的市场: {market}（只接受 {MARKETS}）")
+        result = {"market": market, "updated": 0, "rows": 0, "failed": 0}
+        for line in self.run_stream(market, today=today, limit=limit):
+            evt = json.loads(line)
+            # 终态事件（complete/error）携带完整统计 —— 剥掉 event 键即原 run() 的返回
+            if evt["event"] in ("complete", "error"):
+                result = {k: v for k, v in evt.items() if k != "event"}
+        return result
 
 
 def update_overseas_daily(*, today: date | None = None) -> dict:
