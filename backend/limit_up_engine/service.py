@@ -72,7 +72,9 @@ def run_daily_prediction(trade_date_str: Optional[str] = None) -> Dict:
     except Exception as e:  # noqa: BLE001
         session.rollback()
         logger.exception(f"[涨停预测] 打分落库失败: {e}")
-        return {"ok": False, "error": str(e), "ingest": ingest_summary}
+        # 带上异常类型名：有些异常（如 queue.Empty）str() 为空，只回 str(e) 会得到
+        # `error: ''`，上层完全看不出发生了什么。
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "ingest": ingest_summary}
     finally:
         session.close()
 

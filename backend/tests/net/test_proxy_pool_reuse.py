@@ -113,6 +113,37 @@ def test_failure_rotates_the_ip():
     assert pm.api_calls == 2
 
 
+# ── 抢不到空闲槽：归一到契约异常，别泄漏 queue.Empty ─────────────────────────
+
+def test_acquire_timeout_raises_proxy_exhausted_not_queue_empty():
+    """所有槽被占满、`timeout` 内抢不到 → 抛 `ProxyExhaustedError`（契约承诺的），
+    而不是把 `queue.Empty` 泄漏出去。
+
+    真事故：并发翻页时 worker 全卡在重试死 IP 上不还槽，别的 worker `acquire()`
+    超时抛 `queue.Empty`（str() 为空）一路冒到涨停预测的 except → `error: ''`，
+    上层完全看不出发生了什么，且没被现成的 `except ProxyExhaustedError` 兜底逻辑
+    接住去走备源。归一后：涨停/实时行情那条并发路能像单页失败一样落到腾讯/新浪备源。
+    """
+    import queue as _queue_mod
+
+    from net import ProxyExhaustedError
+    from net.proxy_pool import ProxyPool
+
+    pm = _CountingPM()
+    pool = ProxyPool(size=1, mgr=pm, min_delay=0, max_delay=0)
+
+    pool.acquire()  # 借走唯一的槽，不还 → 池空
+    with pytest.raises(ProxyExhaustedError):
+        pool.acquire(timeout=0.05)
+    # 顺带钉死：泄漏出来的绝不能是裸 queue.Empty
+    try:
+        pool.acquire(timeout=0.05)
+    except _queue_mod.Empty:
+        pytest.fail("acquire 泄漏了 queue.Empty，应归一为 ProxyExhaustedError")
+    except ProxyExhaustedError:
+        pass
+
+
 def test_business_error_does_not_rotate_the_ip():
     """数据源限流之类的业务错误不该烧 IP —— 但 slot.failed 仍会触发换新。
 

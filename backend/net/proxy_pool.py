@@ -194,9 +194,20 @@ class ProxyPool:
           中止还是逐项失败。
 
         Raises:
-            ProxyExhaustedError: 非 direct_mode 却取不到 IP（额度尽 / 已 dead）。
+            ProxyExhaustedError: 非 direct_mode 却取不到 IP（额度尽 / 已 dead），
+                或 `timeout` 秒内连一个空闲槽都抢不到（并发翻页时其他 worker 卡在
+                重试死 IP 上、迟迟不归还槽）。两种情形对调用方同义：都拿不到可用的
+                代理槽，交给上层走备源（腾讯/新浪），**绝不直连**。
         """
-        slot = self._queue.get(timeout=timeout)
+        from net.domestic import ProxyExhaustedError
+        try:
+            slot = self._queue.get(timeout=timeout)
+        except queue.Empty:
+            # queue.Empty 是 Queue 的实现细节（且 str() 为空 → 上层日志看不出原因）。
+            # acquire 的契约只承诺抛 ProxyExhaustedError，这里把「抢不到槽」归一到
+            # 契约异常，让所有现成的 except ProxyExhaustedError 兜底逻辑照常生效。
+            raise ProxyExhaustedError(
+                f"{timeout}s 内无空闲代理槽（全部占用，疑似并发翻页争用）") from None
         if not self.direct_mode and (
             slot.proxy is None or slot.failed or slot.proxy.is_expired
         ):
@@ -204,7 +215,6 @@ class ProxyPool:
         if not self.direct_mode and slot.proxy is None:
             # 非直连模式却没 IP：归还槽再抛，绝不把会直连的空槽交出去。
             self.release(slot)
-            from net.domestic import ProxyExhaustedError
             raise ProxyExhaustedError(
                 f"代理槽 {slot.slot_id} 无可用快代理 IP，拒绝降级直连")
         return slot

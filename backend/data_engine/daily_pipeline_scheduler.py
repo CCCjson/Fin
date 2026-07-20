@@ -117,6 +117,27 @@ def _last_expected_trading_day(now: datetime) -> date:
     return d
 
 
+def _weekday_span(start: date, end: date) -> int:
+    """`start`（不含）到 `end`（含）之间的工作日数（周一~周五）。`end <= start` 返回 0。
+
+    用来给港美股补跑判「落后了几个交易日」而非几个自然日 —— 周一早上港/美股上一个
+    交易日是上周五，裸算 `(周一 - 周五).days == 3` 会把周末误当落后 3 天、触发一次
+    10-15 分钟的空拉。按工作日算，周五→周一只差 1 天，不会误触发。
+
+    **仍不查节假日**（项目无交易日历），所以这只是「周末感知」，不是「交易日历感知」；
+    真交易日历式的精确判定超出本次范围，靠阈值的余量吸收假期。
+    """
+    if end <= start:
+        return 0
+    n = 0
+    d = start
+    while d < end:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            n += 1
+    return n
+
+
 class DailyPipelineScheduler:
     """每日数据更新链调度器（AsyncIOScheduler 单例）。"""
 
@@ -403,9 +424,12 @@ class DailyPipelineScheduler:
         )
 
     async def _overseas_catchup(self):
-        """港美股启动补跑：落后 >= _OVERSEAS_CATCHUP_STALE_DAYS 天才补。
+        """港美股启动补跑：落后 >= _OVERSEAS_CATCHUP_STALE_DAYS 个**工作日**才补。
 
         门槛比 A 股钝得多，理由见 `_OVERSEAS_CATCHUP_STALE_DAYS` 的注释。
+
+        落后天数按**工作日**算（`_weekday_span`），不按自然日：否则周一早上港/美股停在
+        上周五会被裸算成「落后 3 天」误触发一次 10-15 分钟的空拉（实测 2026-07-20 就中过）。
         """
         if not self._overseas_enabled or self._overseas_updating:
             return
@@ -414,15 +438,15 @@ class DailyPipelineScheduler:
             frontier = await loop.run_in_executor(None, self._overseas_frontier)
             today = date.today()
             stale = {
-                mkt: (today - d).days
+                mkt: _weekday_span(d, today)
                 for mkt, d in frontier.items()
-                if d and (today - d).days >= _OVERSEAS_CATCHUP_STALE_DAYS
+                if d and _weekday_span(d, today) >= _OVERSEAS_CATCHUP_STALE_DAYS
             }
             if not stale:
                 logger.info(f"[港美股增量] 启动检查：无需补跑（前沿 {frontier}）")
                 return
             logger.warning(
-                f"[港美股增量] 启动检查：{stale}（落后天数）→ 立即补跑。"
+                f"[港美股增量] 启动检查：{stale}（落后工作日数）→ 立即补跑。"
                 f"港美股没有别的增量通道，不补就一直不会新"
             )
             await self._overseas_job()

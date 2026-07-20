@@ -33,6 +33,7 @@ from data_engine.daily_pipeline_scheduler import (  # noqa: E402
     _SIGNAL_BACKFILL_MIN_LOOKBACK,
     DailyPipelineScheduler,
     _last_expected_trading_day,
+    _weekday_span,
 )
 from data_engine.storage.database import Base  # noqa: E402
 from data_engine.storage.models import DailyQuote, Signal, StockInfo  # noqa: E402
@@ -426,3 +427,67 @@ def test_catchup_triggers_when_signals_table_empty(db_threadsafe, monkeypatch):
 
     assert _run_catchup(monkeypatch, expected=expected) is True, \
         "下游从来没跑过 → 必须补跑"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 港美股补跑的周末感知（2026-07-20）：按工作日算落后天数，别把周末误当落后。
+# 实测过：周一早上港/美股停在上周五，裸算自然日 = 3 天 → 误触发一次 10-15min 空拉。
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_weekday_span_treats_friday_to_monday_as_one():
+    """周五→周一只差 1 个工作日（周末不算），不是裸算的 3 天。"""
+    assert _weekday_span(date(2026, 7, 17), date(2026, 7, 20)) == 1   # Fri→Mon
+    assert _weekday_span(date(2026, 7, 16), date(2026, 7, 20)) == 2   # Thu→Mon
+    assert _weekday_span(date(2026, 7, 17), date(2026, 7, 17)) == 0   # 同日
+    assert _weekday_span(date(2026, 7, 20), date(2026, 7, 17)) == 0   # end<=start
+
+
+def test_weekday_span_counts_real_multiday_outage():
+    """真断多天（07-08 → 07-20）→ 工作日数够大，仍会触发补跑。"""
+    # 07-09,10,13,14,15,16,17,20 = 8 个工作日（跳过两个周末）
+    assert _weekday_span(date(2026, 7, 8), date(2026, 7, 20)) == 8
+
+
+def _run_overseas_catchup(monkeypatch, *, frontier, today):
+    """跑一次 `_overseas_catchup`，返回它有没有触发港美股补跑（`_overseas_job`）。"""
+    class _FakeDate(date):
+        @classmethod
+        def today(cls):
+            return today
+
+    monkeypatch.setattr(sched_mod, "date", _FakeDate)
+
+    sch = DailyPipelineScheduler()
+    sch._overseas_enabled = True
+    sch._overseas_updating = False
+    monkeypatch.setattr(sch, "_overseas_frontier", lambda: dict(frontier))
+
+    called = []
+
+    async def _fake_job():
+        called.append(True)
+
+    monkeypatch.setattr(sch, "_overseas_job", _fake_job)
+    asyncio.run(sch._overseas_catchup())
+    return bool(called)
+
+
+def test_overseas_catchup_does_not_fire_on_monday_after_weekend(monkeypatch):
+    """⚠️ #1 回归：周一早上港股停上周五、美股停上周四 = 正常，别补跑。"""
+    fired = _run_overseas_catchup(
+        monkeypatch,
+        frontier={"hk_stock": date(2026, 7, 17), "us_stock": date(2026, 7, 16)},
+        today=date(2026, 7, 20),   # 周一
+    )
+    assert fired is False, "周末造成的 1-2 工作日落后不该触发 10-15min 空拉"
+
+
+def test_overseas_catchup_still_fires_on_real_outage(monkeypatch):
+    """真断多天（港股停 07-08，落后 8 个工作日）→ 仍要补。"""
+    fired = _run_overseas_catchup(
+        monkeypatch,
+        frontier={"hk_stock": date(2026, 7, 8), "us_stock": date(2026, 7, 8)},
+        today=date(2026, 7, 20),
+    )
+    assert fired is True, "真落后 >= 3 工作日必须补跑"
