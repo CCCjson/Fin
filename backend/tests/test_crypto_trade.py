@@ -80,8 +80,9 @@ class TestOrderRecording:
         from trading_engine.brokers import binance_broker
 
         monkeypatch.setattr(bt, "has_credentials", lambda: True)
+        # 现货买力充足 → 不触发买入自动补足（本组只验成交/挂单记账分支）
         monkeypatch.setattr(binance_broker, "get_binance_broker",
-                            lambda: _FakeBroker(order=order))
+                            lambda: _FakeBroker(order=order, account={"spot_cash": 1e9}))
         monkeypatch.setattr(crypto_tools, "_crypto_broker_info", lambda broker: {})
         monkeypatch.setattr(crypto_tools, "_risk_check", lambda *a, **k: (True, [], []))
 
@@ -169,6 +170,13 @@ class TestConsecutiveLossReplay:
         assert get_recent_crypto_closed_pnls() == ([], None)
 
 
+def _stub_empty_wallets(monkeypatch, bt):
+    """把 Funding/Earn 三个新钱包端点 stub 成空（避免单测打真网；import 时 .env 有真 key）。"""
+    monkeypatch.setattr(bt, "funding_asset", lambda: [])
+    monkeypatch.setattr(bt, "earn_flexible_positions", lambda *a, **k: [])
+    monkeypatch.setattr(bt, "earn_locked_positions", lambda *a, **k: [])
+
+
 class TestAccountStablecoins:
     """A3：稳定币算现金/权益，只有非稳定币才算持仓市值。"""
 
@@ -181,11 +189,13 @@ class TestAccountStablecoins:
             {"asset": "USDC", "free": "3000", "locked": "0"},
         ]
         monkeypatch.setattr(bt, "account", lambda: {"balances": balances})
+        _stub_empty_wallets(monkeypatch, bt)
         broker = BinanceBroker()
         broker._connected = True
         acct = broker.get_account_info()
         assert acct["market_value"] == 0.0        # 无币 → 零持仓敞口（原来会虚增）
         assert acct["cash"] == 8000.0             # USDT+USDC 的 free
+        assert acct["spot_cash"] == 8000.0
         assert acct["total_value"] == 10000.0     # 含 2000 锁定 USDT
 
     def test_coins_counted_at_market(self, monkeypatch):
@@ -198,12 +208,108 @@ class TestAccountStablecoins:
         ]
         monkeypatch.setattr(bt, "account", lambda: {"balances": balances})
         monkeypatch.setattr(bt, "ticker_price", lambda sym: 50000.0)
+        _stub_empty_wallets(monkeypatch, bt)
         broker = BinanceBroker()
         broker._connected = True
         acct = broker.get_account_info()
         assert acct["market_value"] == 5000.0     # 0.1 BTC * 50000
         assert acct["cash"] == 1000.0
         assert acct["total_value"] == 6000.0
+
+
+class TestAccountAggregation:
+    """需求1：账户聚合四钱包 → 三档买力（现货可用 + 活期可赎 + 资金可划）。"""
+
+    def test_funding_and_earn_counted_into_buypower(self, monkeypatch):
+        from acquisition.markets import binance_trade as bt
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        # 现货几乎空、钱在 Funding 与理财活期（正是 Jason 的真实处境）
+        monkeypatch.setattr(bt, "account",
+                            lambda: {"balances": [{"asset": "USDT", "free": "10", "locked": "0"}]})
+        monkeypatch.setattr(bt, "funding_asset",
+                            lambda: [{"asset": "USDT", "free": "53.76", "locked": "0"}])
+        monkeypatch.setattr(bt, "earn_flexible_positions",
+                            lambda *a, **k: [{"asset": "USDT", "totalAmount": "100"}])
+        monkeypatch.setattr(bt, "earn_locked_positions",
+                            lambda *a, **k: [{"asset": "USDT", "amount": "500"}])
+        broker = BinanceBroker()
+        broker._connected = True
+        acct = broker.get_account_info()
+        assert acct["spot_cash"] == 10.0
+        assert acct["transferable_cash"] == 53.76      # 资金钱包可划
+        assert acct["redeemable_cash"] == 100.0        # 理财活期可赎
+        assert acct["cash"] == 163.76                  # 三档买力之和
+        # 定期 500 不计入买力，但进总资产
+        assert acct["total_value"] == 663.76
+        names = {w["name"] for w in acct["wallets"]}
+        assert names == {"现货", "资金", "理财活期", "理财定期"}
+
+
+class TestFundingPlan:
+    """需求1：买入现货 USDT 不足时，按「活期→资金」规划补足步骤。"""
+
+    def test_shortfall_split_redeem_then_transfer(self):
+        from agents.tools.crypto_tools import _plan_funding
+        acct = {"spot_cash": 10.0, "redeemable_cash": 30.0, "transferable_cash": 100.0}
+        steps, short = _plan_funding(acct, need_usdt=50.0)   # 缺 40：先赎 30 再划 10
+        assert short == 0.0
+        assert steps[0]["action"] == "redeem" and steps[0]["amount"] == 30.0
+        assert steps[1]["action"] == "transfer" and steps[1]["amount"] == 10.0
+
+    def test_enough_spot_no_steps(self):
+        from agents.tools.crypto_tools import _plan_funding
+        steps, short = _plan_funding({"spot_cash": 100.0}, need_usdt=50.0)
+        assert steps == [] and short == 0.0
+
+    def test_insufficient_everywhere_reports_short(self):
+        from agents.tools.crypto_tools import _plan_funding
+        acct = {"spot_cash": 5.0, "redeemable_cash": 10.0, "transferable_cash": 5.0}
+        steps, short = _plan_funding(acct, need_usdt=50.0)   # 5+10+5=20，缺 30
+        assert short == 30.0
+        assert len(steps) == 2
+
+
+class TestAutoSweepToEarn:
+    """需求1.5：卖出后闲置 USDT 全自动申购活期（只扫闲置/尊重最小额/留痕不进台账）。"""
+
+    class _SweepBroker:
+        def __init__(self, spot_cash):
+            self._spot = spot_cash
+            self.subscribed = []
+
+        def get_account_info(self):
+            return {"spot_cash": self._spot}
+
+        def earn_subscribe_flexible(self, asset, amount):
+            self.subscribed.append((asset, amount))
+            return True
+
+    def test_idle_usdt_swept(self, monkeypatch):
+        monkeypatch.setenv("CRYPTO_AUTO_EARN_ENABLED", "true")
+        from agents.tools import crypto_tools
+        recorded = []
+        monkeypatch.setattr(crypto_tools, "_record_earn_sweep",
+                            lambda a, amt: recorded.append((a, amt)))
+        broker = self._SweepBroker(spot_cash=250.0)
+        crypto_tools._auto_sweep_to_earn(broker)
+        assert broker.subscribed == [("USDT", 250.0)]
+        assert recorded == [("USDT", 250.0)]        # 留痕（非交易，不进 CryptoTrade 台账）
+
+    def test_dust_not_swept(self, monkeypatch):
+        monkeypatch.setenv("CRYPTO_AUTO_EARN_ENABLED", "true")
+        monkeypatch.setenv("CRYPTO_EARN_DUST_MIN", "1")
+        from agents.tools import crypto_tools
+        broker = self._SweepBroker(spot_cash=0.3)   # 低于最小额
+        crypto_tools._auto_sweep_to_earn(broker)
+        assert broker.subscribed == []
+
+    def test_disabled_skips(self, monkeypatch):
+        monkeypatch.setenv("CRYPTO_AUTO_EARN_ENABLED", "false")
+        from agents.tools import crypto_tools
+        broker = self._SweepBroker(spot_cash=500.0)
+        crypto_tools._auto_sweep_to_earn(broker)
+        assert broker.subscribed == []
 
 
 class TestRealtimeOnDemand:

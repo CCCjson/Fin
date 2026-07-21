@@ -19,6 +19,17 @@ const DIM_LABELS: Record<string, string> = {
   sentiment: '新闻情感',
   ml: 'ML 预测',
   position: '持仓风险',
+  // crypto 择时三维
+  derivatives: '衍生品情绪',
+  regime: 'BTC 大势',
+};
+
+// 排雷 verdict → 徽章样式
+const SCREEN_VERDICT_STYLE: Record<string, { label: string; cls: string }> = {
+  pass: { label: '排雷通过', cls: 'bg-green-500/20 text-green-300 border-green-500/40' },
+  caution: { label: '排雷警示', cls: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40' },
+  avoid: { label: '排雷否决', cls: 'bg-red-500/20 text-red-300 border-red-500/40' },
+  unknown: { label: '排雷未知', cls: 'bg-gray-500/20 text-gray-300 border-gray-500/40' },
 };
 
 const REC_STYLE: Record<string, { label: string; cls: string }> = {
@@ -840,26 +851,37 @@ const CryptoDerivativesWidget: React.FC<{ data: any; title?: string }> = ({ data
 
 const CryptoAccountWidget: React.FC<{ data: any; title?: string }> = ({ data, title }) => {
   const rows = data.positions || [];
-  const upnl = typeof data.unrealized_pnl === 'number' ? data.unrealized_pnl : null;
+  const wallets = Array.isArray(data.wallets) ? data.wallets : [];
   return (
     <WidgetShell className="p-4">
-      <div className="text-base font-bold text-white mb-3">💰 {title || '币安现货账户'}</div>
-      <div className="grid grid-cols-3 gap-2 text-sm mb-3">
+      <div className="text-base font-bold text-white mb-3">💰 {title || '币安账户'}</div>
+      {/* 三档买力：可动用买力（现货可用 + 理财活期可赎 + 资金可划） + 总资产 */}
+      <div className="grid grid-cols-2 gap-2 text-sm mb-3">
         <div className="bg-dark-light rounded-lg p-2.5">
-          <div className="text-gray-500 text-xs">可用 USDT</div>
+          <div className="text-gray-500 text-xs">可动用买力</div>
           <div className="text-white font-medium">{usd(data.cash)}</div>
+          <div className="text-[10px] text-gray-600 mt-0.5">
+            现货 {usd(data.spot_cash)} · 活期可赎 {usd(data.redeemable_cash)} · 资金可划 {usd(data.transferable_cash)}
+          </div>
         </div>
         <div className="bg-dark-light rounded-lg p-2.5">
           <div className="text-gray-500 text-xs">总资产</div>
           <div className="text-white font-medium">{usd(data.total_value)}</div>
-        </div>
-        <div className="bg-dark-light rounded-lg p-2.5">
-          <div className="text-gray-500 text-xs">未实现盈亏</div>
-          <div className={`font-medium ${upnl === null ? 'text-gray-300' : upnl >= 0 ? 'text-bull' : 'text-bear'}`}>
-            {upnl === null ? '—' : `${upnl >= 0 ? '+' : ''}${usd(upnl)}`}
-          </div>
+          <div className="text-[10px] text-gray-600 mt-0.5">含持仓市值 {usd(data.market_value)}</div>
         </div>
       </div>
+      {/* 四钱包分列 */}
+      {wallets.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mb-3">
+          {wallets.map((w: any, i: number) => (
+            <div key={i} className="bg-dark-light rounded-lg p-2">
+              <div className="text-gray-500">{w.name}</div>
+              <div className="text-white font-medium">{usd(w.stable)}</div>
+              {w.coins_value > 0 && <div className="text-[10px] text-gray-600">币值 {usd(w.coins_value)}</div>}
+            </div>
+          ))}
+        </div>
+      )}
       {rows.length === 0 ? (
         <div className="text-xs text-gray-500 bg-dark-light rounded-lg p-2.5">当前无持仓</div>
       ) : (
@@ -888,11 +910,94 @@ const CryptoAccountWidget: React.FC<{ data: any; title?: string }> = ({ data, ti
   );
 };
 
+const CryptoAnalysisWidget: React.FC<{ data: any; title?: string }> = ({ data, title }) => {
+  const rec = REC_STYLE[data.recommendation] || REC_STYLE['N/A'];
+  const dims = data.dimensions || {};
+  const sug = data.suggested;
+  const price = data.price || {};
+  const lv = data.dynamic_levels || {};
+  const screen = data.screen || {};
+  const sv = SCREEN_VERDICT_STYLE[screen.verdict] || SCREEN_VERDICT_STYLE['unknown'];
+  const chg = typeof price.change_20d_pct === 'number' ? price.change_20d_pct : null;
+  return (
+    <WidgetShell className="p-4">
+      {/* 头部：币种 + 综合分 + 买卖持有 + 排雷徽章 */}
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div className="text-base font-bold text-white">
+          {title || data.base_asset} <span className="text-gray-500 text-xs">{data.symbol}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-center">
+            <div className="text-2xl font-bold text-white leading-none">
+              <AnimatedNumber value={data.composite} decimals={1} placeholder="—" />
+            </div>
+            <div className="text-[10px] text-gray-500">综合评分</div>
+          </div>
+          <span className={`px-3 py-1.5 rounded-lg border text-xs font-semibold ${rec.cls}`}>{rec.label}</span>
+          <span className={`px-2 py-1 rounded-lg border text-[10px] font-semibold ${sv.cls}`}>{sv.label}</span>
+        </div>
+      </div>
+
+      {/* 关键指标：现价 / 建议仓位 / 止损 / 止盈 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-sm">
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">现价{chg !== null && <span className={chg >= 0 ? 'text-bull' : 'text-bear'}> {chg >= 0 ? '+' : ''}{chg}%(20d)</span>}</div>
+          <div className="text-white font-medium">{usd(price.latest)}</div>
+        </div>
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">建议仓位</div>
+          <div className="text-white font-medium">{data.suggested_position_pct ?? 0}%</div>
+        </div>
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">止损位{lv.sl_atr_mult ? <span className="text-gray-600"> {lv.sl_atr_mult}×ATR</span> : null}</div>
+          <div className="text-white font-medium">{usd(data.stop_loss)}</div>
+        </div>
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">止盈位{typeof lv.risk_reward_ratio === 'number' ? <span className="text-gray-600"> 盈亏比{lv.risk_reward_ratio}</span> : null}</div>
+          <div className="text-white font-medium">{usd(data.take_profit)}</div>
+        </div>
+      </div>
+
+      {/* 择时三维评分 */}
+      <div className="bg-dark-light rounded-lg p-3 mb-3">
+        <div className="text-xs font-semibold text-gray-400 mb-2">择时三维（排雷作否决闸）</div>
+        {(['technical', 'derivatives', 'regime'] as const).map((k) => (
+          <DimBar key={k} name={k} score={dims[k]?.score} />
+        ))}
+      </div>
+
+      {/* 一句解释原因 */}
+      {Array.isArray(data.reasons) && data.reasons.length > 0 && (
+        <div className="bg-dark-light rounded-lg p-3 mb-3 text-xs text-gray-300 space-y-1">
+          {data.reasons.map((rsn: string, i: number) => (
+            <div key={i}>· {rsn}</div>
+          ))}
+        </div>
+      )}
+
+      {/* 排雷红旗 */}
+      {Array.isArray(screen.flags) && screen.flags.length > 0 && screen.verdict !== 'pass' && (
+        <div className="text-[11px] text-yellow-300/80 mb-2">🚩 {screen.flags.slice(0, 3).join('；')}</div>
+      )}
+
+      {/* 只有真判 BUY 且买得起才显示建议买入量 */}
+      {data.recommendation === 'BUY' && sug && sug.affordable && (
+        <div className="bg-dark-light rounded-lg p-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
+          <span className="text-gray-500 text-xs">💰 建议买入 <span className="text-green-300 font-semibold">{Number(sug.quantity).toLocaleString(undefined, { maximumFractionDigits: 8 })} {data.base_asset}</span></span>
+          <span className="text-gray-500 text-xs">约 <span className="text-white">{usd(sug.amount_usdt)}</span></span>
+          {!sug.risk_passed && <span className="text-red-300 text-xs">⚠️ 风控未过</span>}
+        </div>
+      )}
+    </WidgetShell>
+  );
+};
+
 const WIDGET_MAP: Record<string, React.FC<{ data: any; title?: string }>> = {
   cockpit_score: CockpitScoreWidget,
   crypto_market: CryptoMarketWidget,
   crypto_screen: CryptoScreenWidget,
   crypto_derivatives: CryptoDerivativesWidget,
+  crypto_analysis: CryptoAnalysisWidget,
   crypto_account: CryptoAccountWidget,
   metric_cards: MetricCardsWidget,
   position_table: PositionTableWidget,

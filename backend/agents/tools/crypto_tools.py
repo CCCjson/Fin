@@ -22,6 +22,7 @@ from agents.registry import tool
 from agents.tool_envelope import ToolEnvelope
 from agents.widgets import (
     crypto_account_widget,
+    crypto_analysis_widget,
     crypto_derivatives_widget,
     crypto_market_widget,
     crypto_screen_widget,
@@ -77,6 +78,80 @@ def get_crypto_derivatives(symbol: str) -> ToolEnvelope:
     from acquisition.markets import crypto_derivatives as deriv
     snap = deriv.get_derivatives_snapshot(symbol)
     return ToolEnvelope(data=snap, widget=crypto_derivatives_widget(snap))
+
+
+# ──────────────────── 只读：一句话一张卡（币版驾驶舱）────────────────────
+
+@tool(
+    name="analyze_crypto",
+    description="【问一个币的首选】对单个加密货币做完整分析，一次给全：当前价+近期走势、"
+                "技术信号状态、综合评分(0-100)、买/卖/持有建议、入场价/止盈位/止损位/建议仓位，"
+                "并给出简单原因。融合技术择时+币安衍生品+BTC大势三维，排雷层作否决闸。"
+                "用户问「看看 BTC / XX 币怎么样 / 能不能买」时用这个。",
+    args_model=CryptoSymbolArgs, category="crypto", group="crypto",
+)
+def analyze_crypto(symbol: str) -> ToolEnvelope:
+    from crypto_intel_engine import analyze_crypto_symbol
+
+    # 配了 key 才拿真实账户 → 才能算具体建议仓位/金额与当前持仓占比（否则只给百分比）
+    broker_info = None
+    current_pct = 0.0
+    from acquisition.markets import binance_trade as bt
+    if bt.has_credentials():
+        try:
+            from trading_engine.brokers.binance_broker import get_binance_broker
+            broker = get_binance_broker()
+            if broker.connect():
+                broker_info = _crypto_broker_info(broker)
+                total = broker_info.get("total_value") or 0.0
+                pos = (broker_info.get("positions") or {}).get(symbol)
+                if pos and total:
+                    current_pct = round((pos.get("market_value") or 0.0) / total * 100, 1)
+        except Exception as e:  # noqa: BLE001 — 账户拿不到不影响只读分析
+            logger.warning(f"analyze_crypto 账户读取失败 {symbol}: {e}")
+            broker_info = None
+
+    r = analyze_crypto_symbol(symbol, broker_info=broker_info, current_position_pct=current_pct)
+    if r.get("error"):
+        return ToolEnvelope(business_result="negative", message=r["error"])
+    _record_crypto_cockpit_decision(r)
+    return ToolEnvelope(data=r, widget=crypto_analysis_widget(r))
+
+
+def _record_crypto_cockpit_decision(r: dict) -> None:
+    """币版驾驶舱评级入 DecisionLog（source=crypto_cockpit），供后验归因与置信度校准。
+
+    对齐股票 `_record_cockpit_decision`：留痕失败绝不影响主流程。source 单列，crypto
+    与股票各算各的胜率/校准（`get_calibration_factor("crypto_cockpit")` 读的就是这条）。
+    """
+    try:
+        from crypto_intel_engine.scorer import CRYPTO_SCORER_VERSION
+        from decision_log import record_decision
+
+        sizing = r.get("suggested") or {}
+        record_decision(
+            source="crypto_cockpit", symbol=r.get("symbol"), name=r.get("base_asset"),
+            action=r.get("recommendation"), recommendation=r.get("recommendation"),
+            confidence=r.get("composite"),
+            entry_price=(r.get("price") or {}).get("latest"),
+            stop_loss=r.get("stop_loss"), take_profit=r.get("take_profit"),
+            position_pct=r.get("suggested_position_pct"),
+            model_id="rule:crypto_cockpit_scorer", prompt_version=CRYPTO_SCORER_VERSION,
+            input_snapshot={"dimensions": r.get("dimensions"),
+                            "weights_used": r.get("weights_used"),
+                            "available_dimensions": r.get("available_dimensions"),
+                            "dimension_coverage": r.get("dimension_coverage"),
+                            "screen": r.get("screen"),
+                            "data_quality": r.get("data_quality")},
+            output_summary={"composite": r.get("composite"),
+                            "raw_composite": r.get("raw_composite"),
+                            "calibration_factor": r.get("calibration_factor"),
+                            "adjustments": list(r.get("adjustments") or ()),
+                            "suggested": sizing},
+            risk_passed=bool(sizing.get("risk_passed")),
+        )
+    except Exception:  # noqa: BLE001 — 留痕不可影响主流程
+        pass
 
 
 # ──────────────────── 只读：币安账户（需 key）────────────────────
@@ -191,8 +266,127 @@ def _resolve_qty_price(symbol: str, side: str, quantity: float | None,
     return 0.0, ref
 
 
+# ──────────────────── 资金腾挪：买入自动补足 + 卖后理财扫归 ────────────────────
+
+_STABLE_QUOTE = "USDT"     # v1 只处理 USDT 计价对
+_FUND_BUFFER = 1.003       # 补足现货时多留 0.3% 缓冲（覆盖费率/滑点微差）
+
+
+def _auto_earn_enabled() -> bool:
+    import os
+    return os.getenv("CRYPTO_AUTO_EARN_ENABLED", "true").lower() not in ("false", "0", "off")
+
+
+def _earn_dust_min() -> float:
+    import os
+    try:
+        return float(os.getenv("CRYPTO_EARN_DUST_MIN", "1"))
+    except ValueError:
+        return 1.0
+
+
+def _earn_assets() -> list[str]:
+    import os
+    raw = os.getenv("CRYPTO_EARN_ASSETS", "USDT")
+    return [a.strip().upper() for a in raw.split(",") if a.strip()]
+
+
+def _plan_funding(acct: dict, need_usdt: float) -> tuple[list[dict], float]:
+    """现货 USDT 不够时，规划从「活期→资金」按序补足的步骤。返回 (steps, 仍缺口)。
+
+    优先赎回活期（我们自己扫进去的、更快），再划转资金钱包。缺口>0 = 补不满。
+    """
+    spot = float(acct.get("spot_cash") or 0.0)
+    remaining = round(max(0.0, need_usdt - spot), 2)
+    steps: list[dict] = []
+    if remaining <= 0:
+        return steps, 0.0
+    redeemable = float(acct.get("redeemable_cash") or 0.0)
+    if remaining > 0 and redeemable > 0:
+        amt = round(min(remaining, redeemable), 2)
+        steps.append({"action": "redeem", "from": "理财活期", "asset": _STABLE_QUOTE, "amount": amt})
+        remaining = round(remaining - amt, 2)
+    transferable = float(acct.get("transferable_cash") or 0.0)
+    if remaining > 0 and transferable > 0:
+        amt = round(min(remaining, transferable), 2)
+        steps.append({"action": "transfer", "from": "资金钱包", "asset": _STABLE_QUOTE, "amount": amt})
+        remaining = round(remaining - amt, 2)
+    return steps, round(max(0.0, remaining), 2)
+
+
+def _execute_funding(broker, steps: list[dict], need_usdt: float) -> bool:
+    """执行补足步骤（赎回/划转），到账有延迟 → 轮询最多 3 次确认现货够了才算成功。"""
+    import time
+
+    from acquisition.markets import binance_trade as bt
+    for st in steps:
+        ok = (broker.earn_redeem_flexible(st["asset"], st["amount"]) if st["action"] == "redeem"
+              else broker.transfer_funding_to_spot(st["asset"], st["amount"]))
+        if not ok:
+            logger.error(f"补足现货步骤失败: {st}")
+            return False
+    # 轮询现货 USDT 到账（币安划转/赎回有秒级延迟）
+    for _ in range(3):
+        time.sleep(1.2)
+        try:
+            free = next((float(b.get("free", 0)) for b in bt.account().get("balances", [])
+                         if b.get("asset") == _STABLE_QUOTE), 0.0)
+        except Exception:  # noqa: BLE001
+            free = 0.0
+        if free >= need_usdt:
+            return True
+    logger.warning(f"补足后现货 {_STABLE_QUOTE} 仍不足 {need_usdt}")
+    return False
+
+
+def _auto_sweep_to_earn(broker) -> None:
+    """卖出成交后：把现货**闲置稳定币**全自动申购最优活期理财吃收益（不弹确认）。
+
+    Jason 批准全自动（活期可秒赎回、风险低）。留痕但**不进 CryptoTrade 台账、不算连亏
+    streak**（申赎不是买卖交易）。失败仅日志，绝不回滚已成交的卖单。
+    """
+    if not _auto_earn_enabled():
+        return
+    dust = _earn_dust_min()
+    try:
+        acct = broker.get_account_info()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"扫归读账户失败: {e}")
+        return
+    # 现货可用稳定币（spot_cash 只含稳定币 free，正是卖出到账的闲置资金）
+    idle = float(acct.get("spot_cash") or 0.0)
+    if idle < dust:
+        return
+    for asset in _earn_assets():
+        if asset != _STABLE_QUOTE:      # v1 仅扫 USDT；spot_cash 未按币种拆分
+            continue
+        amount = round(idle, 2)
+        if amount < dust:
+            continue
+        if broker.earn_subscribe_flexible(asset, amount):
+            _record_earn_sweep(asset, amount)
+
+
+def _record_earn_sweep(asset: str, amount: float) -> None:
+    """理财扫归留痕：business_event + DecisionLog 备注。**非交易**，不进 CryptoTrade 台账。"""
+    try:
+        from business_events import EARN_SWEEP, publish_event
+        publish_event(EARN_SWEEP, source="crypto",
+                      title=f"闲置 {amount:g} {asset} 自动申购活期理财（吃收益）",
+                      asset=asset, amount=amount)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from decision_log import record_decision
+        record_decision(source="crypto_earn", symbol=f"{asset}.EARN", action="SUBSCRIBE",
+                        executed=True, risk_passed=True,
+                        output_text=f"闲置 {amount:g} {asset} 自动申购活期理财")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def preview_crypto_order(args: dict) -> dict:
-    """确认前预览：订单详情 + 风控预检（不执行）。"""
+    """确认前预览：订单详情 + 风控预检 + **买入自动补足披露**（不执行）。"""
     from acquisition.markets import binance_trade as bt
     if not bt.has_credentials():
         return {"error": "币安 API key 未配置（.env），无法下单"}
@@ -210,12 +404,23 @@ def preview_crypto_order(args: dict) -> dict:
         return {"error": "缺少交易对/数量，或拿不到价格"}
     broker_info = _crypto_broker_info(broker)
     passed, msgs, failed = _risk_check(symbol, action, qty, ref, broker_info)
-    return {
+    out = {
         "symbol": symbol, "action": action, "quantity": round(qty, 8),
         "price": round(ref, 4), "est_amount_usdt": round(ref * qty, 2),
         "cash_usdt": round(broker_info["cash"], 2), "broker": "币安现货（实盘）",
         "risk_passed": passed, "risk_checks": msgs, "risk_failed": failed,
     }
+    # 买入自动补足披露：现货 USDT 不够 → 列出「先赎活期/划资金」再买（同一次确认里看到）
+    if action == "BUY":
+        acct = broker.get_account_info()
+        need = round(ref * qty * _FUND_BUFFER, 2)
+        steps, short = _plan_funding(acct, need)
+        out["spot_cash_usdt"] = acct.get("spot_cash")
+        if steps:
+            out["needs_funding"] = steps
+        if short > 0:
+            out["funding_short_usdt"] = short   # 补不满：连活期+资金都不够
+    return out
 
 
 class PlaceCryptoOrderArgs(BaseModel):
@@ -258,6 +463,20 @@ def place_crypto_order(symbol: str, side: str, quantity=None,
         return ToolEnvelope(business_result="negative",
                             data={"executed": False, "reason": "风控未通过", "failed_rules": failed})
 
+    # 买入自动补足现货：在已披露(preview)、已确认订单内执行「赎回活期/划转资金」
+    if action == "BUY":
+        acct = broker.get_account_info()
+        need = round(ref * qty, 2)
+        steps, short = _plan_funding(acct, round(need * _FUND_BUFFER, 2))
+        if short > 0:
+            return ToolEnvelope(business_result="negative",
+                                data={"executed": False,
+                                      "reason": f"可用买力不足，仍缺 {short} USDT（活期+资金也补不满）"})
+        if steps and not _execute_funding(broker, steps, need):
+            return ToolEnvelope(business_result="negative",
+                                data={"executed": False,
+                                      "reason": "自动补足现货失败（赎回/划转未及时到账），未下单"})
+
     order = broker.submit_order(symbol, action, qty, price)
     # 撤单/拒单/异常 → 失败
     if order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.FAILED):
@@ -282,6 +501,10 @@ def place_crypto_order(symbol: str, side: str, quantity=None,
     partial = filled_qty < qty
     _record_crypto_trade(symbol, action, fill_price, filled_qty, order.order_id,
                          commission=order.commission or 0.0)
+
+    # 卖出成交 → 闲置 USDT 全自动扫进最优活期理财（吃收益，不弹确认）
+    if action == "SELL":
+        _auto_sweep_to_earn(broker)
 
     qty_label = f"{filled_qty:g}" + (f" / 委托 {qty:g}" if partial else "")
     widget = metric_cards_widget([

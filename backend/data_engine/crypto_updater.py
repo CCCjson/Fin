@@ -135,6 +135,37 @@ class CryptoUpdater:
         return {"universe": len(universe), "updated": updated_syms,
                 "rows": total_rows, "failed": failed}
 
+    def backfill_klines(self, session, lookback_days: int = 400,
+                        symbols: list[str] | None = None) -> dict:
+        """**一次性深度回补**：绕开 `update_klines` 的 30 天 floor，把历史拉深。
+
+        为什么单列：日常增量刻意只补最近 `_MAX_LOOKBACK_DAYS`（30）天窗口（省请求），
+        导致技术指标/信号/200 日大势都算在薄数据上。本方法从 `today - lookback_days`
+        起对每币深拉一次（fetch 分页，>1000 才多请求；400 天单页搞定），幂等覆盖。
+        默认 400 天（够 200 日 MA + 缓冲）。跑一次即可，之后靠增量维持。
+        """
+        universe = symbols if symbols is not None else self._universe(session)
+        today = datetime.now(timezone.utc).date()
+        start = (today - timedelta(days=lookback_days)).isoformat()
+        updated_syms = total_rows = failed = 0
+        for sym in universe:
+            try:
+                resp = self.fetcher.fetch_daily(MarketDataRequest(
+                    symbol=sym, start_date=start, end_date=today.isoformat(), freq="1d"))
+                records = klines_df_to_records(sym, resp.data)
+                if records:
+                    total_rows += bulk_upsert_quotes(session, records)
+                    updated_syms += 1
+            except Exception as e:  # noqa: BLE001 — 单币失败不拖垮全体
+                failed += 1
+                logger.warning(f"[crypto] {sym} 回补失败: {e}")
+            if _SLEEP:
+                time.sleep(_SLEEP)
+        logger.info(f"[crypto] 深度回补({lookback_days}d)：{updated_syms}/{len(universe)} 币，"
+                    f"{total_rows} 行，{failed} 失败")
+        return {"universe": len(universe), "updated": updated_syms,
+                "rows": total_rows, "failed": failed, "lookback_days": lookback_days}
+
     # ── 情报刷新（仅 focus set）────────────────────────────────────────
     def _focus_set(self, session) -> list[str]:
         """情报聚焦集 = 策展主流表 ∩ universe（可 .env CRYPTO_FOCUS 覆盖为显式列表）。"""

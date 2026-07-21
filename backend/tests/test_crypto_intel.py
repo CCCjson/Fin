@@ -168,3 +168,87 @@ def test_crypto_tables_create(tmp_path, monkeypatch):
     names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     con.close()
     assert {"crypto_metrics", "token_unlocks", "crypto_assets"} <= names
+
+
+# ════════════════════ 币版驾驶舱：融合打分 + 价位 + 仓位 ════════════════════
+class TestCryptoCockpitScoring:
+    """择时三维打分 + 排雷否决闸（纯函数，离线）。"""
+
+    def test_derivatives_hot_vs_fear(self):
+        from crypto_intel_engine.scorer import score_derivatives
+        hot, _ = score_derivatives({"funding": {"funding_rate": 0.001},
+                                    "long_short": {"ratio": 1.5}})
+        fear, _ = score_derivatives({"funding": {"funding_rate": -0.001},
+                                     "long_short": {"ratio": 0.7}})
+        assert hot < 50 < fear                       # 过热偏空、恐慌偏多
+        assert score_derivatives(None)[0] is None
+
+    def test_regime_bull_vs_bear(self):
+        from crypto_intel_engine.scorer import score_regime
+        bull, _ = score_regime({"regime": "bull"}, {"fear_greed": {"value": 20}})
+        bear, _ = score_regime({"regime": "bear"}, {"fear_greed": {"value": 80}})
+        assert bull > 65 and bear < 35
+
+    def test_screen_veto_caps_below_hold(self):
+        """🔒 排雷 avoid = 否决闸：择时再高也压到 HOLD 线以下（不给买）。"""
+        from crypto_intel_engine.scorer import SCREEN_VETO_CAP, score_crypto_cockpit
+        high = {"technical": 85, "derivatives": 75, "regime": 80}
+        no_veto = score_crypto_cockpit(high, {"verdict": "pass"})
+        assert no_veto["recommendation"] == "BUY"
+        veto = score_crypto_cockpit(high, {"verdict": "avoid"})
+        assert veto["composite"] <= SCREEN_VETO_CAP
+        assert veto["recommendation"] == "SELL"
+        assert "capped_by_screen_veto" in veto["adjustments"]
+
+    def test_caution_soft_penalty(self):
+        from crypto_intel_engine.scorer import score_crypto_cockpit
+        high = {"technical": 85, "derivatives": 75, "regime": 80}
+        base = score_crypto_cockpit(high, {"verdict": "pass"})["composite"]
+        caution = score_crypto_cockpit(high, {"verdict": "caution"})["composite"]
+        assert caution < base                        # 温和扣分，不否决
+
+    def test_missing_dimension_renormalizes(self):
+        from crypto_intel_engine.scorer import score_crypto_cockpit
+        r = score_crypto_cockpit({"technical": 70, "derivatives": None, "regime": None},
+                                 {"verdict": "pass"})
+        assert r["dimension_coverage"] < 1.0
+        assert r["composite"] == 70.0                # 单维=该维分（重归一）
+
+
+class TestCryptoLevels:
+    """币专属价位：更宽止损 + 小币价格自适应精度。"""
+
+    def test_wide_stop_3x_atr(self):
+        from crypto_intel_engine.cockpit import crypto_dynamic_levels
+        lv = crypto_dynamic_levels(100.0, [{"close": 100}] * 5, atr=2.0, signal_type="BUY")
+        assert lv["atr_stop_loss"] == 94.0           # 100 - 3×2（股票是 2×）
+        assert lv["sl_atr_mult"] == 3.0
+
+    def test_small_coin_precision_kept(self):
+        from crypto_intel_engine.cockpit import crypto_dynamic_levels
+        lv = crypto_dynamic_levels(0.005, [{"close": 0.005}] * 5, atr=0.0002)
+        assert lv["atr_stop_loss"] > 0               # 8 位精度，不被 round(,2) 抹成 0
+
+
+class TestCryptoSizing:
+    """币仓位换算：目标%→币量（LOT_SIZE 取整 + MIN_NOTIONAL + 风控）。"""
+
+    def test_sizes_to_target_pct(self):
+        from crypto_intel_engine.cockpit import size_crypto_position
+        bi = {"cash": 1000.0, "market_value": 0, "total_value": 1000,
+              "positions": {}, "recent_closed_pnls": [], "last_loss_date": None}
+        sz = size_crypto_position("BTCUSDT.BN", 60000.0, 20.0, broker_info=bi,
+                                  total_capital=1000.0, max_position_pct=0.2,
+                                  step_size=0.00001, min_qty=0.00001, min_notional=5.0)
+        assert sz["affordable"] is True
+        assert sz["amount_usdt"] == 199.8            # ~20% of 1000
+        assert sz["capped_by"] == "target"
+
+    def test_below_min_notional_not_affordable(self):
+        from crypto_intel_engine.cockpit import size_crypto_position
+        bi = {"cash": 3.0, "market_value": 0, "total_value": 15,
+              "positions": {}, "recent_closed_pnls": [], "last_loss_date": None}
+        sz = size_crypto_position("BTCUSDT.BN", 60000.0, 20.0, broker_info=bi,
+                                  total_capital=15.0, max_position_pct=0.2,
+                                  step_size=0.00001, min_qty=0.00001, min_notional=5.0)
+        assert sz["affordable"] is False

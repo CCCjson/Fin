@@ -112,6 +112,62 @@ def ticker_price(symbol: str) -> float:
     return float(d.get("price", 0))
 
 
+# ── 钱包 / 划转 / 理财（现货以外的资产 + 资金腾挪）────────────────────────
+#
+# 现货账户 `account()` 只含 Spot 钱包。Jason 的资金常在 **Funding（资金钱包）** 或
+# **Simple Earn（理财活期/定期）**，必须单独查这些端点才看得到（这是「账户读不到钱」
+# 的根因）。划转/申赎用于「买入时把闲置理财/资金腾到现货」「卖出后把闲置现货扫进理财」。
+def funding_asset() -> list[dict]:
+    """资金钱包各币余额（free/locked/freeze）。签名。POST（币安此端点用 POST）。"""
+    return _signed_request("POST", "/sapi/v1/asset/get-funding-asset") or []
+
+
+def earn_flexible_positions(asset: str | None = None) -> list[dict]:
+    """Simple Earn **活期**理财持仓。返回 rows（[{asset,totalAmount,productId,...}]）。签名。"""
+    params = {"asset": asset} if asset else None
+    d = _signed_request("GET", "/sapi/v1/simple-earn/flexible/position", params)
+    return (d or {}).get("rows", []) if isinstance(d, dict) else []
+
+
+def earn_locked_positions(asset: str | None = None) -> list[dict]:
+    """Simple Earn **定期**理财持仓（仅展示用，锁仓期内不可动）。返回 rows。签名。"""
+    params = {"asset": asset} if asset else None
+    d = _signed_request("GET", "/sapi/v1/simple-earn/locked/position", params)
+    return (d or {}).get("rows", []) if isinstance(d, dict) else []
+
+
+def universal_transfer(transfer_type: str, asset: str, amount: float) -> dict:
+    """钱包间划转。`transfer_type`：`FUNDING_MAIN`(资金→现货)/`MAIN_FUNDING`(现货→资金)。签名。"""
+    return _signed_request("POST", "/sapi/v1/asset/transfer",
+                           {"type": transfer_type, "asset": asset, "amount": _fmt_num(amount)})
+
+
+def earn_flexible_list(asset: str | None = None, size: int = 20) -> list[dict]:
+    """可申购的**活期**理财产品列表（含 `latestAnnualPercentageRate`/`canPurchase`/`productId`）。签名。"""
+    params: dict[str, Any] = {"size": size, "current": 1}
+    if asset:
+        params["asset"] = asset
+    d = _signed_request("GET", "/sapi/v1/simple-earn/flexible/list", params)
+    return (d or {}).get("rows", []) if isinstance(d, dict) else []
+
+
+def earn_flexible_subscribe(product_id: str, amount: float) -> dict:
+    """申购活期理财（把现货 USDT 转进理财吃收益）。签名。"""
+    return _signed_request("POST", "/sapi/v1/simple-earn/flexible/subscribe",
+                           {"productId": product_id, "amount": _fmt_num(amount)})
+
+
+def earn_flexible_redeem(product_id: str, amount: float | None = None,
+                         redeem_all: bool = False) -> dict:
+    """赎回活期理财（把理财 USDT 赎回现货以便下单）。amount 与 redeem_all 二选一。签名。"""
+    params: dict[str, Any] = {"productId": product_id}
+    if redeem_all:
+        params["redeemAll"] = "true"
+    elif amount is not None:
+        params["amount"] = _fmt_num(amount)
+    return _signed_request("POST", "/sapi/v1/simple-earn/flexible/redeem", params)
+
+
 # ── 交易对精度过滤器（LOT_SIZE / MIN_NOTIONAL）──────────────────────────
 @lru_cache(maxsize=512)
 def symbol_filters(symbol: str) -> dict:

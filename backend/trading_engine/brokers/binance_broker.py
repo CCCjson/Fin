@@ -33,6 +33,9 @@ try:
 except Exception:  # noqa: BLE001 — dotenv 缺失不致命，仍可从进程 env 读
     pass
 
+# 稳定币视为现金等价物（不算币持仓敞口）
+_STABLES = ("USDT", "USDC", "BUSD", "FDUSD")
+
 # 币安订单状态 → 项目 OrderStatus
 _STATUS_MAP = {
     "NEW": OrderStatus.SUBMITTED, "PARTIALLY_FILLED": OrderStatus.PARTIAL_FILLED,
@@ -76,40 +79,108 @@ class BinanceBroker(BaseBroker):
         return self._connected
 
     # ── 账户 / 持仓 ─────────────────────────────────────────────────────
-    def get_account_info(self) -> dict:
-        """账户资金：cash=稳定币可用买力，market_value=非稳定币持仓市值，total=全额权益。
+    @staticmethod
+    def _value_coins(bt, holdings: dict[str, float]) -> float:
+        """把 {非稳定币: 数量} 按现价折成 USDT 市值。无 USDT 对的小币跳过。"""
+        mv = 0.0
+        for asset, qty in holdings.items():
+            if qty <= 0:
+                continue
+            try:
+                mv += qty * bt.ticker_price(f"{asset}USDT")
+            except Exception:  # noqa: BLE001 — 没有 USDT 对的小币跳过计价
+                continue
+        return mv
 
-        稳定币（USDT/USDC/BUSD/FDUSD）都是现金等价物，不是持仓：free 部分算 cash（可用
-        买力），locked 部分（挂在买单里）算权益但不算 cash。**只有非稳定币才计入 market_value**，
-        否则锁定 USDT + 非 USDT 稳定币会被误当成币持仓，虚增敞口、误触 80%/20% 仓位风控。
+    def get_account_info(self) -> dict:
+        """聚合**四个钱包**（现货/资金/理财活期/理财定期）→ 资金全貌 + 三档买力。
+
+        「账户读不到钱」的根因是旧实现只查现货 `account()`。Jason 的 USDT 常在资金钱包
+        或理财里，必须单独查。买力分三档（都是稳定币，现金等价物）：
+          - `spot_cash`：现货可用（现在就能下单）。
+          - `redeemable_cash`：理财**活期**（可秒赎回现货再下单）。
+          - `transferable_cash`：资金钱包 free（可划到现货再下单）。
+          - `cash` = 三者之和 = **真实可动用买力**（下单时自动赎/划补足，见 crypto_tools）。
+        理财**定期**稳定币锁仓期内不可动，只进 `total_value` 展示，**不计入买力**。
+        `market_value` 只含非稳定币持仓（现货+资金），避免锁定 USDT 虚增敞口误触仓位风控。
         """
         self._ensure_connected()
         from acquisition.markets import binance_trade as bt
-        acct = bt.account()
-        balances = acct.get("balances", [])
-        cash = 0.0            # 稳定币 free（可用买力）
-        stable_locked = 0.0   # 稳定币 locked（挂在买单里，算权益不算可用）
-        market_value = 0.0    # 仅非稳定币持仓市值
-        for b in balances:
-            asset = b.get("asset", "")
-            free = float(b.get("free", 0))
-            locked = float(b.get("locked", 0))
-            if free + locked <= 0:
-                continue
-            if asset in ("USDT", "USDC", "BUSD", "FDUSD"):
-                cash += free
-                stable_locked += locked
-            else:
-                try:
-                    price = bt.ticker_price(f"{asset}USDT")
-                    market_value += (free + locked) * price
-                except Exception:  # noqa: BLE001 — 没有 USDT 对的小币跳过计价
+
+        spot_cash = spot_stable_locked = 0.0
+        spot_coins: dict[str, float] = {}
+        funding_stable = 0.0
+        funding_coins: dict[str, float] = {}
+        earn_flex_stable = earn_locked_stable = 0.0
+
+        # ① 现货
+        try:
+            for b in bt.account().get("balances", []):
+                asset = b.get("asset", "")
+                free, locked = float(b.get("free", 0)), float(b.get("locked", 0))
+                if free + locked <= 0:
                     continue
+                if asset in _STABLES:
+                    spot_cash += free
+                    spot_stable_locked += locked
+                else:
+                    spot_coins[asset] = spot_coins.get(asset, 0.0) + free + locked
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"币安现货余额读取失败: {e}")
+
+        # ② 资金钱包（Funding）
+        try:
+            for b in bt.funding_asset():
+                asset = b.get("asset", "")
+                free = float(b.get("free", 0))
+                if free <= 0:
+                    continue
+                if asset in _STABLES:
+                    funding_stable += free
+                else:
+                    funding_coins[asset] = funding_coins.get(asset, 0.0) + free
+        except Exception as e:  # noqa: BLE001 — 权限/网络问题按空处理，不炸账户读取
+            logger.warning(f"币安资金钱包读取失败: {e}")
+
+        # ③ 理财活期（可赎回买力）
+        try:
+            for r in bt.earn_flexible_positions():
+                if r.get("asset") in _STABLES:
+                    earn_flex_stable += float(r.get("totalAmount", 0) or 0)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"币安理财活期读取失败: {e}")
+
+        # ④ 理财定期（仅展示，不可动用）
+        try:
+            for r in bt.earn_locked_positions():
+                if r.get("asset") in _STABLES:
+                    earn_locked_stable += float(r.get("amount", 0) or r.get("totalAmount", 0) or 0)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"币安理财定期读取失败: {e}")
+
+        spot_coins_value = self._value_coins(bt, spot_coins)
+        funding_coins_value = self._value_coins(bt, funding_coins)
+        market_value = spot_coins_value + funding_coins_value
+        cash = spot_cash + earn_flex_stable + funding_stable
+        total_value = (cash + spot_stable_locked + earn_locked_stable + market_value)
+
+        wallets = [
+            {"name": "现货", "stable": round(spot_cash + spot_stable_locked, 2),
+             "coins_value": round(spot_coins_value, 2)},
+            {"name": "资金", "stable": round(funding_stable, 2),
+             "coins_value": round(funding_coins_value, 2)},
+            {"name": "理财活期", "stable": round(earn_flex_stable, 2), "coins_value": 0.0},
+            {"name": "理财定期", "stable": round(earn_locked_stable, 2), "coins_value": 0.0},
+        ]
         return {
             "cash": round(cash, 2),
+            "spot_cash": round(spot_cash, 2),
+            "redeemable_cash": round(earn_flex_stable, 2),
+            "transferable_cash": round(funding_stable, 2),
             "market_value": round(market_value, 2),
-            "total_value": round(cash + stable_locked + market_value, 2),
+            "total_value": round(total_value, 2),
             "unrealized_pnl": 0.0,   # 交易所不给成本价，盈亏靠系统成交记录另算
+            "wallets": wallets,
         }
 
     def get_positions(self) -> list[BrokerPosition]:
@@ -151,6 +222,71 @@ class BinanceBroker(BaseBroker):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"取币安现价失败 {symbol}: {e}")
             return 0.0
+
+    # ── 资金腾挪：划转 / 理财申赎（买入自动补足、卖出自动扫归用）──────────
+    def transfer_funding_to_spot(self, asset: str, amount: float) -> bool:
+        """资金钱包 → 现货划转。异常吞成 False（动钱失败不炸主流程，由上层判断）。"""
+        if amount <= 0:
+            return True
+        from acquisition.markets import binance_trade as bt
+        try:
+            bt.universal_transfer("FUNDING_MAIN", asset, amount)
+            logger.info(f"币安划转 资金→现货 {amount} {asset}")
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"币安资金→现货划转失败 {amount} {asset}: {e}")
+            return False
+
+    def best_flexible_product(self, asset: str) -> dict | None:
+        """选「最优活期」理财产品：可申购的里 APR 最高的那个。查不到返回 None。"""
+        from acquisition.markets import binance_trade as bt
+        try:
+            rows = [r for r in bt.earn_flexible_list(asset) if r.get("canPurchase")]
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"币安活期产品列表读取失败 {asset}: {e}")
+            return None
+        if not rows:
+            return None
+        return max(rows, key=lambda r: float(r.get("latestAnnualPercentageRate", 0) or 0))
+
+    def earn_subscribe_flexible(self, asset: str, amount: float) -> bool:
+        """把 amount 的 asset 申购进最优活期理财。异常/无产品吞成 False。"""
+        if amount <= 0:
+            return True
+        prod = self.best_flexible_product(asset)
+        if not prod:
+            logger.warning(f"无可申购活期产品 {asset}，跳过扫归")
+            return False
+        from acquisition.markets import binance_trade as bt
+        try:
+            bt.earn_flexible_subscribe(str(prod.get("productId")), amount)
+            apr = prod.get("latestAnnualPercentageRate")
+            logger.info(f"币安申购活期理财 {amount} {asset} @ APR{apr} ({prod.get('productId')})")
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"币安申购活期理财失败 {amount} {asset}: {e}")
+            return False
+
+    def earn_redeem_flexible(self, asset: str, amount: float) -> bool:
+        """从活期理财赎回 amount 的 asset 到现货。找该资产的持仓 productId 赎回。异常吞成 False。"""
+        if amount <= 0:
+            return True
+        from acquisition.markets import binance_trade as bt
+        try:
+            rows = [r for r in bt.earn_flexible_positions(asset) if r.get("asset") == asset]
+            if not rows:
+                logger.warning(f"无活期理财持仓 {asset}，无法赎回")
+                return False
+            row = rows[0]
+            held = float(row.get("totalAmount", 0) or 0)
+            redeem_all = amount >= held
+            bt.earn_flexible_redeem(str(row.get("productId")),
+                                    None if redeem_all else amount, redeem_all=redeem_all)
+            logger.info(f"币安赎回活期理财 {'全部' if redeem_all else amount} {asset}")
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"币安赎回活期理财失败 {amount} {asset}: {e}")
+            return False
 
     # ── 下单 / 撤单 / 查单 ──────────────────────────────────────────────
     def submit_order(self, symbol: str, action: str, quantity: float,

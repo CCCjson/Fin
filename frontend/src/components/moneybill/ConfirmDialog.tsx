@@ -11,6 +11,7 @@ interface Props {
 /* 需确认工具的中文标题——未收录的工具兜底显示工具名本身。*/
 const TOOL_LABELS: Record<string, string> = {
   place_order: '下单确认（模拟盘）',
+  place_crypto_order: '下单确认（币安现货 · 实盘）',
   add_to_watchlist: '加入自选股',
   remove_from_watchlist: '移出自选股',
   create_price_alert: '创建价格预警',
@@ -72,6 +73,57 @@ const PlaceOrderBody: React.FC<{ p: any }> = ({ p }) => {
   );
 };
 
+/* 加密下单二次确认（币安现货：币量小数 + USDT 计价 + 自动补足披露 + 风控预检）*/
+const PlaceCryptoOrderBody: React.FC<{ p: any }> = ({ p }) => {
+  const sideLabel = p.action === 'BUY' ? '买入' : p.action === 'SELL' ? '卖出' : p.action;
+  const riskPassed = p.risk_passed;
+  const steps = Array.isArray(p.needs_funding) ? p.needs_funding : [];
+  const short = typeof p.funding_short_usdt === 'number' ? p.funding_short_usdt : 0;
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+        <Cell label="交易对" value={p.symbol} />
+        <Cell label="方向" value={sideLabel} valueClass={p.action === 'BUY' ? 'text-bull' : 'text-bear'} />
+        <Cell label="数量" value={p.quantity} />
+        <Cell label="价格" value={`$${p.price}`} />
+        <Cell label="预计金额" value={`$${Number(p.est_amount_usdt).toLocaleString()}`} />
+        <Cell label="可动用买力" value={`$${Number(p.cash_usdt).toLocaleString()}`} />
+      </div>
+
+      {/* 买入自动补足披露：现货不够 → 先赎活期/划资金到现货，再买（同一次确认内完成）*/}
+      {steps.length > 0 && (
+        <div className="p-3 rounded-lg text-sm mb-4 border bg-blue-900/20 border-blue-600/30 text-blue-100">
+          <div className="font-semibold mb-1">💱 现货 USDT 不足，将先自动补足再下单：</div>
+          <ul className="list-disc list-inside text-xs space-y-0.5">
+            {steps.map((s: any, i: number) => (
+              <li key={i}>
+                {s.action === 'redeem' ? '赎回' : '划转'} {s.amount} {s.asset}（来自{s.from}）→ 现货
+              </li>
+            ))}
+          </ul>
+          <div className="text-[11px] text-blue-200/70 mt-1">现货现有 ${Number(p.spot_cash_usdt).toLocaleString()}</div>
+        </div>
+      )}
+      {short > 0 && (
+        <div className="p-3 rounded-lg text-sm mb-4 border bg-red-900/30 border-red-600/40 text-red-200">
+          ⛔ 买力不足：活期+资金也补不满，仍缺 ${short} USDT，确认后将被拦截。
+        </div>
+      )}
+
+      <div className={`p-3 rounded-lg text-sm mb-4 border ${riskPassed
+        ? 'bg-green-900/20 border-green-600/30 text-green-200'
+        : 'bg-red-900/30 border-red-600/40 text-red-200'}`}>
+        <div className="font-semibold mb-1">{riskPassed ? '✅ 风控预检通过' : '⛔ 风控未通过（确认后仍会被拦截）'}</div>
+        {Array.isArray(p.risk_failed) && p.risk_failed.length > 0 && (
+          <ul className="list-disc list-inside text-xs space-y-0.5">
+            {p.risk_failed.map((m: string, i: number) => <li key={i}>{m}</li>)}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+};
+
 /* 通用确认卡片——非下单类工具（自选/预警/设置/交易记录）走这里，按 preview 键值对渲染。*/
 const GenericBody: React.FC<{ p: any }> = ({ p }) => (
   <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
@@ -84,7 +136,8 @@ const GenericBody: React.FC<{ p: any }> = ({ p }) => (
 export const ConfirmDialog: React.FC<Props> = ({ name, preview, onConfirm, onCancel }) => {
   const p = preview || {};
   const err = p.error;
-  const isOrder = name === 'place_order';
+  const isCryptoOrder = name === 'place_crypto_order';
+  const isOrder = name === 'place_order' || isCryptoOrder;
   const title = (name && TOOL_LABELS[name]) || name || '操作确认';
 
   return (
@@ -103,6 +156,8 @@ export const ConfirmDialog: React.FC<Props> = ({ name, preview, onConfirm, onCan
           <div className="p-3 rounded-lg bg-red-900/40 border border-red-600/40 text-red-200 text-sm mb-4">
             无法执行：{err}
           </div>
+        ) : isCryptoOrder ? (
+          <PlaceCryptoOrderBody p={p} />
         ) : isOrder ? (
           <PlaceOrderBody p={p} />
         ) : (

@@ -10,7 +10,9 @@
 
 全部出网走 `acquisition/` 门面（免费源：币安/DefiLlama/CoinGecko/alternative.me/GitHub）。
 """
+from crypto_intel_engine.cockpit import analyze_crypto_symbol
 from crypto_intel_engine.regime import btc_regime, compute_regime
 from crypto_intel_engine.scorer import market_context, screen_coin
 
-__all__ = ["btc_regime", "compute_regime", "market_context", "screen_coin"]
+__all__ = ["analyze_crypto_symbol", "btc_regime", "compute_regime",
+           "market_context", "screen_coin"]

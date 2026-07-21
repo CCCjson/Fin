@@ -24,6 +24,7 @@ NEWS_HIGH_IMPACT = "news.high_impact"
 DATA_STALE = "data.stale"
 SCAN_COMPLETED = "scan.completed"
 RISK_ALERT = "risk.alert"
+EARN_SWEEP = "crypto.earn_sweep"
 
 
 class EventBus:

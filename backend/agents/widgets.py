@@ -227,17 +227,54 @@ def crypto_derivatives_widget(r: dict) -> dict:
 
 
 def crypto_account_widget(r: dict) -> dict:
-    """币安现货账户 → crypto_account widget（账户条 + 持仓表）。"""
+    """币安账户 → crypto_account widget（四钱包分列 + 三档买力 + 持仓表）。"""
     acct = r.get("account") or {}
     return {
         "type": "crypto_account",
-        "title": "币安现货账户",
+        "title": "币安账户",
         "data": {
-            "cash": acct.get("cash"),
+            "cash": acct.get("cash"),                             # 总可用买力（现货+可赎+可划）
+            "spot_cash": acct.get("spot_cash"),
+            "redeemable_cash": acct.get("redeemable_cash"),       # 理财活期可赎
+            "transferable_cash": acct.get("transferable_cash"),   # 资金钱包可划
             "market_value": acct.get("market_value"),
             "total_value": acct.get("total_value"),
             "unrealized_pnl": acct.get("unrealized_pnl"),
+            "wallets": acct.get("wallets", []),                   # [{name, stable, coins_value}]
             "positions": r.get("positions", []),                  # [{symbol, quantity, current_price, market_value}]
+        },
+    }
+
+
+def crypto_analysis_widget(r: dict) -> dict:
+    """币版驾驶舱 → crypto_analysis widget（综合分环 + 买卖持有 + 价位区 + 三维 + 排雷徽章）。
+
+    对齐股票 cockpit_widget，但维度是加密择时三维（技术择时/衍生品/大势），并带排雷否决徽章。
+    """
+    dims = r.get("dimensions", {})
+    return {
+        "type": "crypto_analysis",
+        "title": f"{r.get('base_asset') or r.get('symbol')} · 币种分析",
+        "data": {
+            "symbol": r.get("symbol"),
+            "base_asset": r.get("base_asset"),
+            "composite": r.get("composite"),
+            "recommendation": r.get("recommendation"),           # BUY | HOLD | SELL | N/A
+            "price": r.get("price"),                             # {latest, change_5d_pct, change_20d_pct, ...}
+            "stop_loss": r.get("stop_loss"),
+            "take_profit": r.get("take_profit"),
+            "dynamic_levels": r.get("dynamic_levels"),           # ATR 位 + 盈亏比 + sl_atr_mult
+            "suggested_position_pct": r.get("suggested_position_pct"),
+            "suggested": r.get("suggested"),                     # 具体币量/金额（配 key）| None
+            "current_position_pct": r.get("current_position_pct"),
+            "dimensions": {k: {"score": v.get("score"), "detail": v.get("detail")}
+                           for k, v in dims.items()},
+            "screen": r.get("screen"),                           # {score, verdict, flags} 排雷否决闸
+            "reasons": r.get("reasons", []),                     # 一句解释原因（多条）
+            "weights_used": r.get("weights_used", {}),
+            "dimension_coverage": r.get("dimension_coverage"),
+            "adjustments": r.get("adjustments", []),
+            "data_quality": r.get("data_quality"),
         },
     }
 
