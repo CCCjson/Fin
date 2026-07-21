@@ -41,6 +41,21 @@ def _sanitize_tool_args(args: Optional[dict]) -> dict:
     return {k: v for k, v in (args or {}).items() if not str(k).startswith("_")}
 
 
+def _trim_unanswered_tool_calls(assistant_msg: Optional[dict], keep: int) -> None:
+    """把 assistant 消息的 tool_calls 裁到前 `keep` 个，丢弃本轮不会被应答的其余调用。
+
+    OpenAI 契约：assistant 消息里每个 tool_call 都必须有对应的 tool 回复才能再调 LLM。
+    确认中断/客户端断开时会早退，未跑的 tool_call 拿不到回复 —— 不裁掉就报
+    `400 tool_call_ids did not have response messages`。`assistant_msg` 是已入
+    session.messages 的同一引用，就地改即改历史。keep<=0 时清空 tool_calls。
+    """
+    if not assistant_msg:
+        return
+    tcs = assistant_msg.get("tool_calls")
+    if isinstance(tcs, list) and len(tcs) > max(keep, 0):
+        assistant_msg["tool_calls"] = tcs[:max(keep, 0)]
+
+
 class MonitorOrchestrator:
     # 不是功能限制，只是防「模型无限循环调工具」的保险丝（Jason 定：轮数放开，token 烧就烧）。
     # 万一真撞上，_loop 末尾会强制一次无工具的收尾回答，绝不静默返回空。
@@ -229,12 +244,16 @@ class MonitorOrchestrator:
                 _trace("done")
                 return
 
-            for tc in tool_calls:
+            for k, tc in enumerate(tool_calls):
                 # 协作取消：轮内多个 tool_call 时，客户端一断开就不再发起还没开始的
                 # 后续调用（已经在跑的单个工具没法从外部中途打断，只能等它返回）。
                 if session.cancel_event.is_set():
                     logger.info(
                         f"MoneyBill 客户端断开，跳过剩余 tool_calls session={session.session_id}")
+                    # ⛔ 保持历史合法：assistant 消息里第 k 个及之后都没跑、拿不到 tool 回复，
+                    # 把它们从 tool_calls 里裁掉（只留 [0..k-1] 这批已应答的），否则下轮调 LLM
+                    # 会因「有 tool_call 无对应 tool 回复」报 400。
+                    _trim_unanswered_tool_calls(assistant_msg, k)
                     _trace("cancelled")
                     return
                 td = REGISTRY.get(tc["name"]) if REGISTRY.has(tc["name"]) else None
@@ -249,6 +268,10 @@ class MonitorOrchestrator:
                 blocked = self.confirm_gate.intercept(tc, td, session)
                 if blocked is not None:
                     yield from blocked
+                    # ⛔ 保持历史合法：确认门一次只挂一个 pending（=第 k 个，resume 时补回复）。
+                    # 第 k+1.. 个 tool_call 本轮不会跑、拿不到回复，裁掉；保留 [0..k]（前面已应答的
+                    # + 第 k 个确认项本身）。丢掉的兄弟调用模型下一轮会自然重发。否则报 400。
+                    _trim_unanswered_tool_calls(assistant_msg, k + 1)
                     # 确认中断也落一份（partial）；续跑结束会再落完整一份，同 turn_start_idx
                     _trace("await_confirm")
                     return

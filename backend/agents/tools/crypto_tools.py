@@ -4,16 +4,18 @@
 
 `place_crypto_order` 标 `requires_confirmation=True`：orchestrator 先中断让 Jason 逐笔
 确认；**即便确认，执行路径仍无条件过 RiskManager.check_order**，风控不通过一律拒单，
-LLM 无法绕过。这是 CLAUDE.md「每笔交易须人工审核，永不放开」的代码承载物之一。
+LLM 无法绕过。这是 CLAUDE.md「每笔交易须人工审核」的代码承载物之一（交互式聊天单
+永不放开；crypto 自主策略引擎的范围豁免见 `crypto_strategy/`）。
 
-风控 broker_info 按**币安真实余额**自建（`adapter.build_broker_info` 绑 A 股 ManualTrade
-不能复用）。风控规则本身市场无关，五条硬规则直接复用。
+风控 broker_info 按**币安真实余额**自建，执行/资金/台账原语现集中在
+`crypto_intel_engine/execution.py`（**单一真源**），聊天下单与自主引擎共用同一份，
+永不分叉。本模块下方以别名保留旧私有名，函数体零改动。
 
 ## 只读工具无需 key
 
 行情/情报/排雷类只读工具走公开接口，不需要 API key；账户/下单需 key，未配时诚实报错。
 """
-from typing import Any, Literal
+from typing import Literal
 
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -27,6 +29,39 @@ from agents.widgets import (
     crypto_market_widget,
     crypto_screen_widget,
     metric_cards_widget,
+)
+
+# 执行/风控/资金/台账原语的单一真源（见 crypto_intel_engine/execution.py）。
+# 以旧私有名别名导入，使本模块下方 preview/place 的函数体零改动，两条下单路径共用同一份。
+from crypto_intel_engine.execution import (
+    FUND_BUFFER as _FUND_BUFFER,
+)
+from crypto_intel_engine.execution import (
+    auto_sweep_to_earn as _auto_sweep_to_earn,
+)
+from crypto_intel_engine.execution import (
+    crypto_broker_info as _crypto_broker_info,
+)
+from crypto_intel_engine.execution import (
+    execute_funding as _execute_funding,
+)
+from crypto_intel_engine.execution import (
+    get_recent_crypto_closed_pnls,  # noqa: F401 — 供测试从本模块 import（历史兼容再导出）
+)
+from crypto_intel_engine.execution import (
+    plan_funding as _plan_funding,
+)
+from crypto_intel_engine.execution import (
+    record_crypto_resting as _record_crypto_resting,
+)
+from crypto_intel_engine.execution import (
+    record_crypto_trade as _record_crypto_trade,
+)
+from crypto_intel_engine.execution import (
+    resolve_qty_price as _resolve_qty_price,
+)
+from crypto_intel_engine.execution import (
+    risk_check as _risk_check,
 )
 
 # ──────────────────── 只读：市场大势 / 排雷 / 衍生品 ────────────────────
@@ -180,210 +215,6 @@ def get_crypto_account() -> ToolEnvelope:
 
 # ──────────────────── 下单（需确认 + 风控 + key）────────────────────
 
-def get_recent_crypto_closed_pnls(limit: int = 10) -> tuple[list[float], str | None]:
-    """回放 crypto 成交台账（CryptoTrade），算最近 N 笔平仓盈亏（最新在前）+ 最近亏损日期。
-
-    加权平均成本法逐 symbol 回放，镜像 A 股 `adapter.get_recent_closed_pnls`，
-    数据源换成 `crypto_trades` —— crypto 与股票各算各的「连亏 3 次」streak，互不污染。
-    喂给 RiskManager 的 ConsecutiveLossRule；台账空则返回 ([], None)（规则自动放行）。
-    """
-    from data_engine.storage.database import get_session
-    from data_engine.storage.models import CryptoTrade
-    session = get_session()
-    try:
-        trades = (session.query(CryptoTrade)
-                  .order_by(CryptoTrade.trade_date.asc(), CryptoTrade.id.asc()).all())
-        if not trades:
-            return [], None
-        positions: dict[str, dict[str, float]] = {}
-        closed: list[dict[str, Any]] = []   # {"pnl": float, "date": str|None}
-        for t in trades:
-            pos = positions.setdefault(t.symbol,
-                                       {"quantity": 0.0, "total_cost": 0.0, "avg_cost": 0.0})
-            if t.side == "BUY":
-                pos["total_cost"] += t.amount + (t.commission or 0)
-                pos["quantity"] += t.quantity
-                if pos["quantity"] > 0:
-                    pos["avg_cost"] = pos["total_cost"] / pos["quantity"]
-            elif t.side == "SELL":
-                sell_revenue = t.amount - (t.commission or 0)
-                pnl = sell_revenue - pos["avg_cost"] * t.quantity
-                closed.append({"pnl": pnl,
-                               "date": str(t.trade_date) if t.trade_date else None})
-                pos["quantity"] -= t.quantity
-                pos["total_cost"] = pos["avg_cost"] * pos["quantity"]
-        closed.reverse()   # 最新在前
-        pnl_list = [c["pnl"] for c in closed[:limit]]
-        last_loss_date = next((c["date"] for c in closed if c["pnl"] < 0), None)
-        return pnl_list, last_loss_date
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"crypto 平仓盈亏回放失败: {e}")
-        return [], None
-    finally:
-        session.close()
-
-
-def _crypto_broker_info(broker) -> dict[str, Any]:
-    """按币安真实余额自建 RiskManager 所需 broker_info（不复用 A 股 adapter）。
-
-    连亏字段（recent_closed_pnls/last_loss_date）从 crypto 独立成交台账回放而来，
-    使 CLAUDE.md「连续亏损 3 次暂停」硬风控对 crypto 真正生效（不再硬编码空值）。
-    """
-    acct = broker.get_account_info()
-    positions_map = {
-        p.symbol: {"market_value": p.market_value, "avg_cost": p.avg_cost,
-                   "current_price": p.current_price}
-        for p in broker.get_positions()
-    }
-    recent_pnls, last_loss_date = get_recent_crypto_closed_pnls(limit=10)
-    return {
-        "cash": acct["cash"], "market_value": acct["market_value"],
-        "total_value": acct["total_value"], "unrealized_pnl": acct["unrealized_pnl"],
-        "positions": positions_map,
-        "recent_closed_pnls": recent_pnls, "last_loss_date": last_loss_date,
-    }
-
-
-def _risk_check(symbol: str, action: str, quantity: float, price: float,
-                broker_info: dict) -> tuple[bool, list[str], list[str]]:
-    from trading_engine.risk.adapter import get_effective_risk_config
-    from trading_engine.risk.manager import RiskManager
-    rm = RiskManager(get_effective_risk_config())
-    passed, results = rm.check_order(symbol=symbol, action=action,
-                                     quantity=quantity, price=price, broker_info=broker_info)
-    return passed, [r.message for r in results], [r.message for r in results if not r.passed]
-
-
-def _resolve_qty_price(symbol: str, side: str, quantity: float | None,
-                       quote_amount: float | None, price: float | None,
-                       broker) -> tuple[float, float]:
-    """确定下单币量与参考价。quote_amount(USDT) 给了则按现价换算成币量。"""
-    ref = price or broker.get_current_price(symbol)
-    if quantity:
-        return float(quantity), ref
-    if quote_amount and ref:
-        return float(quote_amount) / ref, ref
-    return 0.0, ref
-
-
-# ──────────────────── 资金腾挪：买入自动补足 + 卖后理财扫归 ────────────────────
-
-_STABLE_QUOTE = "USDT"     # v1 只处理 USDT 计价对
-_FUND_BUFFER = 1.003       # 补足现货时多留 0.3% 缓冲（覆盖费率/滑点微差）
-
-
-def _auto_earn_enabled() -> bool:
-    import os
-    return os.getenv("CRYPTO_AUTO_EARN_ENABLED", "true").lower() not in ("false", "0", "off")
-
-
-def _earn_dust_min() -> float:
-    import os
-    try:
-        return float(os.getenv("CRYPTO_EARN_DUST_MIN", "1"))
-    except ValueError:
-        return 1.0
-
-
-def _earn_assets() -> list[str]:
-    import os
-    raw = os.getenv("CRYPTO_EARN_ASSETS", "USDT")
-    return [a.strip().upper() for a in raw.split(",") if a.strip()]
-
-
-def _plan_funding(acct: dict, need_usdt: float) -> tuple[list[dict], float]:
-    """现货 USDT 不够时，规划从「活期→资金」按序补足的步骤。返回 (steps, 仍缺口)。
-
-    优先赎回活期（我们自己扫进去的、更快），再划转资金钱包。缺口>0 = 补不满。
-    """
-    spot = float(acct.get("spot_cash") or 0.0)
-    remaining = round(max(0.0, need_usdt - spot), 2)
-    steps: list[dict] = []
-    if remaining <= 0:
-        return steps, 0.0
-    redeemable = float(acct.get("redeemable_cash") or 0.0)
-    if remaining > 0 and redeemable > 0:
-        amt = round(min(remaining, redeemable), 2)
-        steps.append({"action": "redeem", "from": "理财活期", "asset": _STABLE_QUOTE, "amount": amt})
-        remaining = round(remaining - amt, 2)
-    transferable = float(acct.get("transferable_cash") or 0.0)
-    if remaining > 0 and transferable > 0:
-        amt = round(min(remaining, transferable), 2)
-        steps.append({"action": "transfer", "from": "资金钱包", "asset": _STABLE_QUOTE, "amount": amt})
-        remaining = round(remaining - amt, 2)
-    return steps, round(max(0.0, remaining), 2)
-
-
-def _execute_funding(broker, steps: list[dict], need_usdt: float) -> bool:
-    """执行补足步骤（赎回/划转），到账有延迟 → 轮询最多 3 次确认现货够了才算成功。"""
-    import time
-
-    from acquisition.markets import binance_trade as bt
-    for st in steps:
-        ok = (broker.earn_redeem_flexible(st["asset"], st["amount"]) if st["action"] == "redeem"
-              else broker.transfer_funding_to_spot(st["asset"], st["amount"]))
-        if not ok:
-            logger.error(f"补足现货步骤失败: {st}")
-            return False
-    # 轮询现货 USDT 到账（币安划转/赎回有秒级延迟）
-    for _ in range(3):
-        time.sleep(1.2)
-        try:
-            free = next((float(b.get("free", 0)) for b in bt.account().get("balances", [])
-                         if b.get("asset") == _STABLE_QUOTE), 0.0)
-        except Exception:  # noqa: BLE001
-            free = 0.0
-        if free >= need_usdt:
-            return True
-    logger.warning(f"补足后现货 {_STABLE_QUOTE} 仍不足 {need_usdt}")
-    return False
-
-
-def _auto_sweep_to_earn(broker) -> None:
-    """卖出成交后：把现货**闲置稳定币**全自动申购最优活期理财吃收益（不弹确认）。
-
-    Jason 批准全自动（活期可秒赎回、风险低）。留痕但**不进 CryptoTrade 台账、不算连亏
-    streak**（申赎不是买卖交易）。失败仅日志，绝不回滚已成交的卖单。
-    """
-    if not _auto_earn_enabled():
-        return
-    dust = _earn_dust_min()
-    try:
-        acct = broker.get_account_info()
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"扫归读账户失败: {e}")
-        return
-    # 现货可用稳定币（spot_cash 只含稳定币 free，正是卖出到账的闲置资金）
-    idle = float(acct.get("spot_cash") or 0.0)
-    if idle < dust:
-        return
-    for asset in _earn_assets():
-        if asset != _STABLE_QUOTE:      # v1 仅扫 USDT；spot_cash 未按币种拆分
-            continue
-        amount = round(idle, 2)
-        if amount < dust:
-            continue
-        if broker.earn_subscribe_flexible(asset, amount):
-            _record_earn_sweep(asset, amount)
-
-
-def _record_earn_sweep(asset: str, amount: float) -> None:
-    """理财扫归留痕：business_event + DecisionLog 备注。**非交易**，不进 CryptoTrade 台账。"""
-    try:
-        from business_events import EARN_SWEEP, publish_event
-        publish_event(EARN_SWEEP, source="crypto",
-                      title=f"闲置 {amount:g} {asset} 自动申购活期理财（吃收益）",
-                      asset=asset, amount=amount)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        from decision_log import record_decision
-        record_decision(source="crypto_earn", symbol=f"{asset}.EARN", action="SUBSCRIBE",
-                        executed=True, risk_passed=True,
-                        output_text=f"闲置 {amount:g} {asset} 自动申购活期理财")
-    except Exception:  # noqa: BLE001
-        pass
-
 
 def preview_crypto_order(args: dict) -> dict:
     """确认前预览：订单详情 + 风控预检 + **买入自动补足披露**（不执行）。"""
@@ -520,61 +351,3 @@ def place_crypto_order(symbol: str, side: str, quantity=None,
               "amount_usdt": round(fill_price * filled_qty, 2), "status": order.status.value},
         widget=widget,
     )
-
-
-def _record_crypto_trade(symbol: str, action: str, price: float, qty: float,
-                         order_id: str, commission: float = 0.0) -> None:
-    """**真实成交**留痕：成交台账 + 业务事件 + DecisionLog(source=crypto)。吞异常不坏主流程。
-
-    只在 filled_quantity > 0 时调用（qty 为已成交量）。台账（CryptoTrade）喂连亏风控回放；
-    commission 取自币安 fills 汇总（手续费币种可能非 USDT，回放里作近似处理）。
-    """
-    # ① 成交台账（连亏风控的回放数据源）
-    try:
-        from datetime import date as _date
-
-        from data_engine.storage.database import get_session
-        from data_engine.storage.models import CryptoTrade
-        session = get_session()
-        try:
-            session.add(CryptoTrade(
-                symbol=symbol, side=action, price=price, quantity=qty,
-                amount=round(price * qty, 8), commission=commission or 0.0,
-                order_id=order_id, trade_date=_date.today(),
-            ))
-            session.commit()
-        finally:
-            session.close()
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"crypto 成交台账写入失败: {e}")
-    # ② 业务事件
-    try:
-        from business_events import ORDER_FILLED, publish_event
-        publish_event(ORDER_FILLED, source="crypto", symbol=symbol,
-                      title=f"{'买入' if action == 'BUY' else '卖出'} {symbol} {qty:g} @ ${price:,.2f}（币安实盘）",
-                      action=action, price=round(price, 4), quantity=qty,
-                      amount=round(price * qty, 2))
-    except Exception:  # noqa: BLE001
-        pass
-    # ③ 决策留痕
-    try:
-        from decision_log import record_decision
-        record_decision(source="crypto", symbol=symbol, action=action,
-                        entry_price=price, executed=True, risk_passed=True,
-                        output_text=f"币安现货成交 order={order_id} {qty:g} @ ${price:,.4f}")
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"crypto 决策留痕失败: {e}")
-
-
-def _record_crypto_resting(symbol: str, action: str, price: float | None, order_id: str) -> None:
-    """限价单挂出（**未成交**）留痕：只写 DecisionLog(executed=False)。
-
-    不发 ORDER_FILLED、不落成交台账 —— 挂单不是成交，成交后自然由 _record_crypto_trade 记。
-    """
-    try:
-        from decision_log import record_decision
-        record_decision(source="crypto", symbol=symbol, action=action,
-                        entry_price=price, executed=False, risk_passed=True,
-                        output_text=f"币安限价单挂出 order={order_id}（未成交，盘口等待撮合）")
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"crypto 挂单留痕失败: {e}")

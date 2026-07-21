@@ -288,8 +288,9 @@ class TestAutoSweepToEarn:
     def test_idle_usdt_swept(self, monkeypatch):
         monkeypatch.setenv("CRYPTO_AUTO_EARN_ENABLED", "true")
         from agents.tools import crypto_tools
+        from crypto_intel_engine import execution
         recorded = []
-        monkeypatch.setattr(crypto_tools, "_record_earn_sweep",
+        monkeypatch.setattr(execution, "record_earn_sweep",
                             lambda a, amt: recorded.append((a, amt)))
         broker = self._SweepBroker(spot_cash=250.0)
         crypto_tools._auto_sweep_to_earn(broker)

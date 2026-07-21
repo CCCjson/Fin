@@ -17,7 +17,7 @@ from typing import Dict, Optional
 
 from loguru import logger
 
-from automation.scheduler import _is_trading_hours
+from automation.trading_hours import _is_trading_hours
 
 TRADING_INTERVAL = 120  # 盘中快照的缓存有效期（秒）：120s 内重复问不再出网
 

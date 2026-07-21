@@ -9,6 +9,20 @@ from loguru import logger
 from .base import BaseBroker, BrokerOrder, BrokerPosition, OrderStatus
 
 
+# 全局 PaperBroker 单例（进程内共享）——从已删除的 automation/pending_order_manager.py 迁来，
+# PaperBroker 的天然归宿。仍被 agents/tools/trading_tools.py（A 股纸面手动下单聊天工具）复用。
+_paper_broker: Optional["PaperBroker"] = None
+
+
+def get_paper_broker() -> "PaperBroker":
+    """获取全局 PaperBroker 实例。"""
+    global _paper_broker
+    if _paper_broker is None:
+        from trading_engine.risk.adapter import get_total_capital
+        _paper_broker = PaperBroker(initial_cash=get_total_capital())
+    return _paper_broker
+
+
 class PaperBroker(BaseBroker):
     """模拟交易器 - 用于回测和模拟交易"""
 

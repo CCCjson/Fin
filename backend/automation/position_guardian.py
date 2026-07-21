@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from automation.scheduler import _is_trading_hours
+from automation.trading_hours import _is_trading_hours
 
 # 轮询间隔（秒）
 TRADING_INTERVAL = 30

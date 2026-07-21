@@ -25,6 +25,7 @@ from agents.tools import intraday_tools   # noqa: F401  个股盘中体检
 from agents.tools import limit_up_tools   # noqa: F401  涨停池复盘 + 次日候选池预测
 from agents.tools import knowledge_tools  # noqa: F401  外置金融大脑：知识库 + 联网层
 from agents.tools import crypto_tools     # noqa: F401  加密货币（币安现货）行情/排雷/衍生品/下单
+from agents.tools import crypto_strategy_tools  # noqa: F401  crypto 自主策略编译（人话→DSL）
 
 # 工具分组元工具 load_toolgroup 现在从 agents/__init__.py 最后统一 import——
 # tool_groups.py 的分组现在按 ToolDef.group 从 REGISTRY 动态生成（Phase 9），

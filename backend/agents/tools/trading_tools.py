@@ -44,7 +44,7 @@ def _resolve_price(symbol: str, price=None) -> float | None:
 
 
 def _paper_broker_info() -> tuple["PaperBroker", dict[str, Any]]:
-    from automation.pending_order_manager import get_paper_broker
+    from trading_engine.brokers.paper_broker import get_paper_broker
     paper = get_paper_broker()
     acct = paper.get_account_info()
     positions_map = {

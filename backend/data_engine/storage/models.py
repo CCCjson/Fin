@@ -720,69 +720,9 @@ class PendingOrder(Base):
         return f"<PendingOrder(order_id={self.order_id}, symbol={self.symbol}, signal={self.signal_type}, status={self.status})>"
 
 
-class AutomationConfig(Base):
-    """自动化配置表 — 定义扫描任务参数"""
-    __tablename__ = "automation_configs"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    config_id = Column(String(50), unique=True, nullable=False, index=True)
-    name = Column(String(100), nullable=False)
-    enabled = Column(Integer, default=1)  # 0/1
-
-    # 扫描类型
-    scan_type = Column(String(30), nullable=False)  # daily / intraday / position_check
-    frequency_minutes = Column(Integer, default=5)
-
-    # 策略与股票池
-    strategies = Column(Text)  # JSON: ["MACD", "KDJ", ...]
-    watchlist = Column(Text)   # JSON: ["600519", "000858", ...]
-    min_strength = Column(Float, default=0.6)
-
-    # 交易参数
-    broker_type = Column(String(20), default="paper")  # paper / easytrader
-    position_size_pct = Column(Float, default=0.10)  # 每笔仓位占比
-    order_expire_minutes = Column(Integer, default=30)
-
-    # 运行状态
-    last_run_at = Column(DateTime)
-    next_run_at = Column(DateTime)
-
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-
-    def __repr__(self):
-        return f"<AutomationConfig(config_id={self.config_id}, name={self.name}, enabled={self.enabled})>"
-
-
-class AutomationLog(Base):
-    """自动化运行日志表 — 每次扫描执行的记录"""
-    __tablename__ = "automation_logs"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    config_id = Column(String(50), nullable=False, index=True)
-    run_type = Column(String(30))  # daily / intraday / position_check
-    status = Column(String(20), nullable=False, default="running")  # running / completed / failed
-
-    # 统计
-    symbols_scanned = Column(Integer, default=0)
-    signals_found = Column(Integer, default=0)
-    orders_created = Column(Integer, default=0)
-    duration_seconds = Column(Float)
-
-    # 详情
-    error_message = Column(Text)
-    detail = Column(Text)  # JSON
-
-    started_at = Column(DateTime, server_default=func.now())
-    completed_at = Column(DateTime)
-
-    __table_args__ = (
-        Index('idx_autolog_config', 'config_id'),
-        Index('idx_autolog_started', 'started_at'),
-    )
-
-    def __repr__(self):
-        return f"<AutomationLog(config_id={self.config_id}, run_type={self.run_type}, status={self.status})>"
+# AutomationConfig / AutomationLog（A 股自动交易调度器的配置/日志表）已于 2026-07-21 随
+# A 股自动交易整块退役而删除（券商 easytrader 不可用，改 crypto 半自动策略引擎）。
+# 旧表 automation_configs / automation_logs 留库无妨、不迁移；PendingOrder 保留（复盘仍读）。
 
 
 # ==================== Alpha Lab 模块 ====================
@@ -1305,3 +1245,131 @@ class CryptoTrade(Base):
 
     def __repr__(self):
         return f"<CryptoTrade({self.symbol} {self.side} {self.quantity}@{self.price})>"
+
+
+class CryptoStrategy(Base):
+    """crypto 半自动交易策略（规则对象）—— MoneyBill 把 Jason 人话编译成的确定性 DSL。
+
+    需求3（半自动）：后台引擎按 tick 读取、评估、**自动产决策+排队待确认**（`CryptoPendingOrder`），
+    每笔仍由 Jason 逐笔点确认才成交——CLAUDE.md 逐笔确认红线原样保留、不动。
+    DSL 子对象以 JSON 串存 Text 列（对齐仓库惯例，无 JSON 列类型）。
+    lifecycle：draft → backtested →（arm）→ armed →（护栏触发）paused_by_guardrail / retired。
+    ⛔ live 前必须 `backtest_passed=1`（含真实费率的净费回测通过）才允许 arm。
+    """
+    __tablename__ = "crypto_strategies"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_id = Column(String(40), nullable=False, unique=True, index=True)  # CS-<ts>-<hex6>
+    name = Column(String(100), nullable=False)
+    description_nl = Column(Text)                      # Jason 原始人话（审计留痕）
+    enabled = Column(Integer, default=0, index=True)   # 默认 0，绝不建时自动武装
+    mode = Column(String(10), default="paper")         # paper | live
+    status = Column(String(24), default="draft")       # draft|backtested|armed|paused_by_guardrail|retired
+    strategy_kind = Column(String(12), default="swing")  # swing | arb | long_hold
+    interval_minutes = Column(Integer, default=30)     # 每策略 tick 节奏
+
+    # ── DSL 子对象（JSON 串）──
+    universe = Column(Text)          # {"symbols":[...], "screen_filter":{...}|null}
+    entry_rules = Column(Text)       # {"when":{...}, "cooldown_minutes":60}
+    exit_rules = Column(Text)        # {"when":{...}, "use_atr_stop":true, "use_take_profit":true}
+    position_policy = Column(Text)   # {"target_pct_source":..., "max_position_pct":..., ...}
+    cost_model = Column(Text)        # {"taker_fee_pct":0.001, "slippage_pct":0.0005, "min_net_edge_pct":...}
+    guardrails = Column(Text)        # {"per_order_notional_usdt":..., "max_orders_per_day":..., ...}
+
+    capital_basis = Column(String(20), default="config")  # config | real_total_value
+
+    # ── 上线前回测闸（arm 的前置硬条件）──
+    last_backtest_at = Column(DateTime)
+    backtest_net_return = Column(Float)                # 净费回报（小数，0.12=12%）
+    backtest_metrics = Column(Text)                    # {"sharpe":..,"max_drawdown":..,"win_rate":..,"degraded":..}
+    backtest_passed = Column(Integer, default=0)
+
+    # ── 运行态 ──
+    last_run_at = Column(DateTime)
+    next_run_at = Column(DateTime)
+    last_signal_at = Column(DateTime)
+    consecutive_guardrail_trips = Column(Integer, default=0)
+    halted_reason = Column(String(200))
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_crypto_strategy_enabled_mode", "enabled", "mode"),
+    )
+
+    def __repr__(self):
+        return f"<CryptoStrategy({self.strategy_id} {self.name} {self.mode}/{self.status})>"
+
+
+class CryptoStrategyRun(Base):
+    """crypto 策略引擎逐 tick 审计日志 —— 自主系统必须可回溯每一次决策。
+
+    每个策略每 tick 落一行：评估了哪些币、命中什么条件、毛/净边际、护栏与风控结果、
+    paper 还是 live、下了哪些单。paper 模式**只写本表不写 CryptoTrade**（保持真实连亏台账干净）。
+    """
+    __tablename__ = "crypto_strategy_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_id = Column(String(40), nullable=False, index=True)
+    # evaluated|order_placed|skipped|blocked_risk|blocked_guardrail|blocked_cost|error
+    status = Column(String(24), nullable=False)
+    mode = Column(String(10))                          # paper | live（本 tick 快照）
+    symbols_evaluated = Column(Integer, default=0)
+    orders_placed = Column(Integer, default=0)
+    decision_detail = Column(Text)                     # JSON：每币命中条件/composite/毛边际/往返成本/净边际/护栏/风控
+    executed_order_ids = Column(Text)                  # JSON：币安 orderId 列表（live）；paper 为 null
+    pnl_realized_today = Column(Float)                 # 当日已实现盈亏快照
+    fees_today = Column(Float)                         # 当日累计手续费快照（费用漂移护栏）
+    error_message = Column(Text)
+    started_at = Column(DateTime, server_default=func.now())
+    completed_at = Column(DateTime)
+
+    __table_args__ = (
+        Index("idx_crypto_strategy_run_sid_started", "strategy_id", "started_at"),
+    )
+
+    def __repr__(self):
+        return f"<CryptoStrategyRun({self.strategy_id} {self.status} orders={self.orders_placed})>"
+
+
+class CryptoPendingOrder(Base):
+    """crypto 半自动待确认单 —— 引擎产决策后**排队等 Jason 逐笔确认**，不自动成交。
+
+    需求3（半自动）：引擎自动产决策 + 自动排队 → WS 推到前端/桌面 → Jason REST 点确认
+    → confirm 时**再跑一次风控** → 走 `execution.py` 真成交。⛔ 逐笔人工确认是 CLAUDE.md
+    永久红线，本表就是它在自主策略路径上的代码承载物——**引擎永不自动成交**。
+    quantity 用 Float（小数币量），对齐 CryptoTrade。
+    """
+    __tablename__ = "crypto_pending_orders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_ref = Column(String(40), nullable=False, unique=True, index=True)  # CPO-<ts>-<hex6>
+    strategy_id = Column(String(40), index=True)      # 来自哪条策略
+    symbol = Column(String(20), nullable=False, index=True)
+    side = Column(String(10), nullable=False)         # BUY / SELL
+    # 存**意图**不冻价：BUY 冻结目标 USDT 金额，确认时按现价重算币量（行情漂移仓位金额仍准）；
+    # SELL 冻结要卖的币量（平仓）。quantity 为决策时估算（展示用），确认时以现价/现持仓重算。
+    quote_amount = Column(Float)                      # BUY 目标名义金额（USDT）——真正冻结的意图
+    quantity = Column(Float, nullable=False)          # 决策时估算币量（展示；确认时重算）
+    price = Column(Float)                             # **决策时价格**，仅用于确认时算漂移与展示
+    est_notional = Column(Float)                     # 预估名义金额（USDT）
+    # PENDING → CONFIRMED → EXECUTING → FILLED / REJECTED / EXPIRED / FAILED
+    status = Column(String(12), default="PENDING", index=True)
+    reason = Column(Text)                            # JSON：命中的进/出场条件 + 净边际等决策依据
+    risk_snapshot = Column(Text)                     # JSON：产单时的风控预检结果
+    net_edge = Column(Float)                         # 买单的净边际（扣完往返成本）
+    created_at = Column(DateTime, server_default=func.now())
+    expires_at = Column(DateTime)                    # 过期时间（到点自动 EXPIRED，防陈单误成交）
+    confirmed_at = Column(DateTime)
+    executed_order_id = Column(String(50))           # 币安 orderId（成交后）
+    fill_price = Column(Float)
+    fill_quantity = Column(Float)
+    error_message = Column(Text)
+
+    __table_args__ = (
+        Index("idx_crypto_pending_status", "status", "created_at"),
+    )
+
+    def __repr__(self):
+        return f"<CryptoPendingOrder({self.order_ref} {self.symbol} {self.side} {self.status})>"
