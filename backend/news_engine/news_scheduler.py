@@ -449,7 +449,7 @@ class NewsScheduler:
         return hits
 
     def _raise_high_impact(self, hit: Dict) -> None:
-        from notify.mac_notify import notify
+        from notify.mac_notify import FIN_APP_BUNDLE_ID, notify
 
         symbol = hit.get("symbol")
         title = hit.get("title", "")
@@ -477,12 +477,13 @@ class NewsScheduler:
         # label 放 subtitle（固定短字段，不会被切；有 symbol 用 symbol，综合桶用类别标签），
         # message 只放"原因+精简标题"。
         # open_url：优先直接跳新闻原文链接（Jason 要看的是具体新闻内容，不是汇总面板）；
-        # 源没带 url（个别数据源确实会缺）才退回 DataMonitor 的 Newnew 面板兜底。
-        # 装了 terminal-notifier 才会真的跳转，没装则退化成纯展示。
+        # 源没带 url（个别数据源确实会缺）就不跳外链，改成点击唤起 Fin App
+        # （面板在 App 里，没有可跳转的网页地址——早先兜底跳 :5174 是 web 端遗留，已废）。
+        # 装了 terminal-notifier 才会真的响应点击，没装则退化成纯展示。
         notify_message = _truncate(f"{reason_text}：{title}", NOTIFY_MESSAGE_LIMIT)
-        fallback_url = os.getenv("NEWS_NOTIFY_OPEN_URL", "http://127.0.0.1:5174/app/data-monitor")
-        open_url = hit.get("url") or fallback_url
-        notify(title="Newnew 新闻预警", subtitle=label, message=notify_message, open_url=open_url)
+        open_url = hit.get("url") or os.getenv("NEWS_NOTIFY_OPEN_URL", "")
+        notify(title="Newnew 新闻预警", subtitle=label, message=notify_message,
+               open_url=open_url, activate_bundle_id=FIN_APP_BUNDLE_ID)
 
 
 # 模块级单例

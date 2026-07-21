@@ -115,7 +115,10 @@
 ## 前端/桌面端
 
 - **Tauri桌面App里外链必须用 `openExternal`**，不能直接靠`<a target="_blank">`原生行为——WKWebView会静默丢弃点击。修法是装 `tauri-plugin-opener` 插件（注册后朴素`<a>`就能用，不要写JS click拦截helper，会和插件自带的全局拦截器冲突）。**壳改动（Cargo.toml/lib.rs/capabilities）必须重打包才生效**，HMR对Rust插件不起作用。
-- **app 端 / web 端双后端进程架构（2026-07落地）**：app 是稳定实例（`desktop/start-services.sh` 起，:8000，不带 `--reload`，连生产库，跑三个定时任务），web 是开发实例（`restart.sh` 起，:8010，带 `--reload`，`FIN_DISABLE_SCHEDULERS=true` 关掉定时任务，`DATABASE_URL`/`KNOWLEDGE_DB_PATH` 指向 `backend/data_dev/` 下的本地空测试库，不碰 T9 生产数据）。app 前端加载真实 `vite build` 产物（`tauri.conf.json` 的 `frontendDist: "../dist"`），不再有中间跳转页也没有 HMR；web 前端不变，vite dev(:5174) proxy 到 8010。改代码要让 app 看到，必须显式跑 `desktop/sync-to-app.sh` promote（重新 `npm run build` + `tauri build` + ditto 覆盖安装 `/Applications/Fin.app`）。两个后端进程的 SQLite 访问本身安全（WAL+busy_timeout，且各连各的库），但**进程内单例状态（`agents/context.py` 会话锁、`business_events` 事件总线等）两边不共享**，web 端的会话/模拟盘状态不代表 app 端真实状态，这是预期的沙箱隔离，不是 bug。配套引入长期分支 `app`（只被 `sync-to-app.sh` 用 `git branch -f` 移动，不手动 commit），`git log app..master` 可以看还有哪些改动没推到 app。
+- **⛔ app-only 单实例架构（2026-07-21 收敛，此前的「app/web 双轨」已整体退役）**：全项目只服务 Mac 桌面 App。唯一入口 `bash restart.sh`（全量：`desktop/build-app.sh` 重建前端+重装 `/Applications/Fin.app` → `desktop/start-services.sh` 起后端:8000/C++:8001/:8002/SSH:11434 → `open` App）；改 Python 用 `bash restart.sh --backend` 走快档。已删除的东西别再找：web 开发后端(:8010)、vite dev(:5174)与其 proxy、`backend/data_dev/` 测试库、`start.sh`/`stop.sh`/`deploy.*`、`backend/start_api.py`、`app` 分支与 promote 仪式（`sync-to-app.sh` 已改名 `build-app.sh` 并去掉分支检查）。
+  - **🔴 App 端没有热更新，这是架构事实不是配置没开**：前端静态产物被 `tauri build` **编译进 Rust 二进制**（`frontendDist: "../dist"`），后端不带 `--reload`。改了 `.tsx` 不重新打包，正在跑的 App 永远看不见。历史教训：双轨时期靠手动 promote，结果 `app` 分支落后 master **133 个 commit**，App 里跑了几个月的旧界面而没人发现。
+  - **后端连的是 T9 生产库，没有沙箱**：`restart.sh` 开头硬检查 `/Volumes/T9` 挂载，没插盘直接拒绝启动（否则 SQLAlchemy 会在空目录建个空库，看着能跑数据全没）。想要隔离实例得自己传 `DATABASE_URL` + `FIN_DISABLE_SCHEDULERS=true`。
+  - **网络只绑本机**：uvicorn `--host 127.0.0.1`，CORS 白名单只剩 `localhost/127.0.0.1` + `tauri://localhost`（局域网私网段那条随手机访问需求一起删了）。
 - **路由前缀是 `/app/market` 不是 `/market`**——`MainStage`的`PAGES`映射只认`/app/*`，访问裸路径会静默回退到MoneyBill聊天首页（不报错，排查导航问题时留意）。
 - **港股代码是5位数字**（`00700.HK`），手输容易漏位，靠`StockSymbolInput`自动补全能避开。
 - **货币符号/展示字段要跟"实际展示的数据"同步派生**，不要跟实时输入框state同步派生——否则会出现"标签先跳新市场、数字还是旧数据"的错位（`Market.tsx`曾踩过，修法是新增`loadedSymbol` state，只在`loadData()`真正成功后才更新）。

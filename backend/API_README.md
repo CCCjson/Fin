@@ -5,7 +5,7 @@
 ### 1. 启动API服务器
 
 ```bash
-python start_api.py
+bash restart.sh --backend
 ```
 
 服务器将在 `http://127.0.0.1:8000` 启动
@@ -268,7 +268,6 @@ backend/
 │   │   └── monitor.py      # 监控接口
 │   └── models/
 │       └── schemas.py       # 数据模型
-├── start_api.py             # 启动脚本
 └── tests/
     ├── demo_api.py          # API演示
     └── test_api.py          # API测试

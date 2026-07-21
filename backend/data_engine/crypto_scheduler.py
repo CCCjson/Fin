@@ -8,8 +8,8 @@
 
 ## 与 FIN_DISABLE_SCHEDULERS 的关系
 
-本调度器由 `api/main.py` startup 拉起，受全局 `FIN_DISABLE_SCHEDULERS` 门控（web 开发
-实例关掉、app 生产实例开）。自身另有 `CRYPTO_SCHEDULER_ENABLED`（默认 true）细开关。
+本调度器由 `api/main.py` startup 拉起，受全局 `FIN_DISABLE_SCHEDULERS` 门控（正常运行不设，
+仅调试第二个后端进程时手动关）。自身另有 `CRYPTO_SCHEDULER_ENABLED`（默认 true）细开关。
 
 ## 防重入
 

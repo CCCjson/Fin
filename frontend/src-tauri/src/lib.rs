@@ -37,7 +37,8 @@ pub fn run() {
                 )?;
             }
             // 开 app 即拉起本地服务（幂等，已在跑则跳过）。
-            // 窗口首屏是 ui/index.html 加载页，就绪后自动跳转 :5174。
+            // 窗口加载的是 tauri build 打进包里的静态产物（tauri.conf.json 的 frontendDist），
+            // 没有加载页也没有跳转；后端冷启动这段由前端 App.tsx 的 useBackendReady 轮询挡着。
             spawn_services();
             Ok(())
         })

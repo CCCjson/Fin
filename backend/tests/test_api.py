@@ -224,7 +224,7 @@ def main():
     except requests.exceptions.ConnectionError:
         logger.error("\n❌ 无法连接到API服务器")
         logger.error("请确保API服务器正在运行:")
-        logger.error("  python start_api.py")
+        logger.error("  bash restart.sh --backend")
     except Exception as e:
         logger.error(f"\n❌ 测试失败: {e}")
 

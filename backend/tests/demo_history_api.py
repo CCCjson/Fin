@@ -222,7 +222,7 @@ def main():
 
     except requests.exceptions.ConnectionError:
         logger.error("\n❌ 无法连接到API服务器")
-        logger.error("请先启动API服务器: python start_api.py")
+        logger.error("请先启动服务: bash restart.sh --backend")
 
 
 if __name__ == "__main__":

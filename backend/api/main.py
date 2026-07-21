@@ -20,7 +20,7 @@ apply_proxy_env()
 from data_engine import init_db
 # 架构收敛（2026-07）：功能类 route 只保留服务于 8 个工作台页面的；
 # 信号/复盘/自选/报告/顾问/交易记录等能力经 MoneyBill 工具进程内直调引擎，不再走 HTTP。
-from api.routes import data, analysis, monitor, history, realtime, orderbook, backtest_cpp, prediction, news, auth, automation, ws, fine_tune, stock_pools, walk_forward, screener, agent, knowledge, data_monitor, deep_history, settings
+from api.routes import data, analysis, monitor, history, realtime, orderbook, backtest_cpp, prediction, news, auth, automation, ws, fine_tune, stock_pools, walk_forward, screener, agent, knowledge, data_monitor, deep_history, settings, crypto_strategy
 from api.deps import require_auth, assert_strong_secret
 
 # 弱密钥启动自检：强制鉴权却仍用默认/弱 JWT_SECRET 时直接抛错退出，
@@ -47,14 +47,13 @@ app = FastAPI(
 
 # 配置 CORS —— 收紧为显式白名单（原 allow_origins=["*"] + allow_credentials=True
 # 组合本身矛盾，浏览器会拒绝且等于无防护）。
-# 用正则覆盖三类可信来源：
-#   1) 本地 vite dev server / 后端本机（localhost、127.0.0.1，任意端口，含 5174）
-#   2) 局域网内手机访问 dev server（10.x / 192.168.x / 172.16-31.x 私网段，vite host:true）
-#   3) Tauri v2 webview：macOS/iOS/Linux 为 tauri://localhost，Windows 为 http://tauri.localhost
+# 2026-07-21 收敛为 app-only 后又砍掉了局域网私网段那条（手机访问 web 页的需求随
+# web 端一起退役），只剩两类可信来源：
+#   1) 本机（localhost、127.0.0.1，任意端口）—— 后端自身 /docs、应急 npm run dev 调试
+#   2) Tauri v2 webview：macOS/iOS/Linux 为 tauri://localhost，Windows 为 http://tauri.localhost
 _CORS_ORIGIN_REGEX = (
     r"^("
     r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
-    r"|https?://(10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2})(:\d+)?"
     r"|tauri://localhost"
     r"|http://tauri\.localhost"
     r")$"
@@ -83,6 +82,7 @@ app.include_router(prediction.router, dependencies=_auth)
 app.include_router(news.router, dependencies=_auth)
 app.include_router(auth.router)  # 登录/校验端点本身必须公开
 app.include_router(automation.router, dependencies=_auth)
+app.include_router(crypto_strategy.router, dependencies=_auth)
 app.include_router(fine_tune.router, dependencies=_auth)
 app.include_router(stock_pools.router, dependencies=_auth)
 app.include_router(walk_forward.router, dependencies=_auth)
@@ -167,8 +167,9 @@ async def startup_event():
     #   get_position_guard   → position_guardian.build_guard_status()
     #   get_limit_up_pool    → limit_up_scanner.get_intraday_snapshot()（缓存过期即懒扫）
 
-    # 多实例部署（app 稳定后端 + web 开发后端各跑一份）时，web 端应关闭定时任务，
-    # 避免两边重复拉数据/重复扫描新闻。FIN_DISABLE_SCHEDULERS=true 由 restart.sh 注入。
+    # FIN_DISABLE_SCHEDULERS=true 可关掉知识库/每日数据/新闻三个定时任务。
+    # 2026-07-21 收敛为 app 单实例后，正常运行不再注入这个变量（app 端本来就要跑定时任务）；
+    # 它保留为手动开关——临时起第二个后端进程调试时用，避免两边重复拉数据/重复扫新闻。
     schedulers_enabled = os.getenv("FIN_DISABLE_SCHEDULERS", "false").lower() not in ("1", "true", "yes")
     if not schedulers_enabled:
         logger.info("FIN_DISABLE_SCHEDULERS 已启用，跳过知识库/每日数据/新闻三个定时任务")
@@ -204,6 +205,14 @@ async def startup_event():
             crypto_scheduler.start()
         except Exception as e:
             logger.warning(f"加密货币数据链启动失败（不影响主服务）: {e}")
+
+    # crypto 自主策略引擎（需求3）——安全默认关，需 CRYPTO_STRATEGY_ENGINE_ENABLED=true 显式开
+    if schedulers_enabled:
+        try:
+            from crypto_strategy.scheduler import crypto_strategy_scheduler
+            crypto_strategy_scheduler.start()
+        except Exception as e:
+            logger.warning(f"crypto 自主策略引擎启动失败（不影响主服务）: {e}")
 
     # 业务事件总线 → WebSocket 桥接：把 BizEvent 广播到前端活动流（复用 /ws/automation）
     try:
@@ -258,6 +267,12 @@ async def shutdown_event():
         try:
             from data_engine.crypto_scheduler import crypto_scheduler
             crypto_scheduler.stop()
+        except Exception:
+            pass
+
+        try:
+            from crypto_strategy.scheduler import crypto_strategy_scheduler
+            crypto_strategy_scheduler.stop()
         except Exception:
             pass
 

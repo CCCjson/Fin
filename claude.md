@@ -18,8 +18,11 @@
 
 ## 运行环境
 
-- **必须使用 conda 虚拟环境 `quant`** 启动前后端及运行所有 Python 命令
-- 启动后端：`conda run -n quant python -m uvicorn api.main:app --host 0.0.0.0 --port 8000`
+- **必须使用 conda 虚拟环境 `quant`** 启动服务及运行所有 Python 命令
+- **⛔ 项目只服务 Mac 桌面 App（`/Applications/Fin.app`），没有网页端**（2026-07-21 收敛，web 双轨已整体退役）。新代码一律以 App 为交付目标，别再假设有 vite dev server 或 :8010 后端。
+- 更新并重启：`bash restart.sh`（全量：重建前端 → 重装 App → 重启后端）／ `bash restart.sh --backend`（只重后端，改 Python 时用）
+- **App 端没有热更新**：前端产物编译进 App 二进制，后端不带 `--reload`，改完必须跑 `restart.sh` 才生效
+- 手动起后端：`conda run -n quant python -m uvicorn api.main:app --host 127.0.0.1 --port 8000`
 - 安装依赖：`conda run -n quant pip install <package>`
 - 运行脚本：`conda run -n quant python <script.py>`
 

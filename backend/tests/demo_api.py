@@ -147,4 +147,4 @@ if __name__ == "__main__":
     except requests.exceptions.ConnectionError:
         logger.error("\n❌ 无法连接到API服务器")
         logger.error("请先启动API服务器:")
-        logger.error("  python start_api.py")
+        logger.error("  bash restart.sh --backend")

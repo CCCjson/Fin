@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Card } from '../components/common/Card';
 import { authFetch, getAuthToken } from '../utils/authFetch';
 
-const API = import.meta.env.VITE_API_URL || '/api';
+const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 // ══════════════════════════════════════════════════════════════
 // 类型定义
@@ -144,11 +144,9 @@ function useOrderBookWS(
     const connect = () => {
       const token = getAuthToken();
       const qs = token ? `?token=${encodeURIComponent(token)}` : '';
-      // API 是绝对地址（打包版 VITE_API_URL）时直接转 ws(s) scheme；
-      // 是相对路径 '/api'（vite dev proxy）时才拼 window.location（走代理转发到真实后端）。
-      const url = /^https?:/.test(API)
-        ? `${API.replace(/^http/, 'ws')}/orderbook/sessions/${sessionId}/ws${qs}`
-        : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${API}/orderbook/sessions/${sessionId}/ws${qs}`;
+      // API 恒为本机后端绝对地址（见 frontend/.env），转个 ws(s) scheme 就能用。
+      // 旧版那条走 window.location 拼 vite dev proxy 的分支随 web 端退役已删。
+      const url = `${API.replace(/^http/, 'ws')}/orderbook/sessions/${sessionId}/ws${qs}`;
 
       const ws = new WebSocket(url);
       wsRef.current = ws;

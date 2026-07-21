@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- 允许 WKWebView 访问本机 http 服务（127.0.0.1:5174 前端 / :8000 后端），
-       否则 ATS 会拦截明文 http 加载与 fetch。 -->
+  <!-- 允许 WKWebView 访问本机 http 服务（后端 127.0.0.1:8000 的 REST 与 WebSocket），
+       否则 ATS 会拦截明文 http 请求。前端本身是打进包里的静态产物，不走 http。 -->
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key>

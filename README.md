@@ -157,11 +157,18 @@
 - Python 3.12+（通过 Conda 管理）· Node.js 18+ · CMake（编译 C++ 服务）
 - **Conda（必须，所有 Python 命令在 `quant` 环境下运行）**
 
-### 一键启动（推荐）
+### 一键启动（唯一入口）
+
+本项目只服务 Mac 桌面 App（`/Applications/Fin.app`），**没有网页端**。
+
 ```bash
-bash restart.sh
+bash restart.sh              # 全量：重建前端 → 重装 App → 重启后端 → 打开 App（约 1-2 分钟）
+bash restart.sh --backend    # 快档：只重启后端 + C++ 服务（改 Python 时用，约 40s）
 ```
-按顺序拉起：C++ 订单簿服务（8001）→ C++ 回测服务（8002）→ 后端（8000，`--reload`）→ 前端（vite dev，5174），逐项轮询端口/HTTP 确认就绪（后端约 20-40s），日志落在 `/tmp/fin-*.log`。
+
+全量档按顺序做：`desktop/build-app.sh`（`npm run build` → `tauri build` → `ditto` 安装）→ `desktop/start-services.sh`（SSH 隧道 11434 → C++ 订单簿 8001 → C++ 回测 8002 → 后端 8000）→ 打开 App。逐项轮询端口/HTTP 确认就绪（后端约 20-40s），日志落在 `/tmp/fin-*.log`。
+
+> **App 端没有热更新**：前端产物被编译进 App 二进制，后端不带 `--reload`。改了代码不重跑 `restart.sh`，正在跑的 App 看不见任何变化。详见 `desktop/README.md`。
 
 ### 手动安装
 ```bash
@@ -208,32 +215,33 @@ ALPHA_LAB_LOCAL_MODEL=mlx-community/Qwen2.5-Coder-14B-Instruct-4bit
 ### 手动分别启动（不用 restart.sh 时）
 ```bash
 # 后端（backend 目录下）
-conda run -n quant python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
-# 前端（frontend 目录下）
-npm run dev
+conda run -n quant python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 # C++ 回测服务
-./backtest_cpp/build/backtest_server
+./backtest_cpp/build/backtest_server 8002
 # C++ 订单簿服务
-./orderbook_simulator/build/orderbook_server
+./orderbook_simulator/build/orderbook_server 8001
 ```
 **Apple Silicon 用户**（本地 MLX 模型）需另起 MLX 服务：`bash backend/start_mlx_server.sh`（端口 11434）。
 
-### 桌面端（Tauri）
+### 只重新打包 App（不动后端）
 ```bash
-cd frontend
-npm run app:dev     # 开发模式
-npm run app:build   # 打包 .app / .dmg
+bash desktop/build-app.sh
+```
+
+### 停止全部服务
+```bash
+bash desktop/stop-services.sh
 ```
 
 ### 访问
 | 服务 | 地址 |
 |------|------|
-| 前端界面 | http://localhost:5174 |
-| API 文档（Swagger）| http://localhost:8000/docs |
-| C++ 回测服务 | http://localhost:8002 |
-| C++ 订单簿服务 | http://localhost:8001 |
+| 界面 | `/Applications/Fin.app`（桌面 App，无网页端） |
+| API 文档（Swagger）| http://127.0.0.1:8000/docs |
+| C++ 回测服务 | http://127.0.0.1:8002 |
+| C++ 订单簿服务 | http://127.0.0.1:8001 |
 
-首次访问需登录（`POST /auth/login` 换 JWT），前端已自动处理。
+首次进入需登录（`POST /auth/login` 换 JWT），前端已自动处理。服务只绑本机，局域网访问不到。
 
 ---
 
@@ -289,9 +297,9 @@ Fin/
 │   │   ├── components/shell/       # AppShell / MainStage / ToolsDrawer（页面路由与 keep-alive）
 │   │   └── services/ · store/ · utils/
 │   └── src-tauri/                  # 🖥️ Tauri v2 桌面壳
+├── desktop/                        # 桌面 App 脚本：build-app / start-services / stop-services
 ├── docs/                           # 架构/数据库/API/安全设计文档
-├── restart.sh                      # 一键重启全部服务（含就绪检查）
-├── deploy.sh / deploy.bat          # 一键部署
+├── restart.sh                      # 唯一入口：更新并重启（含就绪检查）
 └── CLAUDE.md                       # 开发规范与架构说明
 ```
 

@@ -102,18 +102,18 @@ start_cpp "订单簿服务" "$ORDERBOOK_DIR" 8001 orderbook_server /tmp/fin-orde
 echo -e "${GREEN}[3/4] C++ 回测服务 (port 8002)...${NC}"
 start_cpp "回测服务" "$BACKTEST_DIR" 8002 backtest_server /tmp/fin-backtest.log 8002
 
-# ---- 后端 uvicorn（app 端是稳定实例，不带 --reload，不受 web 端开发影响）----
-echo -e "${GREEN}[4/4] 后端 (port 8000，稳定实例)...${NC}"
+# ---- 后端 uvicorn（唯一实例，不带 --reload；改了代码用 restart.sh 重启）----
+# 只绑 127.0.0.1：App 就在本机，不需要暴露到局域网（2026-07-21 随 web 端退役一起收紧）。
+echo -e "${GREEN}[4/4] 后端 (port 8000)...${NC}"
 if is_listening 8000; then
     echo "  已在运行，跳过"
 else
     cd "$BACKEND_DIR" || exit 1
-    nohup "$PYTHON" -m uvicorn api.main:app --host 0.0.0.0 --port 8000 > /tmp/fin-backend.log 2>&1 &
+    nohup "$PYTHON" -m uvicorn api.main:app --host 127.0.0.1 --port 8000 > /tmp/fin-backend.log 2>&1 &
     echo "  已启动 PID $!  日志 /tmp/fin-backend.log"
 fi
 
-# 前端不再需要单独起进程：App 窗口直接加载 tauri build 打进包里的静态产物，
-# 不经过 vite dev server（那是 web 端 restart.sh 的活）。
+# 前端不需要起进程：App 窗口直接加载 tauri build 打进包里的静态产物，没有 dev server。
 
 # ---- 就绪汇总（供手动运行时看；Tauri 侧另有 /docs 轮询）----
 echo ""

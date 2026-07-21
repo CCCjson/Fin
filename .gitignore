@@ -50,7 +50,6 @@ TradingAgents-main/
 *.sqlite
 *.sqlite3
 backend/data/
-backend/data_dev/
 
 # ==================== CTP 交易通信 ====================
 backend/md_flow/

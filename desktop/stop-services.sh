@@ -6,9 +6,9 @@
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-echo "停止 Fin App 服务（不影响 web 端 restart.sh 起的 8010 开发实例）..."
-# 精确匹配 --port 8000，避免误杀 web 端跑在 8010 的开发后端
-pkill -f "uvicorn api.main:app.*--port 8000" 2>/dev/null && echo "  后端已停止"       || echo "  后端未在运行"
+echo "停止 Fin App 全部后台服务..."
+# 不按端口过滤：单实例架构下把任何 uvicorn api.main:app 都停掉（含临时调试实例）
+pkill -f "uvicorn api.main:app" 2>/dev/null && echo "  后端已停止"       || echo "  后端未在运行"
 pkill -f "orderbook_server"      2>/dev/null && echo "  订单簿服务已停止"  || echo "  订单簿服务未在运行"
 pkill -f "backtest_server"       2>/dev/null && echo "  回测服务已停止"    || echo "  回测服务未在运行"
 pkill -f "ssh -N.*11434"         2>/dev/null && echo "  SSH隧道已停止"     || echo "  SSH隧道未在运行"

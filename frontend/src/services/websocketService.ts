@@ -118,14 +118,12 @@ class WebSocketService {
   // -------- 内部方法 --------
 
   private _buildUrl(): string {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const apiUrl = import.meta.env.VITE_API_URL || '';
-    if (apiUrl) {
-      // 把 http(s) 转 ws(s)
-      const wsUrl = apiUrl.replace(/^http/, 'ws').replace(/\/api$/, '');
-      return `${wsUrl}/ws/automation`;
-    }
-    return `${protocol}//${window.location.host}/ws/automation`;
+    // VITE_API_URL 恒为本机后端绝对地址（见 frontend/.env），http → ws 换个 scheme 即可。
+    // 旧版还有一条「相对路径 /api」的分支伺候 vite dev proxy，随 web 端退役一并删除
+    // ——它本身也是坏的：'/api' 两次 replace 后变成空串，返回相对 URL 落到 dev server 上，
+    // 而 vite 只 proxy 了 /api，automation 的 WS 从来没连通过。
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+    return `${apiUrl.replace(/^http/, 'ws')}/ws/automation`;
   }
 
   private _emit(type: string, data: any): void {
