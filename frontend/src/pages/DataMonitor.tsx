@@ -8,6 +8,8 @@ import type {
   MonitorOverview,
   UpdateStreamEvent,
   LimitUpDetail,
+  FreshnessReport,
+  RefreshStreamEvent,
 } from '../services/dataMonitorService';
 import { screenerService } from '../services/screenerService';
 import { newsService } from '../services/newsService';
@@ -216,6 +218,87 @@ const ProgressCard: React.FC<{
   </Card>
 );
 
+/* ---------- 三市场（+加密只读）新鲜度条带 ---------- */
+
+const MARKET_META: Record<string, { label: string; icon: string }> = {
+  a_share: { label: 'A股', icon: '🇨🇳' },
+  hk_stock: { label: '港股', icon: '🇭🇰' },
+  us_stock: { label: '美股', icon: '🇺🇸' },
+  crypto: { label: '加密', icon: '🪙' },
+};
+
+const MARKET_ORDER = ['a_share', 'hk_stock', 'us_stock', 'crypto'];
+
+/** 单市场新鲜度 chip：更新到哪天 + 是否落后徽章 */
+const FreshnessChip: React.FC<{ market: string; info: import('../services/dataMonitorService').MarketFreshness }> = ({ market, info }) => {
+  const meta = MARKET_META[market] || { label: market, icon: '•' };
+  const st: Staleness = info.is_stale ? 'stale' : 'ok';
+  return (
+    <div className="flex-1 min-w-[130px] bg-dark-light rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span>{meta.icon}</span>
+        <div className="min-w-0">
+          <div className="text-xs text-gray-300 font-medium flex items-center gap-1">
+            {meta.label}
+            {market === 'crypto' && <span className="text-[9px] text-gray-500">只读</span>}
+          </div>
+          <div className="text-[10px] text-gray-500 truncate">{info.reference_date || '无数据'}</div>
+        </div>
+      </div>
+      <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${stalenessStyle[st]}`}>
+        {info.is_stale ? '落后' : '最新'}
+      </span>
+    </div>
+  );
+};
+
+const MarketFreshnessStrip: React.FC<{ freshness: FreshnessReport | null }> = ({ freshness }) => {
+  if (!freshness?.by_market) return null;
+  const markets = MARKET_ORDER.filter((m) => freshness.by_market[m]);
+  if (markets.length === 0) return null;
+  return (
+    <Card className="p-3">
+      <div className="text-xs font-semibold text-gray-400 mb-2 px-1">📅 各市场行情新鲜度</div>
+      <div className="flex flex-wrap gap-2">
+        {markets.map((m) => (
+          <FreshnessChip key={m} market={m} info={freshness.by_market[m]} />
+        ))}
+      </div>
+    </Card>
+  );
+};
+
+/** 统一刷新的分市场进度行 */
+const RefreshProgressRow: React.FC<{ market: string; evt: RefreshStreamEvent }> = ({ market, evt }) => {
+  const meta = MARKET_META[market] || { label: market, icon: '•' };
+  const pct = evt.total ? Math.min(100, ((evt.current || 0) / (evt.total || 1)) * 100) : evt.event === 'complete' ? 100 : 0;
+  const statusText =
+    evt.event === 'complete'
+      ? `✅ 完成 · 更新 ${fmtNum(evt.updated ?? evt.success)} · 失败 ${fmtNum(evt.failed)}`
+      : evt.event === 'error'
+      ? `❌ ${evt.message || '出错'}`
+      : evt.event === 'skipped'
+      ? `⏭ ${evt.message || '已跳过'}`
+      : evt.symbol
+      ? `当前: ${evt.name || evt.symbol}`
+      : '准备中…';
+  return (
+    <div className="mb-2 last:mb-0">
+      <div className="flex items-center justify-between text-xs mb-1">
+        <span className="text-gray-300">{meta.icon} {meta.label}</span>
+        {evt.total ? <span className="text-gray-500">{evt.current || 0} / {evt.total}</span> : null}
+      </div>
+      <div className="w-full h-2 bg-dark-light rounded-full overflow-hidden">
+        <div
+          className={`h-full transition-all ${evt.event === 'error' ? 'bg-bull' : evt.event === 'skipped' ? 'bg-gray-500' : 'bg-primary'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="text-[11px] text-gray-500 mt-1">{statusText}</div>
+    </div>
+  );
+};
+
 /* ================================================================ */
 
 export const DataMonitor: React.FC = () => {
@@ -229,6 +312,12 @@ export const DataMonitor: React.FC = () => {
   const [updating, setUpdating] = useState(false);
   const [progress, setProgress] = useState<UpdateStreamEvent | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // 三市场统一刷新流式状态（分市场进度）+ 只读新鲜度
+  const [mktFreshness, setMktFreshness] = useState<FreshnessReport | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState<Record<string, RefreshStreamEvent>>({});
+  const refreshAbortRef = useRef<AbortController | null>(null);
 
   // 财报回补流式状态
   const [finUpdating, setFinUpdating] = useState(false);
@@ -248,8 +337,12 @@ export const DataMonitor: React.FC = () => {
 
   const load = useCallback(async () => {
     try {
-      const res = await dataMonitorService.getOverview();
+      const [res, fresh] = await Promise.all([
+        dataMonitorService.getOverview(),
+        dataMonitorService.getFreshness().catch(() => null), // 新鲜度失败不拖垮总览
+      ]);
       setData(res);
+      if (fresh) setMktFreshness(fresh);
       setError(null);
     } catch (e: any) {
       setError(e?.message || '加载失败');
@@ -268,7 +361,7 @@ export const DataMonitor: React.FC = () => {
 
   // 更新是否正在进行：任一流式更新中 或 定时任务后台在跑
   const isActive =
-    updating || finUpdating || busyAsset !== null || (data?.scheduler.is_updating ?? false);
+    updating || refreshing || finUpdating || busyAsset !== null || (data?.scheduler.is_updating ?? false);
 
   // 自适应轮询：active 时 5s 快刷，空闲 60s 慢刷。isActive 翻转时立即重拉一次。
   useEffect(() => {
@@ -285,6 +378,7 @@ export const DataMonitor: React.FC = () => {
     () => () => {
       abortRef.current?.abort();
       finAbortRef.current?.abort();
+      refreshAbortRef.current?.abort();
     },
     [],
   );
@@ -322,8 +416,41 @@ export const DataMonitor: React.FC = () => {
     }
   };
 
-  const handleStopUpdate = () => {
-    abortRef.current?.abort();
+  /** 三市场统一刷新（scope 省略=A股+港股+美股；crypto 不走这里）。事件按 market 分栏 */
+  const handleUnifiedRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshProgress({});
+    const ctrl = new AbortController();
+    refreshAbortRef.current = ctrl;
+    try {
+      await dataMonitorService.refreshMarkets(
+        undefined,
+        (evt) => {
+          if (evt.event === 'plan') {
+            if (evt.freshness) setMktFreshness(evt.freshness);
+            return;
+          }
+          if (evt.event === 'all_complete') return;
+          if (evt.market) {
+            setRefreshProgress((prev) => ({ ...prev, [evt.market as string]: evt }));
+          }
+        },
+        ctrl.signal,
+      );
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        setError(e?.message || '刷新失败');
+      }
+    } finally {
+      setRefreshing(false);
+      refreshAbortRef.current = null;
+      load(); // 刷新完重拉总览+新鲜度
+    }
+  };
+
+  const handleStopRefresh = () => {
+    refreshAbortRef.current?.abort();
   };
 
   const handleFinancialBackfill = async () => {
@@ -480,17 +607,35 @@ export const DataMonitor: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {updating ? (
-              <Button variant="danger" size="sm" onClick={handleStopUpdate} icon="⏹">
-                停止更新
+            {refreshing ? (
+              <Button variant="danger" size="sm" onClick={handleStopRefresh} icon="⏹">
+                停止刷新
               </Button>
             ) : (
-              <Button variant="primary" size="sm" onClick={handleManualUpdate} icon="🔄">
-                更新日线
+              <Button variant="primary" size="sm" onClick={handleUnifiedRefresh} icon="🔄">
+                更新日线（三市场）
               </Button>
             )}
           </div>
         </div>
+
+        {/* 三市场（+加密只读）新鲜度条带 */}
+        <MarketFreshnessStrip freshness={mktFreshness} />
+
+        {/* 三市场统一刷新进度（按 market 分栏） */}
+        {(refreshing || Object.keys(refreshProgress).length > 0) && (
+          <Card className="p-4">
+            <div className="text-sm text-white font-medium mb-3">
+              {refreshing ? '⏳ 正在统一刷新三市场日线…' : '三市场刷新结果'}
+            </div>
+            {MARKET_ORDER.filter((m) => refreshProgress[m]).map((m) => (
+              <RefreshProgressRow key={m} market={m} evt={refreshProgress[m]} />
+            ))}
+            {refreshing && Object.keys(refreshProgress).length === 0 && (
+              <div className="text-xs text-gray-500">准备中…</div>
+            )}
+          </Card>
+        )}
 
         {/* 漏跑补跑横幅：今日该更却没更（后端判定），点了才花 IP */}
         {data.catch_up?.needed && !updating && (

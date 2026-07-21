@@ -2,34 +2,51 @@
  * 从股票代码推断所属市场 + 展示货币。
  *
  * 与后端 data_engine/engine.py 的市场判定启发式保持一致（.SH/.SZ → a_share，
- * .HK → hk_stock，其余 → us_stock 兜底——美股代码本身不带后缀，如 AAPL）：
- * 后端 /data/daily 已经是市场无关的（按代码后缀内部路由到对应 fetcher/表），
- * 前端只需要在展示层知道「这是哪个市场」以便选对货币符号，不需要额外接口。
+ * .HK → hk_stock，.BN → crypto（币安现货），其余 → us_stock 兜底——美股代码
+ * 本身不带后缀，如 AAPL）：后端 /data/daily 已经是市场无关的（按代码后缀内部
+ * 路由到对应 fetcher/表），前端只需要在展示层知道「这是哪个市场」以便选对货币
+ * 符号与价格精度，不需要额外接口。
  */
 
-export type MarketId = 'a_share' | 'hk_stock' | 'us_stock';
+export type MarketId = 'a_share' | 'hk_stock' | 'us_stock' | 'crypto';
 
 export const MARKET_LABEL: Record<MarketId, string> = {
   a_share: 'A股',
   hk_stock: '港股',
   us_stock: '美股',
+  crypto: '加密',
 };
 
 export const MARKET_CURRENCY_SYMBOL: Record<MarketId, string> = {
   a_share: '¥',
   hk_stock: 'HK$',
   us_stock: 'US$',
+  crypto: '$', // 币安现货以 USDT 计价，≈USD，用 $ 最紧凑
 };
 
 export function detectMarket(symbol: string): MarketId {
   const s = (symbol || '').trim().toUpperCase();
   if (s.endsWith('.SH') || s.endsWith('.SZ') || s.endsWith('.BJ')) return 'a_share';
   if (s.endsWith('.HK')) return 'hk_stock';
+  if (s.endsWith('.BN')) return 'crypto';
   return 'us_stock';
 }
 
 export function currencySymbolFor(symbol: string): string {
   return MARKET_CURRENCY_SYMBOL[detectMarket(symbol)];
+}
+
+/**
+ * 价格显示小数位：股票恒 2 位；crypto 按量级动态（BTC ~$6万用 2 位，小币要更多位，
+ * 否则 $0.00001 全被截成 0.00）。与 Market 页/K线图共用，口径统一。
+ */
+export function priceDecimalsFor(market: MarketId, price: number): number {
+  if (market !== 'crypto') return 2;
+  const p = Math.abs(price || 0);
+  if (p >= 100) return 2;
+  if (p >= 1) return 4;
+  if (p >= 0.01) return 6;
+  return 8;
 }
 
 /** 把任意市场写法（A/HK/US、us/hk、a-stock、沪深京 等）归一到 canonical，未知兜底 a_share。
@@ -38,6 +55,7 @@ const MARKET_ALIASES: Record<string, MarketId> = {
   a_share: 'a_share', 'a-stock': 'a_share', a: 'a_share', ashare: 'a_share', cn: 'a_share', '沪深京': 'a_share', '沪深': 'a_share',
   hk_stock: 'hk_stock', 'hk-stock': 'hk_stock', hk: 'hk_stock', hkstock: 'hk_stock', '港股': 'hk_stock',
   us_stock: 'us_stock', 'us-stock': 'us_stock', us: 'us_stock', usstock: 'us_stock', '美股': 'us_stock',
+  crypto: 'crypto', binance: 'crypto', bn: 'crypto', '币安': 'crypto', '加密': 'crypto', '加密货币': 'crypto',
 };
 
 export function normalizeMarket(raw: string | null | undefined): MarketId {
@@ -45,10 +63,12 @@ export function normalizeMarket(raw: string | null | undefined): MarketId {
   return MARKET_ALIASES[String(raw).trim().toLowerCase()] ?? 'a_share';
 }
 
-/** 成交量按市场格式化：A股/港股用「万」，美股用裸股数（带千分位，避免「万」这种 A股口径）。 */
+/** 成交量按市场格式化：A股/港股用「万」，美股/crypto 用裸量（带千分位/紧凑单位，避免「万」这种 A股口径）。 */
 export function formatVolume(volume: number, symbol: string): string {
   const v = volume || 0;
-  if (detectMarket(symbol) === 'us_stock') {
+  const market = detectMarket(symbol);
+  if (market === 'us_stock' || market === 'crypto') {
+    if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`;
     if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
     if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
     return v.toLocaleString('en-US');

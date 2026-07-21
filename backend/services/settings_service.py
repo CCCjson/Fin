@@ -117,3 +117,43 @@ def field_view(field: dict[str, Any]) -> dict[str, Any]:
     else:
         view["value"] = raw
     return view
+
+
+def groups_view() -> list[dict[str, Any]]:
+    """整份 schema 的渲染视图（分组 + 每组字段的 field_view）。route 与 agent 工具共用。"""
+    return [
+        {
+            "group": g["group"],
+            "title": g["title"],
+            "desc": g.get("desc"),
+            "fields": [field_view(f) for f in g["fields"]],
+        }
+        for g in SETTINGS_SCHEMA
+    ]
+
+
+class SettingError(ValueError):
+    """设置校验失败（未知 key / 非法 select 值 / 敏感字段留空）——业务性拒绝，非系统异常。"""
+
+
+def apply_setting(key: str, value: str) -> dict[str, Any]:
+    """校验并落盘单个配置项（白名单 + select 校验 + 敏感留空跳过），写 .env + 热更 os.environ。
+
+    校验不过抛 `SettingError`（调用方翻成 400 / negative）。⚠️ 风控/资金只读键的额外
+    黑名单在 agent 工具层（settings_tools._RISK_READONLY_KEYS）；这些键本就不在 schema，
+    此处会当「未知配置项」直接拒绝。
+    """
+    from dotenv import set_key
+
+    key = (key or "").strip()
+    value = "" if value is None else str(value)
+    field = FIELD_BY_KEY.get(key)
+    if field is None:
+        raise SettingError(f"未知配置项 {key}（只允许白名单内的 key）")
+    if field["type"] == "select" and value not in field.get("options", []):
+        raise SettingError(f"{key} 必须是 {field.get('options')} 之一，收到：{value}")
+    if field.get("sensitive") and value == "":
+        raise SettingError(f"{key} 留空视为不改动，已跳过")
+    set_key(str(ENV_PATH), key, value)
+    os.environ[key] = value
+    return {"updated": key, "label": field["label"], "note": "已落盘并热更新。"}

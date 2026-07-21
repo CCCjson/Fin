@@ -628,8 +628,272 @@ const LimitUpCandidatesWidget: React.FC<{ data: any; title?: string }> = ({ data
   );
 };
 
+/* ================================================================
+   加密货币专属 widget（crypto 计价 USDT，用 $ 格式化）
+   ================================================================ */
+
+/** 紧凑美元格式：$1.23T / $45.6B / $789M / $12.3K / $5.20 */
+const usd = (v: any, decimals = 2): string => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `$${(n / 1e3).toFixed(2)}K`;
+  // 小币价格自适应小数位
+  const dp = abs >= 1 ? decimals : abs >= 0.01 ? 6 : 8;
+  return `$${n.toFixed(dp)}`;
+};
+
+/** 恐慌贪婪半环仪表（0=极度恐慌红，100=极度贪婪绿） */
+const FearGreedGauge: React.FC<{ value: number; label?: string }> = ({ value, label }) => {
+  const reduce = useReducedMotion();
+  const v = Math.max(0, Math.min(100, value));
+  const r = 46;
+  const cx = 60;
+  const cy = 56;
+  const semi = Math.PI * r; // 半圆弧长
+  // 颜色：<25 深红 / <45 橙 / <55 黄 / <75 浅绿 / 其余 绿
+  const color = v < 25 ? '#EF4444' : v < 45 ? '#F59E0B' : v < 55 ? '#EAB308' : v < 75 ? '#84CC16' : '#10B981';
+  return (
+    <svg width="120" height="72" viewBox="0 0 120 72" className="shrink-0">
+      {/* 底弧 */}
+      <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="#1E293B" strokeWidth="9" strokeLinecap="round" />
+      {/* 前景弧 */}
+      <motion.path
+        d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`}
+        fill="none" stroke={color} strokeWidth="9" strokeLinecap="round"
+        strokeDasharray={semi}
+        initial={reduce ? false : { strokeDashoffset: semi }}
+        animate={{ strokeDashoffset: semi * (1 - v / 100) }}
+        transition={reduce ? undefined : { type: 'spring', stiffness: 90, damping: 20, delay: 0.1 }}
+        style={{ filter: `drop-shadow(0 0 5px ${color}88)` }}
+      />
+      <text x={cx} y={cy - 8} textAnchor="middle" className="fill-white font-bold" fontSize="22">{Math.round(v)}</text>
+      {label && <text x={cx} y={cy + 10} textAnchor="middle" className="fill-gray-400" fontSize="10">{label}</text>}
+    </svg>
+  );
+};
+
+const REGIME_STYLE: Record<string, { label: string; cls: string }> = {
+  bull: { label: '🐂 牛市', cls: 'bg-green-500/20 text-green-300 border-green-500/40' },
+  bear: { label: '🐻 熊市', cls: 'bg-red-500/20 text-red-300 border-red-500/40' },
+  unknown: { label: '大势未知', cls: 'bg-gray-500/20 text-gray-300 border-gray-500/40' },
+};
+
+const CryptoMarketWidget: React.FC<{ data: any; title?: string }> = ({ data, title }) => {
+  const fg = data.fear_greed;
+  const reg = REGIME_STYLE[data.regime] || REGIME_STYLE.unknown;
+  const pctFromMa = typeof data.pct_from_ma === 'number' ? data.pct_from_ma : null;
+  return (
+    <WidgetShell className="p-4">
+      <div className="text-base font-bold text-white mb-3">🪙 {title || '加密市场大势'}</div>
+      <div className="flex items-center gap-4 flex-wrap">
+        {fg && typeof fg.value === 'number' ? (
+          <div className="text-center">
+            <FearGreedGauge value={fg.value} label={fg.label} />
+            <div className="text-[10px] text-gray-500 mt-0.5">恐慌贪婪指数</div>
+          </div>
+        ) : (
+          <div className="text-xs text-gray-500">恐慌贪婪指数 —</div>
+        )}
+        <div className="flex-1 min-w-0 grid grid-cols-2 gap-2 text-sm">
+          <div className="bg-dark-light rounded-lg p-2.5">
+            <div className="text-gray-500 text-xs">BTC 主导率</div>
+            <div className="text-white font-medium">
+              {typeof data.btc_dominance === 'number' ? `${data.btc_dominance.toFixed(1)}%` : '—'}
+            </div>
+          </div>
+          <div className="bg-dark-light rounded-lg p-2.5">
+            <div className="text-gray-500 text-xs">总市值</div>
+            <div className="text-white font-medium">{usd(data.total_market_cap_usd)}</div>
+          </div>
+        </div>
+      </div>
+      {/* BTC 大势 */}
+      <div className="mt-3 flex items-center justify-between flex-wrap gap-2 bg-dark-light rounded-lg p-2.5">
+        <span className={`px-2.5 py-1 rounded-lg border text-xs font-semibold ${reg.cls}`}>{reg.label}</span>
+        <div className="flex items-center gap-3 text-[11px] text-gray-400">
+          <span>BTC {usd(data.btc_price)}</span>
+          <span>MA200 {usd(data.btc_ma200)}</span>
+          {pctFromMa !== null && (
+            <span className={pctFromMa >= 0 ? 'text-green-300' : 'text-red-300'}>
+              距MA200 {pctFromMa >= 0 ? '+' : ''}{pctFromMa.toFixed(1)}%
+            </span>
+          )}
+        </div>
+      </div>
+    </WidgetShell>
+  );
+};
+
+const CRYPTO_VERDICT: Record<string, { label: string; cls: string }> = {
+  pass: { label: '可碰', cls: 'bg-green-500/20 text-green-300 border-green-500/40' },
+  caution: { label: '谨慎', cls: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40' },
+  avoid: { label: '回避', cls: 'bg-red-500/20 text-red-300 border-red-500/40' },
+  unknown: { label: '数据不足', cls: 'bg-gray-500/20 text-gray-300 border-gray-500/40' },
+};
+
+const CryptoScreenWidget: React.FC<{ data: any; title?: string }> = ({ data, title }) => {
+  const vd = CRYPTO_VERDICT[data.verdict] || CRYPTO_VERDICT.unknown;
+  const dims = data.dimensions || {};
+  const flags: string[] = data.flags || [];
+  const scoreCls = data.score >= 65 ? 'text-green-300' : data.score >= 45 ? 'text-yellow-300' : 'text-red-300';
+  return (
+    <WidgetShell className="p-4">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div className="text-base font-bold text-white">
+          🛡️ {title || '排雷体检'} <span className="text-gray-500 text-xs">{data.symbol}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-center">
+            <div className={`text-2xl font-bold leading-none ${scoreCls}`}>
+              <AnimatedNumber value={typeof data.score === 'number' ? data.score : null} decimals={0} placeholder="—" />
+            </div>
+            <div className="text-[10px] text-gray-500">排雷分</div>
+          </div>
+          <span className={`px-3 py-1.5 rounded-lg border text-xs font-semibold ${vd.cls}`}>{vd.label}</span>
+        </div>
+      </div>
+
+      {flags.length > 0 && (
+        <div className="mb-3 space-y-1">
+          {flags.map((f, i) => (
+            <div key={i} className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg px-2.5 py-1.5">🚩 {f}</div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">市值</div>
+          <div className="text-white font-medium">{usd(dims.market_cap_usd)}</div>
+        </div>
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">FDV/市值</div>
+          <div className="text-white font-medium">
+            {typeof dims.fdv_mcap_ratio === 'number' ? `${dims.fdv_mcap_ratio.toFixed(2)}x` : '—'}
+          </div>
+        </div>
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">4周提交</div>
+          <div className="text-white font-medium">{dims.commits_4w ?? '—'}</div>
+        </div>
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">供应上限</div>
+          <div className="text-white font-medium">{dims.max_supply ? Number(dims.max_supply).toLocaleString() : '无上限'}</div>
+        </div>
+      </div>
+      {data.ambiguous && (
+        <div className="mt-2 text-[10px] text-yellow-400">⚠️ 代币标识经回退解析，可能有歧义，仅供参考</div>
+      )}
+    </WidgetShell>
+  );
+};
+
+const CryptoDerivativesWidget: React.FC<{ data: any; title?: string }> = ({ data, title }) => {
+  const f = data.funding;
+  const oi = data.open_interest;
+  const ls = data.long_short;
+  const fr = f && typeof f.funding_rate === 'number' ? f.funding_rate : null;
+  const frPct = fr !== null ? fr * 100 : null;
+  // long_pct/short_pct 是小数（0.58），转成百分数展示
+  const longPct = ls && typeof ls.long_pct === 'number' ? ls.long_pct * 100 : null;
+  const shortPct = ls && typeof ls.short_pct === 'number' ? ls.short_pct * 100 : null;
+  return (
+    <WidgetShell className="p-4">
+      <div className="text-base font-bold text-white mb-3">
+        📡 {title || '衍生品情绪'} <span className="text-gray-500 text-xs">{data.symbol}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-sm mb-3">
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">资金费率</div>
+          {/* 正=多头付空头（偏多拥挤），染红；负染绿 */}
+          <div className={`font-semibold ${frPct === null ? 'text-gray-300' : frPct >= 0 ? 'text-bull' : 'text-bear'}`}>
+            {frPct === null ? '—' : `${frPct >= 0 ? '+' : ''}${frPct.toFixed(4)}%`}
+          </div>
+        </div>
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">未平仓 OI</div>
+          <div className="text-white font-medium">
+            {oi && oi.oi != null ? Number(oi.oi).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—'}
+            {oi && oi.oi_value != null && <span className="text-gray-500 text-xs"> · {usd(oi.oi_value)}</span>}
+          </div>
+        </div>
+      </div>
+      {/* 多空持仓比 */}
+      <div className="bg-dark-light rounded-lg p-2.5">
+        <div className="flex justify-between text-xs mb-1.5">
+          <span className="text-green-300">多 {longPct !== null ? `${longPct.toFixed(1)}%` : '—'}</span>
+          <span className="text-gray-400">多空比 {ls && typeof ls.ratio === 'number' ? ls.ratio.toFixed(2) : '—'}</span>
+          <span className="text-red-300">空 {shortPct !== null ? `${shortPct.toFixed(1)}%` : '—'}</span>
+        </div>
+        <div className="h-2.5 rounded-full overflow-hidden flex bg-dark">
+          <div className="h-full bg-green-500" style={{ width: `${longPct ?? 50}%` }} />
+          <div className="h-full bg-red-500" style={{ width: `${shortPct ?? 50}%` }} />
+        </div>
+      </div>
+    </WidgetShell>
+  );
+};
+
+const CryptoAccountWidget: React.FC<{ data: any; title?: string }> = ({ data, title }) => {
+  const rows = data.positions || [];
+  const upnl = typeof data.unrealized_pnl === 'number' ? data.unrealized_pnl : null;
+  return (
+    <WidgetShell className="p-4">
+      <div className="text-base font-bold text-white mb-3">💰 {title || '币安现货账户'}</div>
+      <div className="grid grid-cols-3 gap-2 text-sm mb-3">
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">可用 USDT</div>
+          <div className="text-white font-medium">{usd(data.cash)}</div>
+        </div>
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">总资产</div>
+          <div className="text-white font-medium">{usd(data.total_value)}</div>
+        </div>
+        <div className="bg-dark-light rounded-lg p-2.5">
+          <div className="text-gray-500 text-xs">未实现盈亏</div>
+          <div className={`font-medium ${upnl === null ? 'text-gray-300' : upnl >= 0 ? 'text-bull' : 'text-bear'}`}>
+            {upnl === null ? '—' : `${upnl >= 0 ? '+' : ''}${usd(upnl)}`}
+          </div>
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <div className="text-xs text-gray-500 bg-dark-light rounded-lg p-2.5">当前无持仓</div>
+      ) : (
+        <table className="w-full text-sm">
+          <thead className="bg-dark-light border-b border-border">
+            <tr>
+              <th className="px-3 py-2 text-left text-xs text-gray-500">币种</th>
+              <th className="px-3 py-2 text-right text-xs text-gray-500">数量</th>
+              <th className="px-3 py-2 text-right text-xs text-gray-500">现价</th>
+              <th className="px-3 py-2 text-right text-xs text-gray-500">市值</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((r: any, i: number) => (
+              <tr key={i} className="hover:bg-dark-light/50">
+                <td className="px-3 py-2 text-gray-300">{r.symbol}</td>
+                <td className="px-3 py-2 text-right text-gray-300">{Number(r.quantity).toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
+                <td className="px-3 py-2 text-right text-gray-300">{usd(r.current_price)}</td>
+                <td className="px-3 py-2 text-right text-gray-300">{usd(r.market_value)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </WidgetShell>
+  );
+};
+
 const WIDGET_MAP: Record<string, React.FC<{ data: any; title?: string }>> = {
   cockpit_score: CockpitScoreWidget,
+  crypto_market: CryptoMarketWidget,
+  crypto_screen: CryptoScreenWidget,
+  crypto_derivatives: CryptoDerivativesWidget,
+  crypto_account: CryptoAccountWidget,
   metric_cards: MetricCardsWidget,
   position_table: PositionTableWidget,
   prediction: PredictionWidget,

@@ -28,6 +28,7 @@ const GROUPS: { title: string; items: ToolItem[] }[] = [
       { path: '/app/data-monitor', label: '数据监控', icon: '🛰️' },
       { path: '/trading', label: '自动化交易', icon: '🚦' },
       { path: '/fine-tune', label: '模型微调', icon: '🧪' },
+      { path: '/app/settings', label: '设置', icon: '⚙️' },
     ],
   },
 ];

@@ -20,7 +20,7 @@ apply_proxy_env()
 from data_engine import init_db
 # 架构收敛（2026-07）：功能类 route 只保留服务于 8 个工作台页面的；
 # 信号/复盘/自选/报告/顾问/交易记录等能力经 MoneyBill 工具进程内直调引擎，不再走 HTTP。
-from api.routes import data, analysis, monitor, history, realtime, orderbook, backtest_cpp, prediction, news, auth, automation, ws, fine_tune, stock_pools, walk_forward, screener, agent, knowledge, data_monitor, deep_history
+from api.routes import data, analysis, monitor, history, realtime, orderbook, backtest_cpp, prediction, news, auth, automation, ws, fine_tune, stock_pools, walk_forward, screener, agent, knowledge, data_monitor, deep_history, settings
 from api.deps import require_auth, assert_strong_secret
 
 # 弱密钥启动自检：强制鉴权却仍用默认/弱 JWT_SECRET 时直接抛错退出，
@@ -92,6 +92,7 @@ app.include_router(ws.router)  # WebSocket：在端点内手动校验 ?token=（
 app.include_router(agent.router, dependencies=_auth)
 app.include_router(data_monitor.router, dependencies=_auth)
 app.include_router(deep_history.router, dependencies=_auth)
+app.include_router(settings.router, dependencies=_auth)
 
 
 # 全局异常处理

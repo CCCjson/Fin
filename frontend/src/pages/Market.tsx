@@ -10,18 +10,19 @@ import { usePageContextStore } from '../store/pageContextStore';
 import type { StockData } from '../types';
 import type { IndicatorConfig } from '../types/chart';
 import { DEFAULT_INDICATOR_CONFIG } from '../types/chart';
-import { detectMarket, currencySymbolFor, formatVolume, MARKET_LABEL } from '../utils/marketDetect';
+import { detectMarket, currencySymbolFor, formatVolume, priceDecimalsFor, MARKET_LABEL } from '../utils/marketDetect';
 
 /**
- * 判断缓存数据是否足够新（3 天内视为新鲜，覆盖周末和短假期）
- * 避免不必要的 akshare 网络请求
+ * 判断缓存数据是否足够新，避免不必要的联网请求。
+ * 股票：3 天内视为新鲜（覆盖周末和短假期）；crypto：7×24 无休市，收紧到 1 天内。
  */
-function isDataFresh(latestDateStr: string, endDateStr: string): boolean {
+function isDataFresh(latestDateStr: string, endDateStr: string, symbol: string): boolean {
   if (!latestDateStr || !endDateStr) return false;
   const latest = new Date(latestDateStr);
   const end = new Date(endDateStr);
   const diffDays = (end.getTime() - latest.getTime()) / (86400000);
-  return diffDays <= 3;
+  const maxFreshDays = detectMarket(symbol) === 'crypto' ? 1 : 3;
+  return diffDays <= maxFreshDays;
 }
 
 export const Market: React.FC = () => {
@@ -77,7 +78,7 @@ export const Market: React.FC = () => {
 
             // ── 智能判断：缓存足够新则跳过阶段2 ──
             const latestCachedDate = cached.data[cached.data.length - 1]?.date;
-            if (isDataFresh(latestCachedDate, endDate)) {
+            if (isDataFresh(latestCachedDate, endDate, symbol)) {
               return; // 数据足够新，无需联网
             }
 
@@ -139,6 +140,8 @@ export const Market: React.FC = () => {
   // 「查询」重新加载完成前，货币标签先变了但数字还是旧的这段错位空档。
   const market = detectMarket(loadedSymbol);
   const currency = currencySymbolFor(loadedSymbol);
+  // 价格小数位：股票 2 位，crypto 按量级自适应（小币不被截成 0.00）
+  const dp = (v: number) => priceDecimalsFor(market, v);
 
   return (
     <div className="min-h-screen bg-gradient-dark p-3 md:p-6 pb-20 md:pb-6">
@@ -197,7 +200,7 @@ export const Market: React.FC = () => {
           <div className="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-4">
             <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">最新价</div>
-              <div className="text-lg md:text-2xl font-bold text-primary-light">{currency}{latestData.close.toFixed(2)}</div>
+              <div className="text-lg md:text-2xl font-bold text-primary-light">{currency}{latestData.close.toFixed(dp(latestData.close))}</div>
             </Card>
             <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">涨跌幅</div>
@@ -207,15 +210,15 @@ export const Market: React.FC = () => {
             </Card>
             <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">开盘价</div>
-              <div className="text-lg md:text-xl font-semibold text-white">{currency}{latestData.open.toFixed(2)}</div>
+              <div className="text-lg md:text-xl font-semibold text-white">{currency}{latestData.open.toFixed(dp(latestData.open))}</div>
             </Card>
             <Card className="p-3 md:p-4 hover:shadow-glow-green transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">最高价</div>
-              <div className="text-lg md:text-xl font-semibold text-bull">{currency}{latestData.high.toFixed(2)}</div>
+              <div className="text-lg md:text-xl font-semibold text-bull">{currency}{latestData.high.toFixed(dp(latestData.high))}</div>
             </Card>
             <Card className="p-3 md:p-4 hover:shadow-glow-red transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">最低价</div>
-              <div className="text-lg md:text-xl font-semibold text-bear">{currency}{latestData.low.toFixed(2)}</div>
+              <div className="text-lg md:text-xl font-semibold text-bear">{currency}{latestData.low.toFixed(dp(latestData.low))}</div>
             </Card>
             <Card glow className="p-3 md:p-4 transition-all">
               <div className="text-gray-400 text-xs md:text-sm mb-1">成交量</div>
@@ -252,6 +255,7 @@ export const Market: React.FC = () => {
                   data={data}
                   height={typeof window !== 'undefined' && window.innerWidth < 768 ? 350 : 500}
                   indicatorConfig={indicatorConfig}
+                  market={market}
                 />
               </div>
             </>
@@ -301,10 +305,10 @@ export const Market: React.FC = () => {
                   return (
                     <tr key={idx} className="border-b border-border hover:bg-dark-light transition-colors">
                       <td className="px-4 py-2">{item.date}</td>
-                      <td className="px-4 py-2 text-right">{currency}{item.open.toFixed(2)}</td>
-                      <td className="px-4 py-2 text-right text-bull font-medium">{currency}{item.high.toFixed(2)}</td>
-                      <td className="px-4 py-2 text-right text-bear font-medium">{currency}{item.low.toFixed(2)}</td>
-                      <td className="px-4 py-2 text-right font-semibold text-primary-light">{currency}{item.close.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right">{currency}{item.open.toFixed(dp(item.open))}</td>
+                      <td className="px-4 py-2 text-right text-bull font-medium">{currency}{item.high.toFixed(dp(item.high))}</td>
+                      <td className="px-4 py-2 text-right text-bear font-medium">{currency}{item.low.toFixed(dp(item.low))}</td>
+                      <td className="px-4 py-2 text-right font-semibold text-primary-light">{currency}{item.close.toFixed(dp(item.close))}</td>
                       <td className={`px-4 py-2 text-right font-medium ${change >= 0 ? 'text-bull' : 'text-bear'}`}>
                         {change >= 0 ? '+' : ''}{changePct.toFixed(2)}%
                       </td>
@@ -330,7 +334,7 @@ export const Market: React.FC = () => {
                 <div key={idx} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-dark-light/50">
                   <div>
                     <div className="text-xs text-gray-500">{item.date}</div>
-                    <div className="text-sm font-semibold text-primary-light">{currency}{item.close.toFixed(2)}</div>
+                    <div className="text-sm font-semibold text-primary-light">{currency}{item.close.toFixed(dp(item.close))}</div>
                   </div>
                   <div className="text-right">
                     <div className={`text-sm font-medium ${change >= 0 ? 'text-bull' : 'text-bear'}`}>

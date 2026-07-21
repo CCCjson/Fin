@@ -19,6 +19,8 @@ import type {
 } from 'lightweight-charts';
 import type { StockData } from '../../types';
 import type { IndicatorConfig } from '../../types/chart';
+import type { MarketId } from '../../utils/marketDetect';
+import { priceDecimalsFor } from '../../utils/marketDetect';
 import { CHART_COLORS, DEFAULT_INDICATOR_CONFIG } from '../../types/chart';
 import { calculateMA, calculateBoll, calculateMACD, calculateRSI } from '../../utils/indicators';
 import { detectSignals } from '../../utils/signalDetector';
@@ -30,12 +32,14 @@ interface CandlestickChartProps {
   data: StockData[];
   height?: number;
   indicatorConfig?: IndicatorConfig;
+  market?: MarketId; // 决定价格小数精度（crypto 小币需更多位），缺省=股票 2 位
 }
 
 export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   data,
   height = 500,
   indicatorConfig = DEFAULT_INDICATOR_CONFIG,
+  market = 'us_stock',
 }) => {
   // === 主图 refs ===
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -200,10 +204,17 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   useEffect(() => {
     if (!chartRef.current || !candlestickSeriesRef.current || !volumeSeriesRef.current || data.length === 0) return;
 
+    // 价格精度按市场/末根价自适应（crypto 小币不被截成 0.00）
+    const lastClose = data[data.length - 1]?.close ?? 0;
+    const precision = priceDecimalsFor(market, lastClose);
+    candlestickSeriesRef.current.applyOptions({
+      priceFormat: { type: 'price', precision, minMove: Math.pow(10, -precision) },
+    });
+
     candlestickSeriesRef.current.setData(formatCandlestickData(data));
     volumeSeriesRef.current.setData(formatVolumeData(data));
     chartRef.current.timeScale().fitContent();
-  }, [data, formatCandlestickData, formatVolumeData]);
+  }, [data, market, formatCandlestickData, formatVolumeData]);
 
   // 更新均线
   useEffect(() => {

@@ -175,6 +175,45 @@ export interface UpdateStreamEvent {
   [k: string]: any;
 }
 
+// 统一新鲜度接口 GET /data/freshness（按 market 分栏，含 crypto）
+export interface MarketFreshness {
+  market: string;
+  reference_date: string | null;   // 该市场最近一个覆盖达标的交易日/自然日
+  coverage_ratio_of_baseline: number | null;
+  is_stale: boolean;               // 落后 >= 阈值天数
+  version?: string;
+}
+
+export interface FreshnessReport {
+  latest_date: string | null;      // ⚠️ 全局仅聚合股票三市场（不含 crypto）
+  today: string;
+  is_stale: boolean;               // ⚠️ 同上，仅股票三市场
+  is_weekday: boolean;
+  by_market: Record<string, MarketFreshness>;  // 含 a_share/hk_stock/us_stock/crypto
+  version?: string;
+}
+
+// 统一刷新流式事件 POST /data/refresh/stream（事件带 market 字段区分市场）
+export interface RefreshStreamEvent {
+  event: 'plan' | 'start' | 'progress' | 'complete' | 'error' | 'skipped' | 'all_complete';
+  market?: string;                 // plan/all_complete 无 market；其余中途事件都带
+  markets?: string[];              // plan 事件
+  freshness?: FreshnessReport;     // plan 事件快照
+  summary?: Record<string, any>;   // all_complete 事件
+  total?: number;
+  current?: number;
+  symbol?: string;
+  name?: string;
+  updated?: number;
+  rows?: number;
+  success?: number;
+  skipped?: number;
+  failed?: number;
+  new_records?: number;
+  message?: string;
+  [k: string]: any;
+}
+
 // ==================== 服务 ====================
 
 export const dataMonitorService = {
@@ -187,6 +226,44 @@ export const dataMonitorService = {
     api.post('/data-monitor/limit-up/refresh'),
 
   getLimitUpDetail: (): Promise<LimitUpDetail> => api.get('/data-monitor/limit-up/detail'),
+
+  /** 三市场（+加密只读）新鲜度：更新到哪个交易日、是否落后。只读、不触发更新 */
+  getFreshness: (): Promise<FreshnessReport> => api.get('/data/freshness'),
+
+  /** 统一流式刷新三市场行情（scope 省略=三股票市场全刷；crypto 不走这里，靠 7×24 调度器） */
+  refreshMarkets: async (
+    scope: string[] | undefined,
+    onEvent: (event: RefreshStreamEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const response = await authFetch(`${API_BASE}/data/refresh/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(scope && scope.length ? { scope } : {}),
+      signal,
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`刷新请求失败: ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          onEvent(JSON.parse(line));
+        } catch (e) {
+          console.warn('解析刷新事件失败:', line, e);
+        }
+      }
+    }
+  },
 
   /** 手动触发全市场日线更新，NDJSON 流式解析（复用 agentService 的 reader 循环） */
   streamUpdate: async (

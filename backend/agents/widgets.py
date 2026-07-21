@@ -173,6 +173,75 @@ def limit_up_candidates_widget(result: dict) -> dict:
     }
 
 
+def crypto_market_widget(r: dict) -> dict:
+    """加密市场大势 → crypto_market widget（恐慌贪婪半环 + BTC 主导率 + 总市值 + regime 徽章）。"""
+    ctx = r.get("market_context") or {}
+    reg = r.get("btc_regime") or {}
+    return {
+        "type": "crypto_market",
+        "title": "加密市场大势",
+        "data": {
+            "fear_greed": ctx.get("fear_greed"),                 # {value, label} | None
+            "btc_dominance": ctx.get("btc_dominance"),
+            "total_market_cap_usd": ctx.get("total_market_cap_usd"),
+            "regime": reg.get("regime"),                          # bull | bear | unknown
+            "btc_price": reg.get("price"),
+            "btc_ma200": reg.get("ma200"),
+            "above_ma200": reg.get("above"),
+            "pct_from_ma": reg.get("pct_from_ma"),
+        },
+    }
+
+
+def crypto_screen_widget(r: dict) -> dict:
+    """单币排雷 → crypto_screen widget（排雷分 + verdict 徽章 + 红旗 + 关键维度）。"""
+    return {
+        "type": "crypto_screen",
+        "title": f"{r.get('base_asset') or r.get('symbol')} · 排雷体检",
+        "data": {
+            "symbol": r.get("symbol"),
+            "base_asset": r.get("base_asset"),
+            "score": r.get("score"),                              # 0~100
+            "verdict": r.get("verdict"),                          # pass | caution | avoid | unknown
+            "flags": r.get("flags", []),
+            "ambiguous": r.get("ambiguous"),
+            # dimensions: {circulating_supply, max_supply, market_cap_usd,
+            #              fdv_usd, fdv_mcap_ratio, commits_4w, stars}
+            "dimensions": r.get("dimensions", {}),
+        },
+    }
+
+
+def crypto_derivatives_widget(r: dict) -> dict:
+    """币安衍生品情绪 → crypto_derivatives widget（资金费率 + OI + 多空比）。"""
+    return {
+        "type": "crypto_derivatives",
+        "title": f"{r.get('symbol')} · 衍生品情绪",
+        "data": {
+            "symbol": r.get("symbol"),
+            "funding": r.get("funding"),                          # {funding_rate, mark_price, next_funding_time} | None
+            "open_interest": r.get("open_interest"),              # {oi, oi_value, time} | None
+            "long_short": r.get("long_short"),                    # {ratio, long_pct, short_pct, time} | None
+        },
+    }
+
+
+def crypto_account_widget(r: dict) -> dict:
+    """币安现货账户 → crypto_account widget（账户条 + 持仓表）。"""
+    acct = r.get("account") or {}
+    return {
+        "type": "crypto_account",
+        "title": "币安现货账户",
+        "data": {
+            "cash": acct.get("cash"),
+            "market_value": acct.get("market_value"),
+            "total_value": acct.get("total_value"),
+            "unrealized_pnl": acct.get("unrealized_pnl"),
+            "positions": r.get("positions", []),                  # [{symbol, quantity, current_price, market_value}]
+        },
+    }
+
+
 def performance_metric_cards(stats: dict) -> dict:
     """组合绩效 dict → metric_cards widget（挑关键指标）。"""
     def yuan(v):

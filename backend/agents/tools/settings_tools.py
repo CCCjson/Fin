@@ -8,8 +8,6 @@ update_setting：改单个配置项，需二次确认（requires_confirmation=Tr
 未知 key / 风控只读键 / 非法 select 值 都是正常的业务性拒绝（business_result=negative），
 不是工具执行异常。
 """
-import os
-
 from pydantic import BaseModel, Field
 
 from agents.registry import tool
@@ -85,22 +83,14 @@ class UpdateSettingArgs(BaseModel):
     preview_fn=_preview_setting,
 )
 def update_setting(key: str, value: str) -> ToolEnvelope:
-    from dotenv import set_key
-    from services.settings_service import FIELD_BY_KEY as _FIELD_BY_KEY, ENV_PATH
+    from services.settings_service import apply_setting, SettingError
     key = (key or "").strip()
-    value = "" if value is None else str(value)
+    # 风控/资金键对模型永久只读（第二道防线，这些键本就不在 schema）
     if key in _RISK_READONLY_KEYS:
         return ToolEnvelope(business_result="negative",
                              message=f"{key} 是风控/资金参数，对 MoneyBill 只读，请让 Jason 在设置页手动调整")
-    field = _FIELD_BY_KEY.get(key)
-    if field is None:
-        return ToolEnvelope(business_result="negative", message=f"未知配置项 {key}")
-    if field["type"] == "select" and value not in field.get("options", []):
-        return ToolEnvelope(business_result="negative",
-                             message=f"{key} 必须是 {field.get('options')} 之一")
-    if field.get("sensitive") and value == "":
-        return ToolEnvelope(business_result="negative", message=f"{key} 留空视为不改动，已跳过。")
-
-    set_key(str(ENV_PATH), key, value)
-    os.environ[key] = value
-    return ToolEnvelope(data={"updated": key, "label": field["label"], "note": "已落盘并热更新。"})
+    try:
+        result = apply_setting(key, value)
+    except SettingError as e:
+        return ToolEnvelope(business_result="negative", message=str(e))
+    return ToolEnvelope(data=result)

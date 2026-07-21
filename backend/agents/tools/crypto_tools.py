@@ -20,7 +20,13 @@ from pydantic import BaseModel, Field
 
 from agents.registry import tool
 from agents.tool_envelope import ToolEnvelope
-from agents.widgets import metric_cards_widget
+from agents.widgets import (
+    crypto_account_widget,
+    crypto_derivatives_widget,
+    crypto_market_widget,
+    crypto_screen_widget,
+    metric_cards_widget,
+)
 
 # ──────────────────── 只读：市场大势 / 排雷 / 衍生品 ────────────────────
 
@@ -43,7 +49,8 @@ def get_crypto_market() -> ToolEnvelope:
     from crypto_intel_engine import btc_regime, market_context
     ctx = market_context()
     regime = btc_regime()
-    return ToolEnvelope(data={"market_context": ctx, "btc_regime": regime})
+    data = {"market_context": ctx, "btc_regime": regime}
+    return ToolEnvelope(data=data, widget=crypto_market_widget(data))
 
 
 @tool(
@@ -58,7 +65,7 @@ def screen_crypto(symbol: str) -> ToolEnvelope:
     if r.get("score") is None:
         return ToolEnvelope(business_result="negative",
                             message=f"排雷数据缺失：{'；'.join(r.get('flags') or ['未知'])}")
-    return ToolEnvelope(data=r)
+    return ToolEnvelope(data=r, widget=crypto_screen_widget(r))
 
 
 @tool(
@@ -68,7 +75,8 @@ def screen_crypto(symbol: str) -> ToolEnvelope:
 )
 def get_crypto_derivatives(symbol: str) -> ToolEnvelope:
     from acquisition.markets import crypto_derivatives as deriv
-    return ToolEnvelope(data=deriv.get_derivatives_snapshot(symbol))
+    snap = deriv.get_derivatives_snapshot(symbol)
+    return ToolEnvelope(data=snap, widget=crypto_derivatives_widget(snap))
 
 
 # ──────────────────── 只读：币安账户（需 key）────────────────────
@@ -91,7 +99,8 @@ def get_crypto_account() -> ToolEnvelope:
     positions = [{"symbol": p.symbol, "quantity": p.quantity,
                   "current_price": p.current_price, "market_value": round(p.market_value, 2)}
                  for p in broker.get_positions()]
-    return ToolEnvelope(data={"account": acct, "positions": positions})
+    data = {"account": acct, "positions": positions}
+    return ToolEnvelope(data=data, widget=crypto_account_widget(data))
 
 
 # ──────────────────── 下单（需确认 + 风控 + key）────────────────────

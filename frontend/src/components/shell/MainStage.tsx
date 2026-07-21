@@ -15,6 +15,7 @@ const Prediction = React.lazy(() => import('../../pages/Prediction').then((m) =>
 const DataMonitor = React.lazy(() => import('../../pages/DataMonitor').then((m) => ({ default: m.DataMonitor })));
 const Automation = React.lazy(() => import('../../pages/Automation').then((m) => ({ default: m.Automation })));
 const FineTune = React.lazy(() => import('../../pages/FineTune').then((m) => ({ default: m.FineTune })));
+const Settings = React.lazy(() => import('../../pages/Settings').then((m) => ({ default: m.Settings })));
 
 const PAGES: Record<string, React.LazyExoticComponent<React.FC>> = {
   '/app/market': Market,
@@ -24,6 +25,7 @@ const PAGES: Record<string, React.LazyExoticComponent<React.FC>> = {
   '/app/data-monitor': DataMonitor,
   '/trading': Automation,
   '/fine-tune': FineTune,
+  '/app/settings': Settings,
 };
 
 const PageLoader: React.FC = () => (
