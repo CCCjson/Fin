@@ -280,6 +280,12 @@ class CryptoPendingOrderService:
             if steps and not ex.execute_funding(broker, steps, need):
                 return {"ok": False, "reason": "自动补足现货失败，未下单"}
 
+        # 卖出自动腾挪：币在活期理财/资金钱包时先赎回+划转到现货再卖，否则交易所拒
+        if side == "SELL":
+            spot_ok, spot_reason = ex.ensure_spot_for_sell(broker, symbol, qty)
+            if not spot_ok:
+                return {"ok": False, "reason": f"{spot_reason}，未下单"}
+
         order = broker.submit_order(symbol, side, qty, None)   # None=市价，按现价成交
         if order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.FAILED):
             return {"ok": False, "reason": order.error_msg or "交易所拒单"}

@@ -43,6 +43,9 @@ from crypto_intel_engine.execution import (
     crypto_broker_info as _crypto_broker_info,
 )
 from crypto_intel_engine.execution import (
+    ensure_spot_for_sell as _ensure_spot_for_sell,
+)
+from crypto_intel_engine.execution import (
     execute_funding as _execute_funding,
 )
 from crypto_intel_engine.execution import (
@@ -189,6 +192,13 @@ def _record_crypto_cockpit_decision(r: dict) -> None:
         pass
 
 
+def _primary_wallet(breakdown: dict | None) -> str:
+    """持仓主钱包（份额最大的那个）→ 前端徽章。空明细按现货兜底（历史/paper 无明细时）。"""
+    if not breakdown:
+        return "spot"
+    return max(breakdown.items(), key=lambda kv: kv[1])[0]
+
+
 # ──────────────────── 只读：币安账户（需 key）────────────────────
 
 @tool(
@@ -207,7 +217,9 @@ def get_crypto_account() -> ToolEnvelope:
         return ToolEnvelope(business_result="negative", message="币安连接失败（检查 key 权限/网络）")
     acct = broker.get_account_info()
     positions = [{"symbol": p.symbol, "quantity": p.quantity,
-                  "current_price": p.current_price, "market_value": round(p.market_value, 2)}
+                  "current_price": p.current_price, "market_value": round(p.market_value, 2),
+                  "available": p.available, "wallet_breakdown": p.wallet_breakdown,
+                  "wallet": _primary_wallet(p.wallet_breakdown)}
                  for p in broker.get_positions()]
     data = {"account": acct, "positions": positions}
     return ToolEnvelope(data=data, widget=crypto_account_widget(data))
@@ -307,6 +319,14 @@ def place_crypto_order(symbol: str, side: str, quantity=None,
             return ToolEnvelope(business_result="negative",
                                 data={"executed": False,
                                       "reason": "自动补足现货失败（赎回/划转未及时到账），未下单"})
+
+    # 卖出自动腾挪：币在活期理财/资金钱包时先赎回+划转到现货再卖，否则交易所拒（现货余额不足）
+    if action == "SELL":
+        spot_ok, spot_reason = _ensure_spot_for_sell(broker, symbol, qty)
+        if not spot_ok:
+            return ToolEnvelope(business_result="negative",
+                                data={"executed": False,
+                                      "reason": f"{spot_reason}，未下单"})
 
     order = broker.submit_order(symbol, action, qty, price)
     # 撤单/拒单/异常 → 失败

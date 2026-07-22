@@ -216,6 +216,264 @@ class TestAccountStablecoins:
         assert acct["cash"] == 1000.0
         assert acct["total_value"] == 6000.0
 
+    def test_flexible_earn_btc_counted_as_holding(self, monkeypatch):
+        """回归（Jason 拍板口径）：币安自动申购活期理财里的 BTC = **你的持仓**（可秒赎、App
+        「持仓币种」带成本价展示），要算进 positions + market_value + 建议。
+
+        现货余额里的 LDBTC（理财镜像复制项）由 `_is_earn_mirror` **显式跳过**（LD 前缀识别，
+        不再靠 LDBTCUSDT 定价失败去重），真实数量由 earn API 的 asset=BTC 提供。持仓带
+        wallet_breakdown 标明这仓在理财、available=0（现货不可直接卖）。
+        """
+        from acquisition.markets import binance_trade as bt
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        monkeypatch.setattr(bt, "account", lambda: {"balances": [
+            {"asset": "USDT", "free": "0", "locked": "14.9"},
+            {"asset": "LDBTC", "free": "0.0003", "locked": "0"},   # 理财镜像，_is_earn_mirror 跳过
+        ]})
+        monkeypatch.setattr(bt, "funding_asset", lambda: [])
+        monkeypatch.setattr(bt, "earn_flexible_positions", lambda *a, **k: [
+            {"asset": "BTC", "totalAmount": "0.0003"},
+            {"asset": "USDT", "totalAmount": "43.9"},
+        ])
+        monkeypatch.setattr(bt, "earn_locked_positions", lambda *a, **k: [])
+        monkeypatch.setattr(bt, "ticker_price", lambda sym: 66000.0)
+
+        broker = BinanceBroker()
+        broker._connected = True
+
+        # 活期理财 BTC 算持仓（LDBTC 镜像跳过，只一条 BTC），且明细归到 earn_flexible
+        pos = broker.get_positions()
+        assert len(pos) == 1 and pos[0].symbol == "BTCUSDT.BN"
+        assert pos[0].quantity == 0.0003
+        assert round(pos[0].market_value, 2) == 19.8
+        assert pos[0].available == 0.0                          # 全在理财 → 现货可直接卖=0
+        assert pos[0].wallet_breakdown == {"earn_flexible": 0.0003}
+
+        acct = broker.get_account_info()
+        assert round(acct["market_value"], 2) == 19.8         # 币持仓市值含理财 BTC
+        # earn_coins 仍单列（供卖前赎回识别 + 展示"这仓在理财里"）
+        assert acct["earn_coins"] == [
+            {"asset": "BTC", "quantity": 0.0003, "value": 19.8, "redeemable": True}]
+        wallet = next(w for w in acct["wallets"] if w["name"] == "理财活期")
+        assert round(wallet["coins_value"], 2) == 19.8
+        assert round(wallet["stable"], 2) == 43.9             # 稳定币仍算可赎买力
+
+
+class TestWalletBreakdown:
+    """钱包归属真源：LD 镜像显式去重（不靠定价失败）+ 现货/理财同持一币的明细拆分。"""
+
+    def test_ld_mirror_skipped_even_when_priceable(self, monkeypatch):
+        """回归：LD 镜像靠 `_is_earn_mirror` 前缀显式跳过。即便 LDBTCUSDT **能定价**，
+        也绝不把镜像再算一份（旧实现靠定价失败去重，一旦可定价就双计）。"""
+        from acquisition.markets import binance_trade as bt
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        monkeypatch.setattr(bt, "account", lambda: {"balances": [
+            {"asset": "BTC", "free": "0.001", "locked": "0"},       # 真现货 BTC
+            {"asset": "LDBTC", "free": "0.0003", "locked": "0"},    # 理财镜像（这次给它定价）
+        ]})
+        monkeypatch.setattr(bt, "funding_asset", lambda: [])
+        monkeypatch.setattr(bt, "earn_flexible_positions", lambda *a, **k: [
+            {"asset": "BTC", "totalAmount": "0.0003"}])
+        monkeypatch.setattr(bt, "earn_locked_positions", lambda *a, **k: [])
+        # 关键：所有 symbol 都能定价（含 LDBTCUSDT）→ 旧去重机制会失效
+        monkeypatch.setattr(bt, "ticker_price", lambda sym: 66000.0)
+
+        broker = BinanceBroker()
+        broker._connected = True
+        pos = broker.get_positions()
+        assert len(pos) == 1 and pos[0].symbol == "BTCUSDT.BN"
+        # 现货 0.001 + 理财 0.0003 = 0.0013；LDBTC 0.0003 **不再**被算第三份
+        assert round(pos[0].quantity, 8) == 0.0013
+        assert round(pos[0].available, 8) == 0.001
+        assert pos[0].wallet_breakdown == {"spot": 0.001, "earn_flexible": 0.0003}
+
+    def test_spot_and_earn_split_in_breakdown(self, monkeypatch):
+        """同一币现货+理财同持 → 一条持仓，available=现货分量，明细分列。"""
+        from acquisition.markets import binance_trade as bt
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        monkeypatch.setattr(bt, "account", lambda: {"balances": [
+            {"asset": "ETH", "free": "0.5", "locked": "0"}]})
+        monkeypatch.setattr(bt, "funding_asset", lambda: [{"asset": "ETH", "free": "0.2"}])
+        monkeypatch.setattr(bt, "earn_flexible_positions", lambda *a, **k: [
+            {"asset": "ETH", "totalAmount": "0.3"}])
+        monkeypatch.setattr(bt, "earn_locked_positions", lambda *a, **k: [])
+        monkeypatch.setattr(bt, "ticker_price", lambda sym: 2000.0)
+
+        broker = BinanceBroker()
+        broker._connected = True
+        pos = broker.get_positions()
+        assert len(pos) == 1
+        assert round(pos[0].quantity, 8) == 1.0          # 0.5+0.2+0.3
+        assert round(pos[0].available, 8) == 0.5         # 只有现货可直接卖
+        assert pos[0].wallet_breakdown == {"spot": 0.5, "funding": 0.2, "earn_flexible": 0.3}
+
+    def test_locked_excluded_from_available(self, monkeypatch):
+        """⛔ 回归：挂单锁定量不是「能立刻卖」的。
+
+        available 若含 locked，`ensure_spot_for_sell` 会误判现货够卖→跳过赎回→交易所拒单。
+        """
+        from acquisition.markets import binance_trade as bt
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        # 0.5 BTC 挂在限价卖单里（free=0/locked=0.5）+ 0.5 BTC 在活期理财
+        monkeypatch.setattr(bt, "account", lambda: {"balances": [
+            {"asset": "BTC", "free": "0", "locked": "0.5"}]})
+        monkeypatch.setattr(bt, "funding_asset", lambda: [])
+        monkeypatch.setattr(bt, "earn_flexible_positions", lambda *a, **k: [
+            {"asset": "BTC", "totalAmount": "0.5"}])
+        monkeypatch.setattr(bt, "earn_locked_positions", lambda *a, **k: [])
+        monkeypatch.setattr(bt, "ticker_price", lambda sym: 66000.0)
+
+        broker = BinanceBroker()
+        broker._connected = True
+        pos = broker.get_positions()
+        assert len(pos) == 1
+        assert round(pos[0].quantity, 8) == 1.0          # 总敞口仍含锁定量
+        assert round(pos[0].available, 8) == 0.0         # 但一个都卖不出去
+        # spot_locked 是 spot 的子集，不重复计入 quantity
+        assert pos[0].wallet_breakdown == {"spot": 0.5, "spot_locked": 0.5,
+                                           "earn_flexible": 0.5}
+
+    def test_real_ld_prefixed_coin_not_swallowed(self, monkeypatch):
+        """⛔ 回归：LDO（Lido DAO）是真实现货标的，不能被当成 LD 理财镜像抹掉。
+
+        裸 `startswith("LD")` 会让 LDO 不进持仓/不进市值/占比算 0 → 满仓还能再买、
+        止损永不触发。真镜像 LDBTC 仍须跳过（它的去前缀名 BTC 在理财持仓里）。
+        """
+        from acquisition.markets import binance_trade as bt
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        monkeypatch.setattr(bt, "account", lambda: {"balances": [
+            {"asset": "LDO", "free": "500", "locked": "0"},      # 真币
+            {"asset": "LDBTC", "free": "0.0003", "locked": "0"},  # 理财镜像
+            {"asset": "BTC", "free": "0.001", "locked": "0"}]})
+        monkeypatch.setattr(bt, "funding_asset", lambda: [])
+        monkeypatch.setattr(bt, "earn_flexible_positions", lambda *a, **k: [
+            {"asset": "BTC", "totalAmount": "0.0003"}])
+        monkeypatch.setattr(bt, "earn_locked_positions", lambda *a, **k: [])
+        monkeypatch.setattr(bt, "ticker_price", lambda sym: 66000.0)
+
+        broker = BinanceBroker()
+        broker._connected = True
+        by_symbol = {p.symbol: p for p in broker.get_positions()}
+        assert set(by_symbol) == {"LDOUSDT.BN", "BTCUSDT.BN"}   # LDBTC 被跳过
+        assert round(by_symbol["LDOUSDT.BN"].quantity, 8) == 500.0
+        assert round(by_symbol["BTCUSDT.BN"].quantity, 8) == 0.0013   # 现货+理财，无第三份
+
+        acct = broker.get_account_info()
+        assert acct["market_value"] > 0                          # LDO 计入账户市值
+
+    def test_earn_read_failure_keeps_ld_coin(self, monkeypatch):
+        """理财 API 挂了 → earn 集合为空 → LD 开头的一律当真币（宁可多显示，不可抹掉）。"""
+        from acquisition.markets import binance_trade as bt
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        def _boom(*a, **k):
+            raise RuntimeError("earn api down")
+
+        monkeypatch.setattr(bt, "account", lambda: {"balances": [
+            {"asset": "LDO", "free": "500", "locked": "0"}]})
+        monkeypatch.setattr(bt, "funding_asset", lambda: [])
+        monkeypatch.setattr(bt, "earn_flexible_positions", _boom)
+        monkeypatch.setattr(bt, "earn_locked_positions", lambda *a, **k: [])
+        monkeypatch.setattr(bt, "ticker_price", lambda sym: 2.0)
+
+        broker = BinanceBroker()
+        broker._connected = True
+        pos = broker.get_positions()
+        assert [p.symbol for p in pos] == ["LDOUSDT.BN"]
+
+
+class TestSellFromEarn:
+    """卖出自动腾挪：现货不足按缺口赎理财 + 划资金钱包、到账放行；补不齐拒单。"""
+
+    class _SellBroker:
+        def __init__(self, avail, earn_qty, redeem_ok=True,
+                     funding_qty=0.0, transfer_ok=True, locked=0.0):
+            from trading_engine.brokers.base import BrokerPosition
+            wal = {"spot": avail + locked, "earn_flexible": earn_qty}
+            if locked:
+                wal["spot_locked"] = locked
+            if funding_qty:
+                wal["funding"] = funding_qty
+            qty = avail + locked + earn_qty + funding_qty
+            self._pos = BrokerPosition(
+                symbol="BTCUSDT.BN", quantity=qty, avg_cost=66000.0,
+                current_price=66000.0, market_value=qty * 66000.0,
+                unrealized_pnl=0.0, available=avail, wallet_breakdown=wal)
+            self._redeem_ok = redeem_ok
+            self._transfer_ok = transfer_ok
+            self.redeemed = []
+            self.transferred = []
+
+        def get_position(self, symbol):
+            return self._pos
+
+        def earn_redeem_flexible(self, asset, amount):
+            self.redeemed.append((asset, amount))
+            return self._redeem_ok
+
+        def transfer_funding_to_spot(self, asset, amount):
+            self.transferred.append((asset, amount))
+            return self._transfer_ok
+
+    def test_enough_spot_no_redeem(self, monkeypatch):
+        from crypto_intel_engine.execution import ensure_spot_for_sell
+        broker = self._SellBroker(avail=0.01, earn_qty=0.0)
+        assert ensure_spot_for_sell(broker, "BTCUSDT.BN", 0.005) == (True, None)
+        assert broker.redeemed == []                     # 现货够卖，不赎回
+
+    def test_redeem_shortfall_then_arrives(self, monkeypatch):
+        import time
+
+        from acquisition.markets import binance_trade as bt
+        from crypto_intel_engine import execution
+        monkeypatch.setattr(time, "sleep", lambda *_: None)
+        # 赎回后现货 BTC 到账 0.01（≥卖量）
+        monkeypatch.setattr(bt, "account",
+                            lambda: {"balances": [{"asset": "BTC", "free": "0.01"}]})
+        broker = self._SellBroker(avail=0.002, earn_qty=0.008)
+        ok, reason = execution.ensure_spot_for_sell(broker, "BTCUSDT.BN", 0.01)
+        assert ok is True and reason is None
+        # 缺口 = 0.01-0.002 = 0.008，从理财赎回 BTC
+        assert broker.redeemed == [("BTC", 0.008)]
+
+    def test_redeem_fail_rejects(self, monkeypatch):
+        from crypto_intel_engine.execution import ensure_spot_for_sell
+        broker = self._SellBroker(avail=0.0, earn_qty=0.01, redeem_ok=False)
+        ok, reason = ensure_spot_for_sell(broker, "BTCUSDT.BN", 0.01)
+        assert ok is False and "赎回" in reason
+
+    def test_funding_wallet_also_transferred(self, monkeypatch):
+        """⛔ 回归：quantity 含资金钱包但只赎理财 → 缺口永远补不齐、SELL 被永久堵死。
+
+        0.5 现货 / 0.2 资金 / 0.3 理财，卖 1.0：理财 0.3 全赎 + 资金划 0.2 才够。
+        """
+        import time
+
+        from acquisition.markets import binance_trade as bt
+        from crypto_intel_engine import execution
+        monkeypatch.setattr(time, "sleep", lambda *_: None)
+        monkeypatch.setattr(bt, "account",
+                            lambda: {"balances": [{"asset": "BTC", "free": "1.0"}]})
+        broker = self._SellBroker(avail=0.5, earn_qty=0.3, funding_qty=0.2)
+        ok, reason = execution.ensure_spot_for_sell(broker, "BTCUSDT.BN", 1.0)
+        assert ok is True and reason is None
+        assert broker.redeemed == [("BTC", 0.3)]         # 理财先赎（能赎多少赎多少）
+        assert broker.transferred == [("BTC", 0.2)]      # 余下缺口从资金钱包划转
+
+    def test_locked_shortfall_reason_names_the_wallet(self, monkeypatch):
+        """补不齐时拒单，理由要说清卡在挂单里（不部分卖、不替 Jason 撤单）。"""
+        from crypto_intel_engine.execution import ensure_spot_for_sell
+        broker = self._SellBroker(avail=0.0, earn_qty=0.0, locked=1.0)
+        ok, reason = ensure_spot_for_sell(broker, "BTCUSDT.BN", 1.0)
+        assert ok is False
+        assert "挂单锁定" in reason and "撤单" in reason
+        assert broker.redeemed == [] and broker.transferred == []
+
 
 class TestAccountAggregation:
     """需求1：账户聚合四钱包 → 三档买力（现货可用 + 活期可赎 + 资金可划）。"""

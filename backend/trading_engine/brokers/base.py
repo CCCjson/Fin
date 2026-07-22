@@ -38,14 +38,27 @@ class BrokerOrder:
 
 @dataclass
 class BrokerPosition:
-    """券商持仓"""
-    symbol: str              # 股票代码
-    quantity: int            # 持仓数量
+    """券商持仓。
+
+    ## 字段语义（A 股/paper 与 crypto 统一）
+
+    - `quantity`：**总敞口**。A 股=持仓股数；crypto=现货+活期理财+资金三钱包合计（含理财
+      敞口才是真实占比，喂风控/占比计算）。
+    - `available`：**可直接交易量**。A 股=可用股数（T+1）；crypto=现货 free（能立刻卖的部分，
+      理财/资金里的需先赎回/划转，见 `wallet_breakdown`）。注解放宽为 float 以容纳 crypto 小数币量。
+    - `wallet_breakdown`：仅 crypto 用。`{"spot": q, "spot_locked": q, "earn_flexible": q,
+      "funding": q}`（只放非零项），卖出时据此算「需从理财赎回/从资金划转多少」。A 股/paper 留 None。
+      ⚠️ `spot_locked` 是 `spot` 的**子集**（挂单锁定量，不可直接卖、也无法靠赎回/划转变出来），
+      算总敞口时**不要**把它再加一遍。`available` 恒等于 `spot - spot_locked`。
+    """
+    symbol: str              # 股票代码 / 交易对
+    quantity: float          # 总敞口（见类 docstring）
     avg_cost: float          # 平均成本
     current_price: float     # 当前价格
     market_value: float      # 市值
     unrealized_pnl: float    # 未实现盈亏
-    available: int           # 可用数量（T+1）
+    available: float         # 可直接交易量（见类 docstring）
+    wallet_breakdown: Optional[dict[str, float]] = None  # crypto 分钱包明细（只放非零项）
 
     @property
     def unrealized_pnl_pct(self) -> float:

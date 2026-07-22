@@ -36,6 +36,26 @@ except Exception:  # noqa: BLE001 — dotenv 缺失不致命，仍可从进程 e
 # 稳定币视为现金等价物（不算币持仓敞口）
 _STABLES = ("USDT", "USDC", "BUSD", "FDUSD")
 
+
+def _is_earn_mirror(asset: str, earn_assets: set[str]) -> bool:
+    """现货 `account()` 里 `LD` 前缀项 = 活期理财在现货账户的**镜像复制项**（Binance
+    约定，LD=Lending Daily）。真实理财数量只认 `earn_flexible_positions()`，故现货侧一律
+    跳过这些镜像，避免与理财 API 双重计数。
+
+    此前靠「查 `LDBTCUSDT` 无交易对→定价失败→跳过」的巧合去重，脆弱（LD 项一旦可定价即双计、
+    ticker 抖动即误伤）。
+
+    ⛔ **裸前缀判断也不行**：`LDO`（Lido DAO）是真实币安现货标的（有 LDOUSDT 交易对），
+    裸判 `startswith("LD")` 会把它整条抹掉——不进持仓、不进市值、占比算 0，于是满仓还能
+    再买、止损永不触发。故必须二次校验：**去掉 LD 前缀后的名字确实在活期理财持仓集合里**
+    （`LDBTC` → `BTC` ∈ earn_assets = 镜像；`LDO` → `O` ∉ earn_assets = 真币）。
+
+    Args:
+        earn_assets: `earn_flexible_positions()` 里的真实 asset 名集合。取数失败时传空集
+            → 一律判为真实持仓（失败方向安全：宁可多显示一条，不可凭空抹掉持仓）。
+    """
+    return asset.startswith("LD") and asset[2:] in earn_assets
+
 # 币安订单状态 → 项目 OrderStatus
 _STATUS_MAP = {
     "NEW": OrderStatus.SUBMITTED, "PARTIALLY_FILLED": OrderStatus.PARTIAL_FILLED,
@@ -113,10 +133,33 @@ class BinanceBroker(BaseBroker):
         funding_coins: dict[str, float] = {}
         earn_flex_stable = earn_locked_stable = 0.0
 
-        # ① 现货
+        # ① 理财活期（稳定币=可赎回买力；**非稳定币如 BTC=活期里的币持仓**，此前漏读致
+        #    「明明有 BTC 却报没持仓」。asset 字段是干净的真名 BTC/USDT，非现货里的 LD 前缀）
+        #    **必须先读**：现货侧要拿它的 asset 集合去二次校验 LD 镜像（见 `_is_earn_mirror`）
+        earn_flex_coins: dict[str, float] = {}
+        earn_assets: set[str] = set()
+        try:
+            for r in bt.earn_flexible_positions():
+                asset = r.get("asset", "")
+                if asset:
+                    earn_assets.add(asset)
+                amt = float(r.get("totalAmount", 0) or 0)
+                if amt <= 0:
+                    continue
+                if asset in _STABLES:
+                    earn_flex_stable += amt
+                else:
+                    earn_flex_coins[asset] = earn_flex_coins.get(asset, 0.0) + amt
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"币安理财活期读取失败: {e}")
+
+        # ② 现货（LD 镜像项显式跳过——真实理财数量由 ① earn API 唯一提供，
+        #    否则 LDUSDT 会被静默吞、LDBTC 靠定价失败去重，都脆）
         try:
             for b in bt.account().get("balances", []):
                 asset = b.get("asset", "")
+                if _is_earn_mirror(asset, earn_assets):
+                    continue
                 free, locked = float(b.get("free", 0)), float(b.get("locked", 0))
                 if free + locked <= 0:
                     continue
@@ -128,7 +171,7 @@ class BinanceBroker(BaseBroker):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"币安现货余额读取失败: {e}")
 
-        # ② 资金钱包（Funding）
+        # ③ 资金钱包（Funding）
         try:
             for b in bt.funding_asset():
                 asset = b.get("asset", "")
@@ -142,14 +185,6 @@ class BinanceBroker(BaseBroker):
         except Exception as e:  # noqa: BLE001 — 权限/网络问题按空处理，不炸账户读取
             logger.warning(f"币安资金钱包读取失败: {e}")
 
-        # ③ 理财活期（可赎回买力）
-        try:
-            for r in bt.earn_flexible_positions():
-                if r.get("asset") in _STABLES:
-                    earn_flex_stable += float(r.get("totalAmount", 0) or 0)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"币安理财活期读取失败: {e}")
-
         # ④ 理财定期（仅展示，不可动用）
         try:
             for r in bt.earn_locked_positions():
@@ -160,7 +195,16 @@ class BinanceBroker(BaseBroker):
 
         spot_coins_value = self._value_coins(bt, spot_coins)
         funding_coins_value = self._value_coins(bt, funding_coins)
-        market_value = spot_coins_value + funding_coins_value
+        # 理财里的币逐个估值 + 明细（单列，不混进可交易持仓）
+        earn_coins: list[dict] = []
+        earn_flex_coins_value = 0.0
+        for a, q in earn_flex_coins.items():
+            v = self._value_coins(bt, {a: q})
+            earn_coins.append({"asset": a, "quantity": q, "value": round(v, 2), "redeemable": True})
+            earn_flex_coins_value += v
+        # market_value = 币持仓市值 = 现货 + 资金 + 活期理财里的币（币安把自动申购活期币
+        # 也算你的持仓）。earn_coins 另存明细，供「卖前需从理财赎回」的执行侧识别。
+        market_value = spot_coins_value + funding_coins_value + earn_flex_coins_value
         cash = spot_cash + earn_flex_stable + funding_stable
         total_value = (cash + spot_stable_locked + earn_locked_stable + market_value)
 
@@ -169,7 +213,8 @@ class BinanceBroker(BaseBroker):
              "coins_value": round(spot_coins_value, 2)},
             {"name": "资金", "stable": round(funding_stable, 2),
              "coins_value": round(funding_coins_value, 2)},
-            {"name": "理财活期", "stable": round(earn_flex_stable, 2), "coins_value": 0.0},
+            {"name": "理财活期", "stable": round(earn_flex_stable, 2),
+             "coins_value": round(earn_flex_coins_value, 2)},
             {"name": "理财定期", "stable": round(earn_locked_stable, 2), "coins_value": 0.0},
         ]
         return {
@@ -181,31 +226,85 @@ class BinanceBroker(BaseBroker):
             "total_value": round(total_value, 2),
             "unrealized_pnl": 0.0,   # 交易所不给成本价，盈亏靠系统成交记录另算
             "wallets": wallets,
+            "earn_coins": earn_coins,   # 理财里的币（如活期 BTC）——单列，不是可交易持仓，可赎回现货
         }
 
     def get_positions(self) -> list[BrokerPosition]:
-        """非稳定币的非零余额 → 持仓。avg_cost 置当前价（交易所无成本价）。"""
+        """持仓 = **现货 + 活期理财 + 资金**三钱包的非稳定币，每个 asset 合成一条持仓并**保留
+        分钱包明细** `wallet_breakdown`。
+
+        币安「自动申购」活期理财 canRedeem=true、可秒赎、在 App「持仓币种」里带成本价展示
+        —— 就是你的币持仓，只是边持有边吃息。故按真实 asset 合并三钱包余额：
+          - `quantity` = 三钱包合计 = **总敞口**（喂风控/占比正确）；
+          - `available` = **现货 free** = 能立刻卖的部分（理财/资金里的需先赎回/划转）；
+          - `wallet_breakdown` = 各钱包非零分量（卖出时据此算「需从理财赎回/从资金划转多少」）。
+
+        ⚠️ `spot` 分量 = free + locked（总敞口口径），但 `available` **只取 free**。
+        挂单锁定的币不是「能立刻卖」的：把 locked 算进 available 会让 `ensure_spot_for_sell`
+        误判「现货本就够卖」→ 跳过赎回 → 交易所以余额不足拒掉已确认的卖单。breakdown 里
+        另列 `spot_locked`，让上层能说清「差的那部分卡在挂单里」（本 broker 绝不替 Jason 撤单）。
+
+        现货里的 LD 镜像项由 `_is_earn_mirror` 跳过（需先读理财持仓集合做二次校验，
+        否则 LDO 这种真币会被误杀）。avg_cost 置当前价（交易所无成本价）。
+        """
         self._ensure_connected()
         from acquisition.markets import binance_trade as bt
-        acct = bt.account()
-        out: list[BrokerPosition] = []
-        for b in acct.get("balances", []):
-            asset = b.get("asset", "")
-            if asset in ("USDT", "USDC", "BUSD", "FDUSD"):
-                continue
-            free = float(b.get("free", 0))
-            locked = float(b.get("locked", 0))
-            qty = free + locked
+
+        # asset → {"spot": q, "spot_locked": q, "earn_flexible": q, "funding": q}（只累加非零）
+        breakdown: dict[str, dict[str, float]] = {}
+        spot_free: dict[str, float] = {}     # 能立刻卖的量（available 的唯一真源）
+
+        def _add(asset: str, wallet: str, qty: float) -> None:
             if qty <= 0:
+                return
+            wal = breakdown.setdefault(asset, {})
+            wal[wallet] = wal.get(wallet, 0.0) + qty
+
+        # ① 活期理财（**必须先读**：现货侧要用它的 asset 集合校验 LD 镜像）
+        earn_assets: set[str] = set()
+        try:
+            for r in bt.earn_flexible_positions():
+                asset = r.get("asset", "")
+                if asset:
+                    earn_assets.add(asset)
+                if asset in _STABLES:
+                    continue
+                _add(asset, "earn_flexible", float(r.get("totalAmount", 0) or 0))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"币安活期理财持仓读取失败: {e}")
+        # ② 现货（跳过 LD 镜像与稳定币）—— free 与 locked 分开记
+        for b in bt.account().get("balances", []):
+            asset = b.get("asset", "")
+            if asset in _STABLES or _is_earn_mirror(asset, earn_assets):
                 continue
+            free, locked = float(b.get("free", 0)), float(b.get("locked", 0))
+            _add(asset, "spot", free + locked)
+            _add(asset, "spot_locked", locked)
+            if free > 0:
+                spot_free[asset] = spot_free.get(asset, 0.0) + free
+        # ③ 资金钱包（此前漏读——资金里的币曾进 market_value 却从不出现在持仓列表）
+        try:
+            for b in bt.funding_asset():
+                asset = b.get("asset", "")
+                if asset in _STABLES:
+                    continue
+                _add(asset, "funding", float(b.get("free", 0)))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"币安资金钱包持仓读取失败: {e}")
+
+        out: list[BrokerPosition] = []
+        for asset, wal in breakdown.items():
             try:
                 price = bt.ticker_price(f"{asset}USDT")
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 — 无 USDT 对的小币跳过（无法计价）
                 continue
+            # spot_locked 是 spot 的**子集**，不能再进合计（否则锁定量被重复计敞口）
+            qty = sum(q for w, q in wal.items() if w != "spot_locked")
             out.append(BrokerPosition(
                 symbol=f"{asset}USDT.BN", quantity=qty, avg_cost=price,
                 current_price=price, market_value=qty * price,
-                unrealized_pnl=0.0, available=free,
+                unrealized_pnl=0.0, available=spot_free.get(asset, 0.0),
+                wallet_breakdown=dict(wal),
             ))
         return out
 

@@ -252,3 +252,23 @@ class TestCryptoSizing:
                                   total_capital=15.0, max_position_pct=0.2,
                                   step_size=0.00001, min_qty=0.00001, min_notional=5.0)
         assert sz["affordable"] is False
+
+
+class TestNewsTickCadence:
+    """新闻低频节流：首轮必抓，之后每 N 轮一次。"""
+
+    def test_every_one_fires_every_tick(self):
+        """⛔ 回归：`tick % 1 == 1` 恒假 —— 配「每轮都抓」反而一次都不抓。"""
+        from data_engine.crypto_updater import should_refresh_news
+        assert [should_refresh_news(t, 1) for t in range(1, 5)] == [True] * 4
+
+    def test_every_four_fires_on_1_and_5(self):
+        from data_engine.crypto_updater import should_refresh_news
+        fired = [t for t in range(1, 10) if should_refresh_news(t, 4)]
+        assert fired == [1, 5, 9]
+
+    def test_zero_or_negative_does_not_crash(self):
+        """写 0/负数不该 ZeroDivisionError，按「每轮」处理。"""
+        from data_engine.crypto_updater import should_refresh_news
+        assert should_refresh_news(3, 0) is True
+        assert should_refresh_news(3, -2) is True

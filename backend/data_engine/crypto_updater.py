@@ -45,6 +45,25 @@ _QUOTE_WHITELIST = tuple(
 # 实例态不持久，故用模块级（进程重启后当天首个 tick 会重做一次全量，可接受）。
 _last_full_sweep: "date | None" = None
 
+# 新闻每隔几轮 tick 抓一次（RSS 不会每半小时翻新，FinBERT 推理也有成本）。
+# ⚠️ 下限钳 1：写 0/负数会 ZeroDivisionError，且「每轮都抓」的正确写法就是 1。
+_NEWS_EVERY_N_TICKS = max(1, int(os.getenv("CRYPTO_NEWS_EVERY_N_TICKS", "4")))
+_tick_count = 0
+
+
+def should_refresh_news(tick: int, every: int | None = None) -> bool:
+    """第 `tick` 轮（**从 1 起数**）要不要抓新闻。首轮必抓，之后每 `every` 轮一次。
+
+    ⚠️ 别写成 `tick % every == 1`：`every=1` 时 `x % 1` 恒为 0，条件恒假 ——
+    配成「每轮都抓」反而**一次都不抓**。纯函数，可离线测。
+    """
+    n = _NEWS_EVERY_N_TICKS if every is None else max(1, every)
+    return (tick - 1) % n == 0
+
+
+# 排雷慢档（CoinGecko + DefiLlama 解锁）每天只跑一次的进程内标记。理由见 refresh_intel。
+_last_screen_sweep: "date | None" = None
+
 
 class CryptoUpdater:
     """crypto 7×24 增量更新器（行情 + 情报）。"""
@@ -178,7 +197,11 @@ class CryptoUpdater:
         return [s for s in want if s in universe]
 
     def refresh_market_context(self, session) -> int:
-        """市场级情绪/大势 → CryptoMetric(symbol='MARKET')。返回写入指标数。"""
+        """市场级情绪/大势/水位 → CryptoMetric(symbol='MARKET')。返回写入指标数。
+
+        `stablecoin_supply` 是资金流维的主力，也是**主导率/水位趋势的历史来源**——
+        这些量只有攒出时序才能算变化率，所以每轮都要落。
+        """
         from crypto_intel_engine.scorer import market_context
         from crypto_intel_engine.store import upsert_market_metrics
         ctx = market_context()
@@ -189,50 +212,131 @@ class CryptoUpdater:
             "btc_dominance": ctx.get("btc_dominance"),
             "total_market_cap_usd": ctx.get("total_market_cap_usd"),
         }
-        return upsert_market_metrics(session, today, metrics, source="coingecko+alt.me")
+        try:
+            from acquisition.markets.crypto_onchain import stablecoin_supply
+            rows = stablecoin_supply(limit_days=3)
+            if rows:
+                metrics["stablecoin_supply"] = rows[-1]["total_usd"]
+        except Exception as e:  # noqa: BLE001 — 单项失败不拖垮整轮
+            logger.warning(f"[crypto] 稳定币供应抓取失败: {e}")
+        return upsert_market_metrics(session, today, metrics, source="coingecko+alt.me+defillama")
 
-    def refresh_intel(self, session, symbols: list[str] | None = None) -> dict:
-        """focus set 的排雷快照 → CryptoAsset + 衍生品 → CryptoMetric。"""
+    def _refresh_unlocks(self, session, symbol: str, screen_result: dict) -> None:
+        """把该币的未来解锁事件写进 `token_unlocks`，并把「未来30天占流通%」落成时序指标。
+
+        `screen_coin` 已经取过一次解锁数据（在 result['unlock'] 里），这里直接复用，
+        不重复出网。
+        """
+        from crypto_intel_engine.store import upsert_metric, upsert_unlocks
+        unlock = screen_result.get("unlock")
+        if not unlock:
+            return
+        today = datetime.now(timezone.utc).date()
+        upsert_metric(session, symbol, today, "unlock_pct_30d",
+                      unlock.get("pct_of_supply"), "defillama")
+        events = unlock.get("next_events") or []
+        if events:
+            upsert_unlocks(session, symbol, events)
+
+    def refresh_bars_4h(self, session, symbols: list[str] | None = None,
+                        limit: int = 200) -> dict:
+        """focus set 的 4h K 线 → `crypto_bars`（多周期确认 + 现货主动买盘的数据源）。
+
+        只对 focus 主流币做：4h 线是给「要不要现在扣扳机」用的，几百个山寨不需要。
+        """
+        from crypto_intel_engine.store import upsert_bars
+        focus = symbols if symbols is not None else self._focus_set(session)
+        written = failed = 0
+        for sym in focus:
+            try:
+                bars = self.fetcher.fetch_bars(sym, interval="4h", limit=limit)
+                if bars:
+                    written += upsert_bars(session, bars)
+            except Exception as e:  # noqa: BLE001
+                failed += 1
+                logger.warning(f"[crypto] 4h 线更新失败 {sym}: {e}")
+            if _SLEEP:
+                time.sleep(_SLEEP)
+        logger.info(f"[crypto] 4h 线：{len(focus)} 币，{written} 根，{failed} 失败")
+        return {"focus": len(focus), "bars": written, "failed": failed}
+
+    def refresh_news(self) -> dict:
+        """公告 + 新闻 RSS → NewsArticle(market='crypto') + FinBERT 情绪。"""
+        from crypto_intel_engine.news import ingest
+        return ingest()
+
+    def refresh_intel(self, session, symbols: list[str] | None = None,
+                      with_screen: bool | None = None) -> dict:
+        """focus set 的排雷快照 → CryptoAsset + 衍生品 → CryptoMetric。
+
+        ## 快慢两档（别退回「每 tick 全做」）
+
+        - **快档**（每 tick）：币安衍生品——资金费率/OI/多空比/大户比/主动买卖/基差。
+          分钟级变化，且币安额度宽松。
+        - **慢档**（每天一次，`with_screen`）：CoinGecko 排雷 + DefiLlama 解锁。供应量、
+          FDV、开发提交、解锁日程都是**慢变量**，一天一次绰绰有余；而 CoinGecko free
+          是滚动窗口封禁（2026-07-22 实测：28 个币即便间隔 2.5s 仍被 429 拉黑），
+          每 tick 扫一遍必然打爆额度，反而让排雷数据整片缺失。
+
+        `with_screen=None` 表示自动判断（当天没跑过就跑）。
+        """
         from acquisition.markets import crypto_derivatives as deriv
         from crypto_intel_engine.scorer import screen_coin
         from crypto_intel_engine.store import upsert_asset, upsert_metric
 
+        global _last_screen_sweep
         focus = symbols if symbols is not None else self._focus_set(session)
         today = datetime.now(timezone.utc).date()
+        do_screen = with_screen if with_screen is not None else (_last_screen_sweep != today)
         scored = 0
         for sym in focus:
-            try:
-                r = screen_coin(sym)
-                d = r.get("dimensions", {})
-                if r.get("coingecko_id"):
-                    upsert_asset(session, sym, {
-                        "base_asset": r.get("base_asset"),
-                        "coingecko_id": r.get("coingecko_id"),
-                        "circulating_supply": d.get("circulating_supply"),
-                        "max_supply": d.get("max_supply"),
-                        "market_cap": d.get("market_cap_usd"),
-                        "fdv": d.get("fdv_usd"),
-                        "inflation_flag": 1 if d.get("max_supply") is None else 0,
-                    })
-                    upsert_metric(session, sym, today, "risk_score", r.get("score"), "crypto_intel")
-                    scored += 1
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"[crypto] 排雷刷新失败 {sym}: {e}")
+            if do_screen:
+                try:
+                    r = screen_coin(sym)
+                    d = r.get("dimensions", {})
+                    # score 为 None = 取数失败（限速/网络），别把空壳写进 CryptoAsset 覆盖掉
+                    # 上一轮的好数据，也别计入 scored 让日志看起来一切正常
+                    if r.get("coingecko_id") and r.get("score") is not None:
+                        upsert_asset(session, sym, {
+                            "base_asset": r.get("base_asset"),
+                            "coingecko_id": r.get("coingecko_id"),
+                            "circulating_supply": d.get("circulating_supply"),
+                            "max_supply": d.get("max_supply"),
+                            "market_cap": d.get("market_cap_usd"),
+                            "fdv": d.get("fdv_usd"),
+                            "inflation_flag": 1 if d.get("max_supply") is None else 0,
+                        })
+                        upsert_metric(session, sym, today, "risk_score",
+                                      r.get("score"), "crypto_intel")
+                        scored += 1
+                        # 真解锁日程 → token_unlocks（此前这张表建好了从没人写）
+                        self._refresh_unlocks(session, sym, r)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[crypto] 排雷刷新失败 {sym}: {e}")
             try:
                 snap = deriv.get_derivatives_snapshot(sym)
-                f = (snap.get("funding") or {}).get("funding_rate")
-                upsert_metric(session, sym, today, "funding_rate", f, "binance")
-                oi = (snap.get("open_interest") or {}).get("oi")
-                upsert_metric(session, sym, today, "open_interest", oi, "binance")
-                ls = (snap.get("long_short") or {}).get("ratio")
-                upsert_metric(session, sym, today, "long_short_ratio", ls, "binance")
+                # 每个都落时序：打分器的分位/变化率全靠这些历史，攒得越久判得越准
+                for metric, value in (
+                    ("funding_rate", (snap.get("funding") or {}).get("funding_rate")),
+                    ("open_interest", (snap.get("open_interest") or {}).get("oi")),
+                    ("long_short_ratio", (snap.get("long_short") or {}).get("ratio")),
+                    ("top_trader_ratio", (snap.get("top_trader") or {}).get("ratio")),
+                    ("taker_ratio", (snap.get("taker_flow") or {}).get("ratio")),
+                    ("basis_rate", (snap.get("basis") or {}).get("basis_rate")),
+                ):
+                    upsert_metric(session, sym, today, metric, value, "binance")
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"[crypto] 衍生品刷新失败 {sym}: {e}")
             if _SLEEP:
                 time.sleep(_SLEEP)
         session.commit()
-        logger.info(f"[crypto] 情报刷新：{scored}/{len(focus)} focus 币")
-        return {"focus": len(focus), "scored": scored}
+        # 慢档全跑完（哪怕部分币被限速）才记账，失败的下一轮自然重试；不记账会导致
+        # 每 tick 都重试整片 CoinGecko，反而持续触发封禁
+        if do_screen:
+            _last_screen_sweep = today
+        logger.info(f"[crypto] 情报刷新：衍生品 {len(focus)} 币"
+                    + (f"，排雷 {scored}/{len(focus)}" if do_screen else "，排雷本轮跳过（当天已跑）"))
+        return {"focus": len(focus), "scored": scored, "screened": do_screen}
 
     # ── 编排 ────────────────────────────────────────────────────────────
     def run(self, with_intel: bool = True) -> dict:
@@ -263,12 +367,25 @@ class CryptoUpdater:
             except Exception as e:  # noqa: BLE001
                 logger.error(f"[crypto] 市场情绪刷新失败: {e}")
                 summary["market_context"] = {"error": str(e)}
+            try:
+                summary["bars_4h"] = self.refresh_bars_4h(session)
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"[crypto] 4h 线刷新失败: {e}")
+                summary["bars_4h"] = {"error": str(e)}
             if with_intel:
                 try:
                     summary["intel"] = self.refresh_intel(session)
                 except Exception as e:  # noqa: BLE001
                     logger.error(f"[crypto] 情报刷新失败: {e}")
                     summary["intel"] = {"error": str(e)}
+                global _tick_count
+                _tick_count += 1
+                if should_refresh_news(_tick_count):
+                    try:
+                        summary["news"] = self.refresh_news()
+                    except Exception as e:  # noqa: BLE001
+                        logger.error(f"[crypto] 新闻刷新失败: {e}")
+                        summary["news"] = {"error": str(e)}
         finally:
             session.close()
         return summary

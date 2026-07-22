@@ -67,7 +67,8 @@ def crypto_broker_info(broker) -> dict[str, Any]:
     acct = broker.get_account_info()
     positions_map = {
         p.symbol: {"market_value": p.market_value, "avg_cost": p.avg_cost,
-                   "current_price": p.current_price}
+                   "current_price": p.current_price,
+                   "available": p.available, "wallet_breakdown": p.wallet_breakdown}
         for p in broker.get_positions()
     }
     recent_pnls, last_loss_date = get_recent_crypto_closed_pnls(limit=10)
@@ -173,6 +174,89 @@ def execute_funding(broker, steps: list[dict], need_usdt: float) -> bool:
             return True
     logger.warning(f"补足后现货 {STABLE_QUOTE} 仍不足 {need_usdt}")
     return False
+
+
+def ensure_spot_for_sell(broker, symbol: str, qty: float) -> tuple[bool, str | None]:
+    """卖出前保证现货够卖：现货可用量 < qty 时，先从**活期理财**赎回、再从**资金钱包**划转，
+    轮询到账。
+
+    对称于买入侧 `plan_funding`/`execute_funding`（买补 USDT，卖补待卖币）。币安「自动申购」
+    把币放进活期理财、跨钱包转账把币留在资金钱包，两处都算进 `BrokerPosition.quantity`
+    这个总敞口 —— **只赎理财是补不齐的**：任何有资金钱包余额的持仓都会卡在这一步，
+    退出/止损被永久堵死。故两条补足路径都必须走。
+
+    ⛔ 补不齐时**拒单**，不部分卖、不替 Jason 撤挂单：挂单锁定的币（`spot_locked`）既卖不掉
+    也变不出来，唯一出路是他自己去币安撤单——系统不替他做主。
+
+    Returns:
+        `(ok, reason)`。ok=True 时 reason=None；False 时 reason 是给 Jason 看的人话
+        （还差多少、卡在哪个钱包），由上层直接放进拒单理由。
+    """
+    import time
+
+    from acquisition.markets import binance_trade as bt
+    from common.market import to_binance_symbol
+
+    try:
+        pos = broker.get_position(symbol)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"卖前查持仓失败 {symbol}: {e}")
+        pos = None
+    available = float(getattr(pos, "available", 0.0) or 0.0) if pos else 0.0
+    if available >= qty:
+        return True, None   # 现货本就够卖，无需腾挪
+
+    breakdown = (getattr(pos, "wallet_breakdown", None) or {}) if pos else {}
+    earn_qty = float(breakdown.get("earn_flexible", 0.0) or 0.0)
+    funding_qty = float(breakdown.get("funding", 0.0) or 0.0)
+    locked_qty = float(breakdown.get("spot_locked", 0.0) or 0.0)
+    shortfall = qty - available
+
+    # 计价币名（symbol 形如 BTCUSDT.BN → base=BTC）：剥掉尾部 USDT 计价后缀
+    bn = to_binance_symbol(symbol)
+    base = bn[:-len(STABLE_QUOTE)] if bn.endswith(STABLE_QUOTE) else bn
+
+    def _stuck(extra: str) -> str:
+        parts = [f"卖前现货不足：需 {qty:g} {base}，现货可用 {available:g}，缺 {shortfall:g}"]
+        if locked_qty > 0:
+            parts.append(f"其中 {locked_qty:g} 被挂单锁定（需你自己在币安撤单）")
+        parts.append(extra)
+        return "；".join(parts)
+
+    if earn_qty <= 0 and funding_qty <= 0:
+        msg = _stuck("理财与资金钱包均无可腾挪余额")
+        logger.warning(msg)
+        return False, msg
+
+    # ① 先赎活期理财（我们自己扫进去的，最快），② 再划转资金钱包 —— 与 plan_funding 同序
+    remaining = shortfall
+    if earn_qty > 0 and remaining > 0:
+        amt = round(min(remaining, earn_qty), 8)
+        if not broker.earn_redeem_flexible(base, amt):
+            msg = _stuck(f"从活期理财赎回 {amt:g} 失败")
+            logger.error(msg)
+            return False, msg
+        remaining = round(remaining - amt, 8)
+    if funding_qty > 0 and remaining > 0:
+        amt = round(min(remaining, funding_qty), 8)
+        if not broker.transfer_funding_to_spot(base, amt):
+            msg = _stuck(f"从资金钱包划转 {amt:g} 失败")
+            logger.error(msg)
+            return False, msg
+
+    # 轮询现货该币到账（币安赎回/划转秒级延迟），镜像 execute_funding
+    for _ in range(3):
+        time.sleep(1.2)
+        try:
+            free = next((float(b.get("free", 0)) for b in bt.account().get("balances", [])
+                         if b.get("asset") == base), 0.0)
+        except Exception:  # noqa: BLE001
+            free = 0.0
+        if free >= qty:
+            return True, None
+    msg = _stuck("腾挪后现货仍不足（到账延迟或余额被占用）")
+    logger.warning(msg)
+    return False, msg
 
 
 def auto_sweep_to_earn(broker) -> None:
