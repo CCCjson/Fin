@@ -328,28 +328,52 @@ def place_crypto_order(symbol: str, side: str, quantity=None,
                                 data={"executed": False,
                                       "reason": f"{spot_reason}，未下单"})
 
-    order = broker.submit_order(symbol, action, qty, price)
-    # 撤单/拒单/异常 → 失败
-    if order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.FAILED):
-        return ToolEnvelope(business_result="negative",
-                            data={"executed": False, "reason": order.error_msg or "执行失败"})
+    # 幂等键：一次性随机 id。请求超时时 broker 会拿它回查真实状态，而不是闷头判失败
+    import secrets
+    order = broker.submit_order(symbol, action, qty, price,
+                                client_order_id=f"FINCHAT-{secrets.token_hex(6)}")
 
-    # 真实成交量以交易所回执为准，绝不用委托量兜底（否则挂单会被谎报成已成交）
+    # 真实成交量以交易所回执为准，绝不用委托量兜底（否则挂单会被谎报成已成交）。
+    # ⛔ 判定顺序：**先看成交量，再看状态**。币安市价单在薄盘/价格带/STP 场景会返回
+    # EXPIRED（映射成 REJECTED）**同时带 executedQty > 0**，只看状态会把「已经买到一部分」
+    # 判成完全失败 → 不落台账 → 账上凭空多币、连亏风控回放漏笔。
     filled_qty = order.filled_quantity or 0.0
+    terminal_bad = order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED,
+                                    OrderStatus.FAILED)
+
+    if order.status == OrderStatus.UNKNOWN:
+        # 请求已发出但结果不明（超时且回查未果）——绝不能说「失败了」让 Jason 重下
+        return ToolEnvelope(
+            business_result="negative",
+            data={"executed": False, "state_unknown": True, "symbol": symbol,
+                  "action": action, "reason": order.error_msg},
+            message=(f"⚠️ {symbol} 的{'买入' if action == 'BUY' else '卖出'}请求已发出，"
+                     f"但没能拿到回执，**这笔单可能已经成交**。请先去币安核对成交记录再决定是否重下，"
+                     f"不要直接重试。详情：{order.error_msg}"),
+        )
+
     if filled_qty <= 0:
-        # 限价单挂在盘口、尚未成交 —— 已受理（affirmative）但**未成交**：不发成交事件、
-        # 不落台账，executed=False/resting=True 把「挂单≠成交」如实传出去。
-        _record_crypto_resting(symbol, action, price, order.order_id)
+        if terminal_bad:
+            return ToolEnvelope(business_result="negative",
+                                data={"executed": False, "reason": order.error_msg or "执行失败"})
+        # 已受理（affirmative）但**未成交**：不发成交事件、不落台账，
+        # executed=False/resting=True 把「挂单≠成交」如实传出去。
+        _record_crypto_resting(symbol, action, price, order.order_id,
+                               order_type="LIMIT" if price else "MARKET")
+        msg = (f"限价单已挂出（order={order.order_id}），当前未成交，挂在盘口等待撮合。"
+               f"成交后才会计入台账与盈亏。" if price else
+               f"市价单已提交（order={order.order_id}）但**零成交**——通常是盘口太薄或该交易对"
+               f"暂停交易。没有计入台账，请去币安核对。")
         return ToolEnvelope(
             data={"executed": False, "resting": True, "symbol": symbol, "action": action,
                   "order_id": order.order_id, "status": order.status.value,
                   "price": round(price, 4) if price else None, "quantity": qty},
-            message=(f"限价单已挂出（order={order.order_id}），当前未成交，挂在盘口等待撮合。"
-                     f"成交后才会计入台账与盈亏。"),
+            message=msg,
         )
 
     fill_price = order.filled_price or ref
-    partial = filled_qty < qty
+    # terminal_bad 且 filled>0 = 部分成交后余量被撤/过期：成交那部分是真的，必须落账
+    partial = terminal_bad or filled_qty < qty
     _record_crypto_trade(symbol, action, fill_price, filled_qty, order.order_id,
                          commission=order.commission or 0.0)
 

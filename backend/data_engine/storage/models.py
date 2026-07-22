@@ -1390,7 +1390,12 @@ class CryptoPendingOrder(Base):
     quantity = Column(Float, nullable=False)          # 决策时估算币量（展示；确认时重算）
     price = Column(Float)                             # **决策时价格**，仅用于确认时算漂移与展示
     est_notional = Column(Float)                     # 预估名义金额（USDT）
-    # PENDING → CONFIRMED → EXECUTING → FILLED / REJECTED / EXPIRED / FAILED
+    # PENDING → EXECUTING → FILLED / UNFILLED / FAILED / STALE（拒绝与过期是直接删行）
+    #   FILLED   成交（fill_quantity > 0，可能是部分成交，余量被撤/过期）
+    #   UNFILLED 已受理但**零成交**——不是成交也不是失败，绝不复用 FILLED
+    #   FAILED   已确认交易所没受理，可安全重排
+    #   STALE    ⚠️ 成交与否**未知**（下单后失联/后端中途重启），等人工去币安对账。
+    #            系统绝不自行判它成没成交，且 `has_open` 会一直挡住重排，防重复下单。
     status = Column(String(12), default="PENDING", index=True)
     reason = Column(Text)                            # JSON：命中的进/出场条件 + 净边际等决策依据
     risk_snapshot = Column(Text)                     # JSON：产单时的风控预检结果

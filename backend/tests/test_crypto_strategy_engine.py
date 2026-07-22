@@ -190,20 +190,24 @@ def test_kill_switch_halts(mem_db, monkeypatch):
 # ──────────────── 待确认单：确认闭环 ────────────────
 
 class _FakeOrder:
-    def __init__(self, qty):
+    def __init__(self, qty, status=None, filled=None):
         from trading_engine.brokers.base import OrderStatus
-        self.status = OrderStatus.FILLED
-        self.filled_quantity = qty
+        self.status = status or OrderStatus.FILLED
+        self.filled_quantity = qty if filled is None else filled
         self.filled_price = 100.0
         self.order_id = "BTCUSDT.BN:999"
         self.commission = 0.05
-        self.error_msg = None
+        self.error_msg = "交易所拒单"
 
 
 class _FakeBroker:
-    def __init__(self, cur=100.0):
+    def __init__(self, cur=100.0, status=None, filled=None):
         self._cur = cur
+        self._status = status         # 让测试指定回执状态（部分成交/零成交/状态未知）
+        self._filled = filled         # 让测试指定实际成交量
         self.last_qty = None
+        self.last_client_order_id = None
+        self.submit_calls = 0
 
     def connect(self):
         return True
@@ -217,9 +221,11 @@ class _FakeBroker:
     def get_position(self, s):
         return None
 
-    def submit_order(self, symbol, side, qty, price):
+    def submit_order(self, symbol, side, qty, price, client_order_id=None):
         self.last_qty = qty
-        return _FakeOrder(qty)
+        self.last_client_order_id = client_order_id
+        self.submit_calls += 1
+        return _FakeOrder(qty, status=self._status, filled=self._filled)
 
 
 def _patch_confirm(monkeypatch, risk_pass=True, broker=None):
@@ -303,6 +309,150 @@ def test_cleanup_deletes_expired(mem_db, monkeypatch):
     assert svc.cleanup()["expired_deleted"] == 1
     with pytest.raises(PendingError):        # 过期即删
         svc.get(p["order_ref"])
+
+
+# ──────────────── 批1 止血：成交判定 / 幂等 / 原子确认 / 搁浅自愈 ────────────────
+
+class TestFillJudgement:
+    """⛔ 判定顺序必须是「先看成交量，再看状态」——只看状态会把部分成交判成完全失败。"""
+
+    @staticmethod
+    def _pending(svc):
+        return svc.create_pending("CS-NOPE", "BTCUSDT.BN", "BUY", 0.5, 100.0, quote_amount=50.0)
+
+    def test_partial_fill_on_rejected_status_still_records(self, mem_db, monkeypatch):
+        """币安 EXPIRED→REJECTED 但 executedQty>0：成交那部分是真的，必须落台账。
+
+        回归的是「幽灵持仓」：判失败→不落账→系统以为没花钱→下 tick 重排→重复买入。
+        """
+        from crypto_strategy.pending import crypto_pending_service as svc
+        from trading_engine.brokers.base import OrderStatus
+        _patch_confirm(monkeypatch,
+                       broker=_FakeBroker(status=OrderStatus.REJECTED, filled=0.3))
+        p = self._pending(svc)
+        out = svc.confirm(p["order_ref"])
+        assert out["status"] == "FILLED"            # 不是 FAILED
+        assert out["fill_quantity"] == 0.3
+        assert _trade_count(mem_db) == 1            # 成交部分进了台账
+
+    def test_zero_fill_is_unfilled_not_filled(self, mem_db, monkeypatch):
+        """零成交必须单列 UNFILLED，绝不复用 FILLED（否则前端弹「已确认成交」但一分钱没动）。"""
+        from crypto_strategy.pending import crypto_pending_service as svc
+        from trading_engine.brokers.base import OrderStatus
+        _patch_confirm(monkeypatch,
+                       broker=_FakeBroker(status=OrderStatus.SUBMITTED, filled=0.0))
+        p = self._pending(svc)
+        out = svc.confirm(p["order_ref"])
+        assert out["status"] == "UNFILLED"
+        assert _trade_count(mem_db) == 0            # 没成交就没台账
+
+    def test_true_rejection_still_fails(self, mem_db, monkeypatch):
+        """真拒单（零成交 + 终态）仍要判失败，别把止血改成放行。"""
+        from crypto_strategy.pending import PendingError
+        from crypto_strategy.pending import crypto_pending_service as svc
+        from trading_engine.brokers.base import OrderStatus
+        _patch_confirm(monkeypatch,
+                       broker=_FakeBroker(status=OrderStatus.REJECTED, filled=0.0))
+        p = self._pending(svc)
+        with pytest.raises(PendingError):
+            svc.confirm(p["order_ref"])
+        assert svc.get(p["order_ref"])["status"] == "FAILED"
+        assert _trade_count(mem_db) == 0
+
+    def test_unknown_state_goes_stale_not_failed(self, mem_db, monkeypatch):
+        """状态未知绝不能判失败——判失败会被重排 → 同一笔成交两次。"""
+        from crypto_strategy.pending import PendingError
+        from crypto_strategy.pending import crypto_pending_service as svc
+        from trading_engine.brokers.base import OrderStatus
+        _patch_confirm(monkeypatch,
+                       broker=_FakeBroker(status=OrderStatus.UNKNOWN, filled=0.0))
+        p = self._pending(svc)
+        with pytest.raises(PendingError):
+            svc.confirm(p["order_ref"])
+        assert svc.get(p["order_ref"])["status"] == "STALE"
+        assert _trade_count(mem_db) == 0
+        # STALE 必须继续挡住引擎重排
+        assert svc.has_open("CS-NOPE", "BTCUSDT.BN", "BUY") is True
+
+
+def test_confirm_passes_order_ref_as_idempotency_key(mem_db, monkeypatch):
+    """幂等键用 order_ref：同一张单重试多少次，落到币安都是同一个 clientOrderId。"""
+    from crypto_strategy.pending import crypto_pending_service as svc
+    broker = _patch_confirm(monkeypatch)
+    p = svc.create_pending("CS-NOPE", "BTCUSDT.BN", "BUY", 0.5, 100.0, quote_amount=50.0)
+    svc.confirm(p["order_ref"])
+    assert broker.last_client_order_id == p["order_ref"]
+
+
+def test_double_confirm_only_submits_once(mem_db, monkeypatch):
+    """并发/重复确认：第二次必须被原子抢占挡下，绝不能下第二笔真单。"""
+    from crypto_strategy.pending import PendingError
+    from crypto_strategy.pending import crypto_pending_service as svc
+    broker = _patch_confirm(monkeypatch)
+    p = svc.create_pending("CS-NOPE", "BTCUSDT.BN", "BUY", 0.5, 100.0, quote_amount=50.0)
+    svc.confirm(p["order_ref"])
+    with pytest.raises(PendingError, match="不可确认"):
+        svc.confirm(p["order_ref"])
+    assert broker.submit_calls == 1
+    assert _trade_count(mem_db) == 1
+
+
+def test_stranded_executing_becomes_stale_and_blocks_restage(mem_db, monkeypatch):
+    """后端在成交途中挂掉留下的 EXECUTING：转 STALE 催人工对账，且不许删、不许重排。"""
+    from crypto_strategy.pending import crypto_pending_service as svc
+    p = svc.create_pending("CS-NOPE", "BTCUSDT.BN", "BUY", 0.5, 100.0, quote_amount=50.0)
+    from data_engine.storage.models import CryptoPendingOrder
+    s = mem_db()
+    try:
+        row = s.query(CryptoPendingOrder).filter_by(order_ref=p["order_ref"]).first()
+        row.status = "EXECUTING"
+        row.confirmed_at = datetime.now() - timedelta(minutes=30)
+        s.commit()
+    finally:
+        s.close()
+    # EXECUTING 期间就该挡住重排（不能等 cleanup 跑）
+    assert svc.has_open("CS-NOPE", "BTCUSDT.BN", "BUY") is True
+    assert svc.cleanup()["stranded_marked"] == 1
+    assert svc.get(p["order_ref"])["status"] == "STALE"      # 没被删掉
+    assert svc.has_open("CS-NOPE", "BTCUSDT.BN", "BUY") is True
+
+
+def test_stale_is_visible_and_dismissable(mem_db, monkeypatch):
+    """待对账单必须能被 Jason 看见（列表）并在核对后清掉（否则永远挡着重排）。"""
+    from crypto_strategy.pending import PendingError
+    from crypto_strategy.pending import crypto_pending_service as svc
+    p = svc.create_pending("CS-NOPE", "BTCUSDT.BN", "BUY", 0.5, 100.0, quote_amount=50.0)
+    from data_engine.storage.models import CryptoPendingOrder
+    s = mem_db()
+    try:
+        s.query(CryptoPendingOrder).filter_by(order_ref=p["order_ref"]).first().status = "STALE"
+        s.commit()
+    finally:
+        s.close()
+    assert svc.list_pending(status="PENDING") == []                    # 默认单状态查不到
+    refs = [o["order_ref"] for o in svc.list_pending(status="PENDING,STALE")]
+    assert p["order_ref"] in refs                                      # 多状态查得到
+    assert svc.reject(p["order_ref"])["was"] == "STALE"                # 核对后可清
+    assert svc.has_open("CS-NOPE", "BTCUSDT.BN", "BUY") is False       # 清掉后才放行重排
+    with pytest.raises(PendingError):
+        svc.get(p["order_ref"])
+
+
+def test_fresh_executing_not_marked_stale(mem_db, monkeypatch):
+    """正在成交中的单（刚确认）不能被误判成搁浅。"""
+    from crypto_strategy.pending import crypto_pending_service as svc
+    p = svc.create_pending("CS-NOPE", "BTCUSDT.BN", "BUY", 0.5, 100.0, quote_amount=50.0)
+    from data_engine.storage.models import CryptoPendingOrder
+    s = mem_db()
+    try:
+        row = s.query(CryptoPendingOrder).filter_by(order_ref=p["order_ref"]).first()
+        row.status = "EXECUTING"
+        row.confirmed_at = datetime.now()
+        s.commit()
+    finally:
+        s.close()
+    assert svc.cleanup()["stranded_marked"] == 0
+    assert svc.get(p["order_ref"])["status"] == "EXECUTING"
 
 
 class TestMeasuredSlippage:

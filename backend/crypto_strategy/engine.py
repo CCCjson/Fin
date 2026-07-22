@@ -33,7 +33,7 @@ class CryptoStrategyEngine:
         try:
             from crypto_strategy.pending import crypto_pending_service
             cleaned = crypto_pending_service.cleanup()
-            if cleaned.get("expired_deleted") or cleaned.get("terminal_deleted"):
+            if any(cleaned.values()):
                 logger.info(f"crypto 策略引擎：清理待确认单 {cleaned}")
         except Exception as e:  # noqa: BLE001
             logger.warning(f"待确认单清理失败: {e}")

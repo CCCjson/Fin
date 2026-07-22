@@ -13,6 +13,9 @@
 - **无成本价**：币安现货账户不返回持仓成本，`avg_cost` 只能置当前价（`unrealized_pnl=0`）——
   真实盈亏靠 Jason 系统里的成交记录/对账另算，不从交易所猜。
 - **symbol 双形态**：对外用 `BTCUSDT.BN`，门面内部剥后缀调币安。
+- **下单幂等**：`submit_order` 收 `client_order_id`（透传币安 `newClientOrderId`）。请求超时/断连时
+  先按它回查真实状态再定性，查不出来就报 `OrderStatus.UNKNOWN` 交人工对账——**绝不乐观判失败**，
+  因为上层判失败会重排同向单，导致同一笔成交两次。
 
 ## 安全边界（不可移除）
 
@@ -389,10 +392,21 @@ class BinanceBroker(BaseBroker):
 
     # ── 下单 / 撤单 / 查单 ──────────────────────────────────────────────
     def submit_order(self, symbol: str, action: str, quantity: float,
-                     price: float | None = None) -> BrokerOrder:
-        """下单。**下单前按 LOT_SIZE 取整 + 校验 MIN_NOTIONAL**，否则币安拒单。"""
+                     price: float | None = None,
+                     client_order_id: str | None = None) -> BrokerOrder:
+        """下单。**下单前按 LOT_SIZE 取整 + 校验 MIN_NOTIONAL**，否则币安拒单。
+
+        Args:
+            client_order_id: 幂等键。**实盘路径必传**——请求超时/断连时（币安可能已经受理），
+                本方法会用它回查真实状态，而不是闷头判 FAILED。判 FAILED 的后果是上层
+                重排同向单 → Jason 再确认一次 → **同一笔成交两次**。传入值会经
+                `bt.safe_client_order_id()` 清洗成币安可接受的形态。
+                回查也失败（网络仍未恢复）→ 返回 `OrderStatus.UNKNOWN`，上层必须归到
+                「待人工对账」而非失败，见 `base.OrderStatus.UNKNOWN` 的说明。
+        """
         self._ensure_connected()
         from acquisition.markets import binance_trade as bt
+        cid = bt.safe_client_order_id(client_order_id) if client_order_id else None
         order = BrokerOrder(order_id="", symbol=symbol, action=action.upper(),
                             quantity=quantity, price=price, status=OrderStatus.PENDING,
                             submit_time=datetime.now())
@@ -413,26 +427,66 @@ class BinanceBroker(BaseBroker):
             # 限价单 price 必须对齐 PRICE_FILTER 的 tickSize，否则币安 -1013 拒单
             send_price = bt.round_price(price, filt.get("tick_size")) if price else None
             order.price = send_price
-            result = bt.place_order(symbol, action, qty, send_price)
-            order.order_id = str(result.get("orderId", ""))
-            order.status = _STATUS_MAP.get(result.get("status", ""), OrderStatus.SUBMITTED)
-            executed_qty = float(result.get("executedQty", 0) or 0)
-            order.filled_quantity = executed_qty
-            fills = result.get("fills", [])
-            if fills:
-                total_q = sum(float(f["qty"]) for f in fills)
-                total_v = sum(float(f["qty"]) * float(f["price"]) for f in fills)
-                order.filled_price = total_v / total_q if total_q else 0.0
-                order.commission = sum(float(f.get("commission", 0)) for f in fills)
-            elif price:
-                order.filled_price = price
+            result = bt.place_order(symbol, action, qty, send_price, client_order_id=cid)
+            self._apply_receipt(order, result, price)
             logger.info(f"币安下单: {action} {symbol} {qty} @ {price or 'MARKET'} "
                         f"→ order {order.order_id} status={order.status.value}")
         except Exception as e:  # noqa: BLE001
-            order.status = OrderStatus.FAILED
-            order.error_msg = str(e)
-            logger.error(f"币安下单异常: {e}")
+            self._recover_or_fail(order, e, symbol, cid, price)
         return order
+
+    @staticmethod
+    def _apply_receipt(order: BrokerOrder, result: dict, price: float | None) -> None:
+        """把币安回执灌进 BrokerOrder（下单回执与回查回执字段一致，故共用）。"""
+        order.order_id = str(result.get("orderId", ""))
+        order.status = _STATUS_MAP.get(result.get("status", ""), OrderStatus.SUBMITTED)
+        order.filled_quantity = float(result.get("executedQty", 0) or 0)
+        fills = result.get("fills", [])
+        if fills:
+            total_q = sum(float(f["qty"]) for f in fills)
+            total_v = sum(float(f["qty"]) * float(f["price"]) for f in fills)
+            order.filled_price = total_v / total_q if total_q else 0.0
+            order.commission = sum(float(f.get("commission", 0)) for f in fills)
+        else:
+            # 回查回执没有 fills 数组，但有累计成交额 cummulativeQuoteQty → 反推成交均价
+            quote = float(result.get("cummulativeQuoteQty", 0) or 0)
+            if order.filled_quantity > 0 and quote > 0:
+                order.filled_price = quote / order.filled_quantity
+            elif price:
+                order.filled_price = price
+
+    def _recover_or_fail(self, order: BrokerOrder, exc: Exception, symbol: str,
+                         cid: str | None, price: float | None) -> None:
+        """下单抛异常后的幂等恢复：请求可能已被币安受理，先回查再定性。
+
+        三种落点：
+          - 回查**查到订单** → 币安其实受理了，按真实回执填充（可能已成交）。绝不重下。
+          - 回查明确**不存在**（-2013）→ 真没受理，判 FAILED，上层可安全重排。
+          - **没有幂等键 或 回查本身也失败** → 状态不明，判 `UNKNOWN` 交人工对账。
+            ⛔ 这里绝不能乐观判 FAILED —— 那正是「同一笔成交两次」的来源。
+        """
+        from acquisition.markets import binance_trade as bt
+        if cid:
+            try:
+                found = bt.query_order_by_client_id(symbol, cid)
+            except Exception as probe_err:  # noqa: BLE001 — 回查也挂了 = 状态仍不明
+                order.status = OrderStatus.UNKNOWN
+                order.error_msg = (f"下单请求失败（{exc}），回查状态也失败（{probe_err}）"
+                                   f"；订单是否已提交未知，请去币安核对 clientOrderId={cid}")
+                logger.error(f"币安下单状态未知 {symbol} cid={cid}: {exc} / 回查: {probe_err}")
+                return
+            if found:
+                self._apply_receipt(order, found, price)
+                logger.warning(f"币安下单请求异常但订单已受理（幂等回查命中）"
+                               f"cid={cid} → order {order.order_id} status={order.status.value}")
+                return
+            order.status = OrderStatus.FAILED
+            order.error_msg = f"{exc}（已回查确认币安未受理该单）"
+            logger.error(f"币安下单失败（回查确认未受理）: {exc}")
+            return
+        order.status = OrderStatus.UNKNOWN
+        order.error_msg = f"下单异常且无幂等键可回查（{exc}）；请去币安核对是否已成交"
+        logger.error(f"币安下单异常且无幂等键: {exc}")
 
     def _split_id(self, order_id: str) -> tuple[str | None, str]:
         """币安撤单/查单需 symbol+orderId；基类签名只有 order_id，故支持 'SYMBOL.BN:orderId' 复合。"""

@@ -66,7 +66,8 @@ class _FakeBroker:
     def get_positions(self):
         return self._positions
 
-    def submit_order(self, symbol, action, qty, price):
+    def submit_order(self, symbol, action, qty, price, client_order_id=None):
+        self.last_client_order_id = client_order_id
         return self._order
 
 
@@ -125,6 +126,140 @@ class TestOrderRecording:
         assert env.data["executed"] is True
         assert env.data["partial"] is True
         assert recorded["trade"][0][0][3] == 0.004   # 只记已成交那部分
+
+    def test_partial_fill_on_terminal_status_still_recorded(self, monkeypatch):
+        """币安 EXPIRED→REJECTED 但 executedQty>0：只看 status 会把已买到的部分判成完全失败。
+
+        回归「幽灵持仓 + 重复买入」：不落台账 → 系统以为没花钱 → 账上却真多了币。
+        """
+        from trading_engine.brokers.base import BrokerOrder, OrderStatus
+        order = BrokerOrder(order_id="45", symbol="BTCUSDT.BN", action="BUY",
+                            quantity=0.01, price=49000, filled_quantity=0.006,
+                            filled_price=49000, status=OrderStatus.REJECTED)
+        env, recorded = self._run(monkeypatch, order)
+        assert env.data["executed"] is True
+        assert env.data["partial"] is True
+        assert recorded["trade"][0][0][3] == 0.006   # 成交那部分必须落账
+
+    def test_true_rejection_still_reported_failed(self, monkeypatch):
+        """真拒单（零成交 + 终态）仍判失败——别把止血改成放行。"""
+        from trading_engine.brokers.base import BrokerOrder, OrderStatus
+        order = BrokerOrder(order_id="", symbol="BTCUSDT.BN", action="BUY",
+                            quantity=0.01, price=49000, filled_quantity=0,
+                            status=OrderStatus.REJECTED, error_msg="余额不足")
+        env, recorded = self._run(monkeypatch, order)
+        assert env.data["executed"] is False
+        assert recorded["trade"] == [] and recorded["resting"] == []
+
+    def test_unknown_state_never_reported_as_failure(self, monkeypatch):
+        """状态未知不能说「失败了」——Jason 照着重下就会成交两次。"""
+        from trading_engine.brokers.base import BrokerOrder, OrderStatus
+        order = BrokerOrder(order_id="", symbol="BTCUSDT.BN", action="BUY",
+                            quantity=0.01, price=49000, filled_quantity=0,
+                            status=OrderStatus.UNKNOWN, error_msg="回查也超时")
+        env, recorded = self._run(monkeypatch, order)
+        assert env.data["state_unknown"] is True
+        assert recorded["trade"] == [] and recorded["resting"] == []
+        assert "可能已经成交" in env.message      # 明确提示别重下
+
+    def test_idempotency_key_is_passed_down(self, monkeypatch):
+        """聊天下单也必须带幂等键，否则超时重试会重复成交。"""
+        from acquisition.markets import binance_trade as bt
+        from agents.tools import crypto_tools
+        from trading_engine.brokers import binance_broker
+        from trading_engine.brokers.base import BrokerOrder, OrderStatus
+        order = BrokerOrder(order_id="46", symbol="BTCUSDT.BN", action="BUY",
+                            quantity=0.01, price=49000, filled_quantity=0.01,
+                            filled_price=49000, status=OrderStatus.FILLED)
+        broker = _FakeBroker(order=order, account={"spot_cash": 1e9})
+        monkeypatch.setattr(bt, "has_credentials", lambda: True)
+        monkeypatch.setattr(binance_broker, "get_binance_broker", lambda: broker)
+        monkeypatch.setattr(crypto_tools, "_crypto_broker_info", lambda b: {})
+        monkeypatch.setattr(crypto_tools, "_risk_check", lambda *a, **k: (True, [], []))
+        monkeypatch.setattr(crypto_tools, "_record_crypto_trade", lambda *a, **k: None)
+        crypto_tools.place_crypto_order("BTCUSDT.BN", "buy", quantity=0.01, price=49000)
+        assert broker.last_client_order_id and broker.last_client_order_id.startswith("FINCHAT-")
+
+
+class TestIdempotentRecovery:
+    """下单请求失联后的定性：查得到→按真实回执；确认没有→FAILED；查不出来→UNKNOWN。
+
+    ⛔ 最后一种绝不能乐观判 FAILED —— 那正是「同一笔成交两次」的来源。
+    """
+
+    @staticmethod
+    def _broker(monkeypatch, probe):
+        """构造一个 place_order 必抛、query_order_by_client_id 行为可控的 broker。"""
+        from acquisition.markets import binance_trade as bt
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        def _boom(*a, **k):
+            raise TimeoutError("read timeout")
+
+        monkeypatch.setattr(bt, "symbol_filters", lambda s: {})
+        monkeypatch.setattr(bt, "place_order", _boom)
+        monkeypatch.setattr(bt, "query_order_by_client_id", probe)
+        monkeypatch.setattr(bt, "ticker_price", lambda s: 50000.0)
+        broker = BinanceBroker()
+        broker._connected = True          # 跳过 connect 的真实探活
+        return broker
+
+    def test_probe_finds_order_so_not_failed(self, monkeypatch):
+        """币安其实受理了：按真实回执填充，绝不重下。"""
+        from trading_engine.brokers.base import OrderStatus
+        receipt = {"orderId": 777, "status": "FILLED", "executedQty": "0.01",
+                   "cummulativeQuoteQty": "500"}
+        broker = self._broker(monkeypatch, lambda s, c: receipt)
+        o = broker.submit_order("BTCUSDT.BN", "BUY", 0.01, None, client_order_id="CPO-x-1")
+        assert o.status == OrderStatus.FILLED
+        assert o.filled_quantity == 0.01
+        assert o.filled_price == 50000.0          # 500 / 0.01 反推
+        assert o.order_id == "777"
+
+    def test_probe_confirms_absent_so_failed(self, monkeypatch):
+        """回查明确「不存在」→ 判 FAILED，上层可安全重排。"""
+        from trading_engine.brokers.base import OrderStatus
+        broker = self._broker(monkeypatch, lambda s, c: None)
+        o = broker.submit_order("BTCUSDT.BN", "BUY", 0.01, None, client_order_id="CPO-x-2")
+        assert o.status == OrderStatus.FAILED
+
+    def test_probe_also_fails_so_unknown(self, monkeypatch):
+        """回查本身也挂了 → UNKNOWN，交人工对账。"""
+        from trading_engine.brokers.base import OrderStatus
+
+        def _probe_boom(s, c):
+            raise ConnectionError("still down")
+
+        broker = self._broker(monkeypatch, _probe_boom)
+        o = broker.submit_order("BTCUSDT.BN", "BUY", 0.01, None, client_order_id="CPO-x-3")
+        assert o.status == OrderStatus.UNKNOWN
+        assert "核对" in (o.error_msg or "")
+
+    def test_no_idempotency_key_is_unknown_not_failed(self, monkeypatch):
+        """没传幂等键就无从回查 → 只能 UNKNOWN，不许猜「失败了」。"""
+        from trading_engine.brokers.base import OrderStatus
+        broker = self._broker(monkeypatch, lambda s, c: None)
+        o = broker.submit_order("BTCUSDT.BN", "BUY", 0.01, None)
+        assert o.status == OrderStatus.UNKNOWN
+
+
+class TestSafeClientOrderId:
+    """币安 clientOrderId 约束 `^[\\.A-Z\\:/a-z0-9_-]{1,36}$`。"""
+
+    def test_order_ref_passes_through(self):
+        from acquisition.markets.binance_trade import safe_client_order_id
+        ref = "CPO-20260722102453-abc123"
+        assert safe_client_order_id(ref) == ref
+
+    def test_illegal_chars_replaced(self):
+        from acquisition.markets.binance_trade import safe_client_order_id
+        assert safe_client_order_id("a b#c") == "a-b-c"
+
+    def test_truncates_from_tail_keeping_entropy(self):
+        """超长要截尾部保留：随机后缀才是区分度，截头会让同秒两张单撞键。"""
+        from acquisition.markets.binance_trade import safe_client_order_id
+        out = safe_client_order_id("X" * 40 + "-tail99")
+        assert len(out) == 36 and out.endswith("-tail99")
 
 
 class TestConsecutiveLossReplay:

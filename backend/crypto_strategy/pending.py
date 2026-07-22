@@ -19,6 +19,14 @@ from loguru import logger
 _DEFAULT_EXPIRE_MIN = 60
 _DEFAULT_DRIFT = 0.02       # 无 spec 兜底漂移阈值
 _RETAIN_HOURS = 24          # 成交/失败单保留多久供前端展示后删
+# EXECUTING 超过这么久还没收尾 = 后端在成交途中挂了（restart.sh 就够），转 STALE 催人工对账
+_EXECUTING_STUCK_MIN = 15
+
+# 「未了结」状态集合：这些状态下交易所侧**可能已有仓位**，引擎不许再排同向单（见 has_open）。
+# STALE 只能由 Jason 对账后手动了结，系统绝不自己判它成没成交。
+_OPEN_STATUSES = ("PENDING", "EXECUTING", "STALE")
+# 终态：可以过保留期后清理掉
+_TERMINAL_STATUSES = ("FILLED", "FAILED", "UNFILLED")
 
 
 class PendingError(Exception):
@@ -53,6 +61,14 @@ class CryptoPendingOrderService:
     # ──────────────── 引擎侧：排单 + 去重 ────────────────
 
     def has_open(self, strategy_id: str, symbol: str, side: str) -> bool:
+        """该策略在该币上是否已有**未了结**的同向单（引擎据此去重，不重复排单）。
+
+        ⛔ 「未了结」必须包含 `EXECUTING` 和 `STALE`，不能只看 `PENDING`：
+          - `EXECUTING` = 正在成交中，或后端在成交途中挂掉留下的搁浅行；
+          - `STALE` = 下单后失联、成交与否未知，等 Jason 去币安对账。
+        这两种状态下交易所侧**可能已经有仓位**，此时再排一张同向单 → Jason 确认 → 重复买入。
+        宁可漏排一次（下 tick 条件仍成立会补），也不能重复下单。
+        """
         from data_engine.storage.models import CryptoPendingOrder
         session = self._session()
         try:
@@ -60,7 +76,7 @@ class CryptoPendingOrderService:
                 CryptoPendingOrder.strategy_id == strategy_id,
                 CryptoPendingOrder.symbol == symbol,
                 CryptoPendingOrder.side == side,
-                CryptoPendingOrder.status == "PENDING").first() is not None
+                CryptoPendingOrder.status.in_(_OPEN_STATUSES)).first() is not None
         finally:
             session.close()
 
@@ -103,12 +119,18 @@ class CryptoPendingOrderService:
     # ──────────────── 读 ────────────────
 
     def list_pending(self, *, status: str | None = "PENDING", limit: int = 100) -> list[dict]:
+        """列单。`status` 支持逗号分隔多状态（如 `"PENDING,STALE"`）；传 None 列全部。
+
+        前端默认拉 `PENDING,STALE`：**STALE（成交与否未知）必须让 Jason 看得见**，
+        否则它只在后台挡着重排、人却不知道有一笔单要去币安对账。
+        """
         from data_engine.storage.models import CryptoPendingOrder
         session = self._session()
         try:
             q = session.query(CryptoPendingOrder)
             if status:
-                q = q.filter(CryptoPendingOrder.status == status)
+                wanted = [s.strip() for s in status.split(",") if s.strip()]
+                q = q.filter(CryptoPendingOrder.status.in_(wanted))
             rows = q.order_by(CryptoPendingOrder.created_at.desc()).limit(limit).all()
             return [summary(r) for r in rows]
         finally:
@@ -129,23 +151,46 @@ class CryptoPendingOrderService:
     # ──────────────── 清理（引擎每 tick 先跑）：终态不堆积 ────────────────
 
     def cleanup(self, retain_hours: int = _RETAIN_HOURS) -> dict:
-        """过期 PENDING 立即删；成交/失败留 retain_hours 后删。返回删除计数。"""
+        """过期 PENDING 立即删；搁浅 EXECUTING 转 STALE；成交/失败留 retain_hours 后删。
+
+        ⛔ **搁浅的 EXECUTING 绝不能删、也绝不能当失败**：后端在「已置 EXECUTING、还没收尾」
+        之间挂掉（`restart.sh --backend` 就够）时，币安那边到底成没成交无人知道。删了它
+        `has_open` 就不再挡，引擎会重排 → 重复下单；判失败同理。只能转 STALE 挂着催人工对账。
+        """
         from data_engine.storage.models import CryptoPendingOrder
         session = self._session()
+        stranded: list = []
         try:
             now = datetime.now()
             expired = session.query(CryptoPendingOrder).filter(
                 CryptoPendingOrder.status == "PENDING",
                 CryptoPendingOrder.expires_at.isnot(None),
                 CryptoPendingOrder.expires_at < now).delete(synchronize_session=False)
+
+            # 搁浅的 EXECUTING → STALE（confirmed_at 为空的老行按 created_at 兜底判龄）
+            stuck_before = now - timedelta(minutes=_EXECUTING_STUCK_MIN)
+            stuck_rows = session.query(CryptoPendingOrder).filter(
+                CryptoPendingOrder.status == "EXECUTING").all()
+            for r in stuck_rows:
+                marker = r.confirmed_at or r.created_at
+                if marker and marker < stuck_before:
+                    r.status = "STALE"
+                    r.error_message = (f"确认后 {_EXECUTING_STUCK_MIN} 分钟未收尾"
+                                       f"（后端可能中途重启），成交与否未知，请去币安核对")
+                    stranded.append({"order_ref": r.order_ref, "symbol": r.symbol,
+                                     "side": r.side})
+
             cutoff = now - timedelta(hours=retain_hours)
             terminal = session.query(CryptoPendingOrder).filter(
-                CryptoPendingOrder.status.in_(("FILLED", "FAILED")),
+                CryptoPendingOrder.status.in_(_TERMINAL_STATUSES),
                 CryptoPendingOrder.created_at < cutoff).delete(synchronize_session=False)
             session.commit()
-            return {"expired_deleted": expired, "terminal_deleted": terminal}
         finally:
             session.close()
+        for s in stranded:      # session 外发告警，写库失败不影响清理结果
+            self._alert_needs_reconcile(s["order_ref"], s, "确认后未收尾（后端可能中途重启）")
+        return {"expired_deleted": expired, "terminal_deleted": terminal,
+                "stranded_marked": len(stranded)}
 
     # 向后兼容旧名（引擎旧调用点）
     def expire_stale(self) -> int:
@@ -161,39 +206,26 @@ class CryptoPendingOrderService:
                 CryptoPendingOrder.order_ref == order_ref).first()
             if not row:
                 raise PendingError(f"待确认单不存在：{order_ref}")
-            if row.status != "PENDING":
+            # STALE 也允许在此了结 —— 那是「Jason 已去币安对完账，把这张单清掉」的唯一出口。
+            # 不开这个口子，待对账单会永远挂着并一直挡住引擎重排。
+            if row.status not in ("PENDING", "STALE"):
                 raise PendingError(f"单状态为 {row.status}，不可拒绝")
+            was = row.status
             session.delete(row)          # 拒绝立即删，不堆积
             session.commit()
-            return {"order_ref": order_ref, "status": "REJECTED", "deleted": True}
+            return {"order_ref": order_ref, "status": "REJECTED", "deleted": True,
+                    "was": was}
         finally:
             session.close()
 
     def confirm(self, order_ref: str) -> dict:
         """确认成交 = **此刻重新决策**：重拉现价→重验触发条件→算漂移→现价重算币量→重跑风控→市价成交。"""
-        from data_engine.storage.models import CryptoPendingOrder
-
-        # 1) 取单 + 占位 EXECUTING（防并发双确认）
-        session = self._session()
-        try:
-            row = session.query(CryptoPendingOrder).filter(
-                CryptoPendingOrder.order_ref == order_ref).first()
-            if not row:
-                raise PendingError(f"待确认单不存在：{order_ref}")
-            if row.status != "PENDING":
-                raise PendingError(f"单状态为 {row.status}，不可确认（仅 PENDING 可）")
-            intent = {"strategy_id": row.strategy_id, "symbol": row.symbol, "side": row.side,
-                      "quote_amount": row.quote_amount, "quantity": row.quantity,
-                      "decision_price": row.price}
-            row.status = "EXECUTING"
-            row.confirmed_at = datetime.now()
-            session.commit()
-        finally:
-            session.close()
+        # 1) 原子抢占 PENDING → EXECUTING（真正防并发双确认）
+        intent = self._claim(order_ref)
 
         # 2) 此刻重新决策 + 成交（慢操作，session 外）
         try:
-            result = self._revalidate_and_execute(intent)
+            result = self._revalidate_and_execute(intent, order_ref)
         except Exception as e:  # noqa: BLE001
             self._finalize(order_ref, "FAILED", error=str(e))
             raise PendingError(f"成交异常：{e}") from e
@@ -202,17 +234,69 @@ class CryptoPendingOrderService:
             # 行情已变/条件不再成立 → 删掉这张陈单（引擎下 tick 若仍成立会重排新单）
             self._delete(order_ref)
             raise PendingError(result["reason"])
+        if result.get("unknown"):
+            # ⚠️ 下单请求发出后失联且回查未果 —— 既不能当成交也不能当失败（当失败会被重排 →
+            # 同一笔成交两次）。落 STALE 待人工对账，`has_open` 会继续挡住重排。
+            self._finalize(order_ref, "STALE", order_id=result.get("order_id"),
+                           error=result.get("reason"))
+            self._alert_needs_reconcile(order_ref, intent, result.get("reason") or "")
+            raise PendingError(result.get("reason") or "订单状态未知，请去币安核对")
         if not result.get("ok"):
             self._finalize(order_ref, "FAILED", error=result.get("reason"))
             raise PendingError(result.get("reason") or "成交失败")
-        self._finalize(order_ref, "FILLED", order_id=result.get("order_id"),
+        # 零成交 ≠ 成交：单列 UNFILLED，绝不复用 FILLED（否则前端弹「已确认成交」但一分钱没动）
+        status = "FILLED" if (result.get("fill_qty") or 0) > 0 else "UNFILLED"
+        self._finalize(order_ref, status, order_id=result.get("order_id"),
                        fill_price=result.get("fill_price"), fill_qty=result.get("fill_qty"),
-                       drift=result.get("drift"))
+                       drift=result.get("drift"), error=result.get("note"))
         return self.get(order_ref)
+
+    def _claim(self, order_ref: str) -> dict:
+        """把单从 PENDING 原子抢占为 EXECUTING，返回下单意图。抢不到就抛。
+
+        ⛔ **必须是条件更新**，不能「先 query 判状态、再赋值 commit」——那中间有窗口，
+        两个并发确认请求会双双读到 PENDING、双双置 EXECUTING、双双下真单。
+        `UPDATE ... WHERE status='PENDING'` 由数据库保证同一行只有一个赢家，
+        靠返回的受影响行数判断自己是不是赢家。
+        """
+        from data_engine.storage.models import CryptoPendingOrder
+        session = self._session()
+        try:
+            claimed = session.query(CryptoPendingOrder).filter(
+                CryptoPendingOrder.order_ref == order_ref,
+                CryptoPendingOrder.status == "PENDING",
+            ).update({"status": "EXECUTING", "confirmed_at": datetime.now()},
+                     synchronize_session=False)
+            session.commit()
+            if not claimed:
+                # 没抢到：单不存在，或已被另一个请求/另一个标签页确认过
+                row = session.query(CryptoPendingOrder).filter(
+                    CryptoPendingOrder.order_ref == order_ref).first()
+                if not row:
+                    raise PendingError(f"待确认单不存在：{order_ref}")
+                raise PendingError(f"单状态为 {row.status}，不可确认（仅 PENDING 可）")
+            row = session.query(CryptoPendingOrder).filter(
+                CryptoPendingOrder.order_ref == order_ref).first()
+            return {"strategy_id": row.strategy_id, "symbol": row.symbol, "side": row.side,
+                    "quote_amount": row.quote_amount, "quantity": row.quantity,
+                    "decision_price": row.price}
+        finally:
+            session.close()
+
+    def _alert_needs_reconcile(self, order_ref: str, intent: dict, reason: str) -> None:
+        """状态未知/执行中断 → 发风险告警催人工去币安对账。留痕失败不影响主流程。"""
+        try:
+            from business_events import RISK_ALERT, publish_event
+            publish_event(RISK_ALERT, source="crypto_strategy", symbol=intent.get("symbol"),
+                          title=f"待对账：{intent.get('side')} {intent.get('symbol')} "
+                                f"（单 {order_ref}）状态未知，请去币安核对是否已成交。{reason}",
+                          order_ref=order_ref)
+        except Exception:  # noqa: BLE001
+            pass
 
     # ──────────────── 此刻重新决策的核心 ────────────────
 
-    def _revalidate_and_execute(self, intent: dict) -> dict:
+    def _revalidate_and_execute(self, intent: dict, order_ref: str = "") -> dict:
         from acquisition.markets import binance_trade as bt
         if not bt.has_credentials():
             return {"ok": False, "reason": "币安 API key 未配置，无法成交"}
@@ -286,21 +370,39 @@ class CryptoPendingOrderService:
             if not spot_ok:
                 return {"ok": False, "reason": f"{spot_reason}，未下单"}
 
-        order = broker.submit_order(symbol, side, qty, None)   # None=市价，按现价成交
-        if order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.FAILED):
-            return {"ok": False, "reason": order.error_msg or "交易所拒单"}
+        # 幂等键用 order_ref：同一张待确认单无论重试多少次，落到币安都是同一个 clientOrderId
+        order = broker.submit_order(symbol, side, qty, None,   # None=市价，按现价成交
+                                    client_order_id=order_ref or None)
+
+        # ⛔ 判定顺序：**先看成交量，再看状态**。币安市价单在薄盘/价格带/STP 场景会返回
+        # EXPIRED（映射成 REJECTED）**同时带 executedQty > 0** —— 只看状态就会把「已经买到
+        # 一部分」判成完全失败：不落台账 → 系统以为没花钱，账上却真多了币 → 下 tick 重排
+        # 同向单 → 重复买入。
         filled = order.filled_quantity or 0.0
+        terminal_bad = order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED,
+                                        OrderStatus.FAILED)
+        if order.status == OrderStatus.UNKNOWN:
+            return {"unknown": True, "order_id": order.order_id,
+                    "reason": order.error_msg or "订单状态未知"}
         if filled <= 0:
-            ex.record_crypto_resting(symbol, side, None, order.order_id)
+            if terminal_bad:
+                return {"ok": False, "reason": order.error_msg or "交易所拒单"}
+            # 市价单却零成交（薄盘/交易对暂停）——已受理但没吃到量，不是成交也不是失败
+            ex.record_crypto_resting(symbol, side, None, order.order_id, order_type="MARKET")
             return {"ok": True, "order_id": order.order_id, "fill_price": None,
-                    "fill_qty": 0.0, "drift": round(drift, 4)}
+                    "fill_qty": 0.0, "drift": round(drift, 4),
+                    "note": "市价单零成交（未吃到量），请去币安核对"}
+
         fill_price = order.filled_price or cur
         ex.record_crypto_trade(symbol, side, fill_price, filled, order.order_id,
                                commission=order.commission or 0.0)
         if side == "SELL":
             ex.auto_sweep_to_earn(broker)
+        # terminal_bad 且 filled>0 = 部分成交后余量被撤/过期：成交那部分是**真的**，必须落账
+        partial = terminal_bad or filled < qty
         return {"ok": True, "order_id": order.order_id, "fill_price": fill_price,
-                "fill_qty": filled, "drift": round(drift, 4)}
+                "fill_qty": filled, "drift": round(drift, 4), "partial": partial,
+                "note": (f"部分成交 {filled:g}/{qty:g}，余量未成交" if partial else None)}
 
     # ──────────────── 小工具 ────────────────
 

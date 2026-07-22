@@ -16,7 +16,16 @@ class OrderStatus(Enum):
     FILLED = "FILLED"                # 完全成交
     CANCELLED = "CANCELLED"          # 已撤销
     REJECTED = "REJECTED"            # 已拒绝
-    FAILED = "FAILED"                # 失败
+    FAILED = "FAILED"                # 失败（确认没成交）
+    UNKNOWN = "UNKNOWN"              # ⚠️ 状态未知：请求发出后失联且回查未果，见下方说明
+
+
+# `UNKNOWN` 与 `FAILED` 的区别是**能不能安全重下**：
+#   FAILED  = 已确认交易所没受理 → 可以重下。
+#   UNKNOWN = 请求已发出但结果不明（超时/断连，且按 clientOrderId 回查也没拿到答案）→
+#             **绝不可重下**，必须人工去交易所核对。上层要把它单独归到「待人工对账」桶，
+#             不能当失败处理（当失败会触发重排 → 同一笔成交两次）。
+#             目前只有币安实盘路径会产生此状态，A 股/paper 永不产生。
 
 
 @dataclass

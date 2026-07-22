@@ -25,7 +25,10 @@ export interface CryptoPendingItem {
   quote_amount: number | null;
   price: number | null;
   est_notional: number | null;
-  status: string;             // PENDING|EXECUTING|FILLED|FAILED
+  // PENDING|EXECUTING|FILLED|UNFILLED|FAILED|STALE
+  //   UNFILLED = 已受理但零成交（不是成交也不是失败）
+  //   STALE    = 成交与否未知，等人工去币安对账；系统不会自行了结
+  status: string;
   net_edge: number | null;
   reason: Record<string, unknown> | null;
   created_at: string | null;

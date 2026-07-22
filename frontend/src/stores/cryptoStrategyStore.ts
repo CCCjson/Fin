@@ -40,11 +40,17 @@ interface CryptoStrategyState {
   disconnectWebSocket: () => void;
 }
 
-// 统一处理「动作 → 报错 toast → 刷新」的样板
-async function act(fn: () => Promise<unknown>, onDone: () => Promise<void>, okMsg?: string) {
+// 统一处理「动作 → 报错 toast → 刷新」的样板。
+// okMsg 支持传函数：需要按**返回结果**决定文案时用（比如「真成交了」还是「提交了但没吃到量」）。
+async function act(
+  fn: () => Promise<any>,
+  onDone: () => Promise<void>,
+  okMsg?: string | ((result: any) => string),
+) {
   try {
-    await fn();
-    if (okMsg) toast.success(okMsg);
+    const result = await fn();
+    const msg = typeof okMsg === 'function' ? okMsg(result) : okMsg;
+    if (msg) toast.success(msg);
     await onDone();
   } catch (e: any) {
     toast.error(e?.response?.data?.detail || e?.message || '操作失败');
@@ -69,7 +75,8 @@ export const useCryptoStrategyStore = create<CryptoStrategyState>((set, get) => 
 
   fetchPending: async () => {
     try {
-      const r = await svc.listPending('PENDING');
+      // 带上 STALE：成交与否未知的单必须让 Jason 看得见（否则只在后台挡重排，人不知情）
+      const r = await svc.listPending('PENDING,STALE');
       set({ pending: r.pending || [] });
     } catch { /* 静默 */ }
   },
@@ -92,8 +99,21 @@ export const useCryptoStrategyStore = create<CryptoStrategyState>((set, get) => 
   retire: (id) => act(() => svc.retire(id), () => get().fetchStrategies(), '已退役'),
   backtest: (id) => act(() => svc.backtest(id), () => get().fetchStrategies(), '回测完成'),
 
+  // ⛔ 别无条件说「已确认成交」：后端可能返回 UNFILLED（已受理但零成交）或部分成交。
+  // 谎报成交会让 Jason 以为仓位已建好，而交易所侧一分钱没动。文案一律看 fill_quantity。
   confirmPending: (ref) => act(() => svc.confirmPending(ref),
-    async () => { await get().fetchPending(); }, '已确认成交'),
+    async () => { await get().fetchPending(); },
+    (r: any) => {
+      const qty = Number(r?.fill_quantity || 0);
+      if (r?.status === 'UNFILLED' || qty <= 0) {
+        return '订单已提交，但未成交（没吃到量）—— 未计入台账，请去币安核对';
+      }
+      const ordered = Number(r?.quantity || 0);
+      const partial = ordered > 0 && qty < ordered;
+      return partial
+        ? `部分成交 ${qty} / 委托 ${ordered}，余量未成交`
+        : `已成交 ${qty}`;
+    }),
   rejectPending: (ref) => act(() => svc.rejectPending(ref),
     async () => { await get().fetchPending(); }),
 

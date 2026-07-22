@@ -76,13 +76,23 @@ def account() -> dict:
 
 
 def place_order(symbol: str, side: str, quantity: float,
-                price: float | None = None) -> dict:
-    """下单。price=None → MARKET，否则 LIMIT(GTC)。side=BUY/SELL。返回币安原始回执。签名。"""
+                price: float | None = None,
+                client_order_id: str | None = None) -> dict:
+    """下单。price=None → MARKET，否则 LIMIT(GTC)。side=BUY/SELL。返回币安原始回执。签名。
+
+    Args:
+        client_order_id: 幂等键，透传币安 `newClientOrderId`。**强烈建议传**：请求超时但币安
+            已受理时，调用方可用 `query_order_by_client_id()` 回查真实状态，避免误判失败后重下
+            造成同一笔成交两次。币安约束 `^[\\.A-Z\\:/a-z0-9_-]{1,36}$`，由 `safe_client_order_id()`
+            清洗保证。
+    """
     bn = to_binance_symbol(symbol)
     params: dict[str, Any] = {
         "symbol": bn, "side": side.upper(),
         "quantity": _fmt_num(quantity),
     }
+    if client_order_id:
+        params["newClientOrderId"] = client_order_id
     if price is None:
         params["type"] = "MARKET"
     else:
@@ -92,9 +102,45 @@ def place_order(symbol: str, side: str, quantity: float,
     return _signed_request("POST", "/api/v3/order", params)
 
 
+_CID_ALLOWED = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:/_-")
+
+
+def safe_client_order_id(raw: str) -> str:
+    """把任意字符串清洗成币安可接受的 clientOrderId（`^[\\.A-Z\\:/a-z0-9_-]{1,36}$`）。
+
+    非法字符换 `-`，超长截**尾部** 36 字符——我们的 ref 形如 `CPO-20260722102453-abc123`，
+    尾部的随机 hex 才是区分度所在，截头会让同秒排出的两张单撞成同一个键。
+    """
+    cleaned = "".join(c if c in _CID_ALLOWED else "-" for c in raw)
+    return cleaned[-36:] or "fin"
+
+
 def query_order(symbol: str, order_id: str) -> dict:
     return _signed_request("GET", "/api/v3/order",
                            {"symbol": to_binance_symbol(symbol), "orderId": order_id})
+
+
+def query_order_by_client_id(symbol: str, client_order_id: str) -> dict | None:
+    """按 clientOrderId 回查订单；**不存在返回 None**（而非抛异常）。
+
+    幂等恢复专用：下单请求超时/断连时，用它判断「币安到底受理了没有」。币安对查不到的单
+    返回 400 + code -2013 (Order does not exist)，这里翻译成 None，其余异常照抛（网络还没恢复
+    就不该假装「没下单」——那会导致重下）。
+    """
+    import requests
+    try:
+        return _signed_request("GET", "/api/v3/order",
+                               {"symbol": to_binance_symbol(symbol),
+                                "origClientOrderId": client_order_id})
+    except requests.HTTPError as e:
+        resp = getattr(e, "response", None)
+        if resp is not None and resp.status_code == 400:
+            try:
+                if (resp.json() or {}).get("code") == -2013:
+                    return None      # 确认币安没有这张单
+            except ValueError:
+                pass
+        raise
 
 
 def cancel_order(symbol: str, order_id: str) -> dict:

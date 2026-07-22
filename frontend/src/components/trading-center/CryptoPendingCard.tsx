@@ -27,6 +27,9 @@ export const CryptoPendingCard: React.FC<{
   const isBuy = order.side === 'BUY';
   const fired = (order.reason?.fired as string[] | undefined) || [];
   const composite = order.reason?.composite as number | undefined;
+  // STALE = 下单后失联/后端中途重启，币安那边成交与否未知。
+  // 绝不能让 Jason 在这个状态下点「确认成交」——那可能是在下第二笔单。
+  const stale = order.status === 'STALE';
 
   return (
     <div className="rounded-xl border border-border bg-dark-light/40 p-4 space-y-3">
@@ -41,8 +44,26 @@ export const CryptoPendingCard: React.FC<{
             <span className="text-xs text-gray-500">综合分 {composite}</span>
           )}
         </div>
-        <span className="text-xs text-yellow-400/80">{countdown(order.expires_at)}</span>
+        {stale ? (
+          <span className="px-2 py-0.5 rounded text-xs font-bold bg-orange-500/20 text-orange-400">
+            待对账
+          </span>
+        ) : (
+          <span className="text-xs text-yellow-400/80">{countdown(order.expires_at)}</span>
+        )}
       </div>
+
+      {/* 状态未知：这张单不能再点确认，只能人工去币安核对 */}
+      {stale && (
+        <div className="text-xs text-orange-300 bg-orange-500/10 rounded px-2 py-2 border border-orange-500/30">
+          ⚠️ <b>这笔单的成交状态未知</b>（下单后失联，或后端在成交途中重启）。
+          <b className="text-orange-200">币安那边可能已经成交了</b>，请先去币安查成交记录再决定下一步——
+          在这里再点确认可能会下第二笔单。核对完用「拒绝」把这张单清掉。
+          {order.error_message && (
+            <div className="mt-1 text-orange-400/70 font-mono">{order.error_message}</div>
+          )}
+        </div>
+      )}
 
       {/* 关键数据 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
@@ -93,10 +114,12 @@ export const CryptoPendingCard: React.FC<{
 
       {/* 操作 */}
       <div className="flex gap-2 pt-1">
-        <Button variant="primary" size="sm" loading={busy}
-          onClick={() => onConfirm(order.order_ref)}>确认成交</Button>
+        {!stale && (
+          <Button variant="primary" size="sm" loading={busy}
+            onClick={() => onConfirm(order.order_ref)}>确认成交</Button>
+        )}
         <Button variant="subtle" size="sm" disabled={busy}
-          onClick={() => onReject(order.order_ref)}>拒绝</Button>
+          onClick={() => onReject(order.order_ref)}>{stale ? '已核对，清掉这张单' : '拒绝'}</Button>
       </div>
     </div>
   );

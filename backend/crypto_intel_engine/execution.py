@@ -352,15 +352,23 @@ def record_crypto_trade(symbol: str, action: str, price: float, qty: float,
         logger.warning(f"crypto 决策留痕失败: {e}")
 
 
-def record_crypto_resting(symbol: str, action: str, price: float | None, order_id: str) -> None:
-    """限价单挂出（**未成交**）留痕：只写 DecisionLog(executed=False)。
+def record_crypto_resting(symbol: str, action: str, price: float | None, order_id: str,
+                          order_type: str = "LIMIT") -> None:
+    """订单已受理但**零成交**的留痕：只写 DecisionLog(executed=False)。
 
-    不发 ORDER_FILLED、不落成交台账 —— 挂单不是成交，成交后自然由 record_crypto_trade 记。
+    不发 ORDER_FILLED、不落成交台账 —— 未成交不是成交，成交后自然由 record_crypto_trade 记。
+
+    Args:
+        order_type: `LIMIT` = 限价单挂在盘口等撮合（正常状态）；`MARKET` = **市价单却零成交**，
+            这不正常（薄盘/交易对暂停/被撮合引擎拒），文案必须区分开——否则待确认单路径下的
+            市价单会被记成「限价单挂出，等待撮合」，Jason 按这句话去等一张根本不存在的挂单。
     """
+    note = ("币安限价单挂出（未成交，盘口等待撮合）" if order_type.upper() == "LIMIT"
+            else "币安市价单零成交（异常：薄盘/交易对暂停/被拒），请去币安核对")
     try:
         from decision_log import record_decision
         record_decision(source="crypto", symbol=symbol, action=action,
                         entry_price=price, executed=False, risk_passed=True,
-                        output_text=f"币安限价单挂出 order={order_id}（未成交，盘口等待撮合）")
+                        output_text=f"{note} order={order_id}")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"crypto 挂单留痕失败: {e}")
