@@ -217,3 +217,51 @@ common / net / data_engine.storage（基础层）
 | **commit** | 限定路径 | 一律 `git commit -- <path>`（仓库常有 Jason 预先 staged 的在制品，禁止全量提交） |
 
 配置统一放 `backend/pyproject.toml`（13.0 落地，含 pytest 根配置——现状没有任何 pytest 配置文件，要补）。
+
+---
+
+## 11. 时间与时区（2026-07-22 拍板）★
+
+真源：**`common/market_time.py`**。门禁：`tests/test_time_source_gate.py`（受管目录只增、白名单只减）。
+
+### 11.1 市场时区表
+
+| 市场 | 时区 | 依据 |
+|---|---|---|
+| `a_share` | `Asia/Shanghai` | 上交所/深交所 |
+| `hk_stock` | `Asia/Shanghai` | 港交所在 UTC+8，与上海对本项目等价 |
+| `us_stock` | `America/New_York` | NYSE/NASDAQ，**自带夏令时**，绝不写死 -5/-4 |
+| `crypto` | `UTC` | 币安日线 openTime/closeTime 是 UTC 00:00 边界、资金费率 UTC 00/08/16 结算、对账单按 UTC |
+
+### 11.2 两类时间，别混
+
+- **市场日（market day）**：行情日期、「当日」聚合窗口、新鲜度判定、持仓天数/信号年龄 → **必须**走 `market_time`。
+- **系统时刻（system instant）**：日志时间戳、缓存 TTL、重试退避、任务耗时 → 继续 `datetime.now()`，不归它管。
+
+服务器在 UTC+8，所以 A 股/港股用本地时间**恰好**是对的——这正是危险之处：错误只在美股和 crypto 上显形，而且是静默的。
+
+### 11.3 三条铁律
+
+1. **存储一律 naive UTC**。写库的 `DateTime` 列用 `utc_now()`，不用 `datetime.now()`，也不用 `server_default=func.now()`（SQLite 落 UTC 但与 Python 侧的本地时间同表混存，正是历史病根）。
+   `Column(Date)` 不受此约束——那是「交易日」不是「时刻」，由 11.1 的市场时区决定。
+2. **序列化一律带 offset**。返给前端的时间字段走 `utc_iso()`；前端一律走 `frontend/src/utils/datetime.ts`，**禁止字符串切片**（`.slice(5,16)` / `.split('T')[0]` / 直接 `{someTime}` 渲染）。裸 naive 串会被 JS 当本地时间解析，UTC 存储 + 裸串 = 整整差一个时区。
+3. **「当日」窗口用 `market_day_bounds()`**，禁止这两种写法：
+   - `DATE(col) = :today` —— 只在「列的时区恰好等于市场时区」时才对。crypto 实测本地凌晨的成交按这种写法查**恒为 0**，当日回撤熔断与费用护栏每天瞎 8 小时。
+   - `datetime.combine(date.today(), time.min)` —— 同病，更隐蔽。
+
+### 11.4 常见错法对照
+
+| ⛔ 别写 | ✅ 改写成 |
+|---|---|
+| `date.today()` | `market_today(market)` |
+| `datetime.now()`（写库） | `utc_now()` |
+| `datetime.now()`（判几点/交易时段） | `market_now(market)` |
+| `dt.date()`（问「这是哪天」） | `market_day_of(dt, market)` |
+| `datetime.combine(day, time.min)` | `market_day_bounds(market, day)` |
+| `str(row.created_at)` / `.isoformat()` | `utc_iso(row.created_at)` |
+
+`datetime.now(tz)` **带参**的不被门禁咬——它已显式声明时区，不是要防的「隐式本地时间」。
+
+### 11.5 不做交易日历
+
+`market_time` 只回答「今天是几号」，**不回答「今天开不开市」**。项目至今没有交易日历（见 `daily_pipeline_scheduler.py` 与 `recommend_engine/session.py:30` 的注释），两件事分开，别在本模块里长出节假日表。
