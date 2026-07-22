@@ -13,11 +13,13 @@
 按批次回顾比按报告周期回顾更贴合实际。因此这里不按 report_type 过滤。
 """
 import json
-from datetime import date, datetime, time
+from datetime import date, datetime
 
 from loguru import logger
 from sqlalchemy import func
 
+from common.market import A_SHARE
+from common.market_time import market_day_bounds, market_day_of
 from data_engine.storage.models import DecisionLog
 from report_engine.prompt_builder import PROMPT_VERSION as _PROMPT_VERSION
 
@@ -87,7 +89,10 @@ def fetch_last_picks(session, before: date) -> tuple[list[dict], date | None]:
         (recs, batch_date)。recs 逐字还原旧 `top_stocks.buy_recommendations` 里
         回算逻辑用得上的那几个键；没有任何历史推荐时返回 ([], None)。
     """
-    cutoff = datetime.combine(before, time.min)
+    # ⛔ `DecisionLog.created_at` 是 `server_default=func.now()` 写的 → SQLite 落 **UTC**，
+    # 而原来的边界按**本地**零点构造，差 8 小时。推荐批次是按「北京的哪一天」分组的，
+    # 所以日界要按 A 股市场日切、再换算成列的 UTC 口径。
+    cutoff = market_day_bounds(A_SHARE, before, storage="utc")[0]
     base = session.query(DecisionLog).filter(
         DecisionLog.source == PICKS_SOURCE,
         DecisionLog.action == "BUY",
@@ -101,11 +106,13 @@ def fetch_last_picks(session, before: date) -> tuple[list[dict], date | None]:
 
     if isinstance(last_ts, str):          # SQLite 在某些驱动下回字符串
         last_ts = datetime.fromisoformat(last_ts)
-    batch_date = last_ts.date()
-
+    # 同理：`last_ts` 是 UTC 时刻，它属于**北京的哪一天**要用 market_day_of 判，
+    # 裸 `.date()` 会把北京 00:00–08:00 出的那批推荐算到前一天去。
+    batch_date = market_day_of(last_ts, A_SHARE)
+    batch_start, batch_end = market_day_bounds(A_SHARE, batch_date, storage="utc")
     rows = base.filter(
-        DecisionLog.created_at >= datetime.combine(batch_date, time.min),
-        DecisionLog.created_at <= datetime.combine(batch_date, time.max),
+        DecisionLog.created_at >= batch_start,
+        DecisionLog.created_at < batch_end,
     ).order_by(DecisionLog.confidence.desc()).all()
 
     recs = [{

@@ -12,9 +12,11 @@ from common.market import A_SHARE, CRYPTO, HK_STOCK, US_STOCK
 from common.market_time import (
     MARKET_TZ,
     UTC,
+    from_market_naive,
     market_day_bounds,
     market_day_of,
     market_now,
+    market_range_bounds,
     market_today,
     to_market_tz,
     tz_of,
@@ -147,6 +149,62 @@ class TestMarketDayBounds:
             l_start, l_end = market_day_bounds(market, date(2026, 7, 22), storage="naive_local")
             assert l_start.replace(tzinfo=local_tz).astimezone(UTC).replace(tzinfo=None) == u_start
             assert l_end.replace(tzinfo=local_tz).astimezone(UTC).replace(tzinfo=None) == u_end
+
+
+class TestFromMarketNaive:
+    """HTTP query 传进来的 naive datetime 是**市场墙钟**，不是 UTC。"""
+
+    def test_shanghai_wall_clock_to_utc(self):
+        assert from_market_naive(datetime(2026, 7, 22, 9, 30), A_SHARE) == \
+            datetime(2026, 7, 22, 1, 30)
+
+    def test_new_york_wall_clock_to_utc(self):
+        # 美东 7 月是 EDT (UTC-4)
+        assert from_market_naive(datetime(2026, 7, 22, 9, 30), US_STOCK) == \
+            datetime(2026, 7, 22, 13, 30)
+
+    def test_crypto_is_identity(self):
+        dt = datetime(2026, 7, 22, 9, 30)
+        assert from_market_naive(dt, CRYPTO) == dt
+
+    def test_none_passes_through(self):
+        assert from_market_naive(None, A_SHARE) is None
+
+    def test_aware_input_is_converted_not_reinterpreted(self):
+        aware = datetime(2026, 7, 22, 9, 30, tzinfo=timezone(timedelta(hours=8)))
+        assert from_market_naive(aware, US_STOCK) == datetime(2026, 7, 22, 1, 30)
+
+    def test_round_trips_with_to_market_tz(self):
+        for market in (A_SHARE, US_STOCK, CRYPTO):
+            wall = datetime(2026, 7, 22, 9, 30)
+            back = to_market_tz(from_market_naive(wall, market), market)
+            assert back.replace(tzinfo=None) == wall
+
+
+class TestMarketRangeBounds:
+    """按日期区间筛记录 —— 替代 `fromisoformat(end + " 23:59:59")` 那个写法。"""
+
+    def test_inclusive_start_exclusive_next_day(self):
+        start, end = market_range_bounds(CRYPTO, date(2026, 7, 20), date(2026, 7, 22))
+        assert start == datetime(2026, 7, 20, 0, 0)
+        assert end == datetime(2026, 7, 23, 0, 0), "end_day 当天要整天包含在内"
+
+    def test_open_ended_sides(self):
+        assert market_range_bounds(CRYPTO, None, date(2026, 7, 22))[0] is None
+        assert market_range_bounds(CRYPTO, date(2026, 7, 20), None)[1] is None
+        assert market_range_bounds(CRYPTO) == (None, None)
+
+    def test_last_fraction_of_a_second_is_not_lost(self):
+        """`23:59:59` 的写法会漏掉 23:59:59.7 那条；半开区间不会。"""
+        _, end = market_range_bounds(CRYPTO, None, date(2026, 7, 22))
+        edge = datetime(2026, 7, 22, 23, 59, 59, 700000)
+        assert edge < end
+        assert not edge <= datetime(2026, 7, 22, 23, 59, 59), "这就是被修掉的行为"
+
+    def test_shanghai_range_shifts_into_utc(self):
+        start, end = market_range_bounds(A_SHARE, date(2026, 7, 20), date(2026, 7, 22))
+        assert start == datetime(2026, 7, 19, 16, 0)
+        assert end == datetime(2026, 7, 22, 16, 0)
 
 
 class TestUtcIso:

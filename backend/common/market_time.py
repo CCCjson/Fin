@@ -110,6 +110,22 @@ def to_market_tz(dt: datetime, market: str | None) -> datetime:
     return _as_aware_utc(dt).astimezone(tz_of(market))
 
 
+def from_market_naive(dt: datetime | None, market: str | None) -> datetime | None:
+    """**市场时区的 naive 墙钟** → naive UTC（`to_market_tz` 的逆）。
+
+    用在「调用方给了一个没带时区的时刻，而它表达的是那个市场的墙钟」这种边界上 ——
+    典型是 HTTP query 里的 `?start_date=2026-07-20T09:30`：FastAPI 解析出的是 naive
+    datetime，语义是 Jason 眼里的 09:30，但要拿去比的列存的是 UTC。
+
+    `None` 原样返回（「这一端不设限」）。已带时区的直接换算成 UTC。
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(UTC).replace(tzinfo=None)
+    return dt.replace(tzinfo=tz_of(market)).astimezone(UTC).replace(tzinfo=None)
+
+
 def market_day_of(dt: datetime, market: str | None) -> date:
     """一个存储时刻属于该市场的**哪一天**。
 
@@ -150,6 +166,26 @@ def market_day_bounds(market: str | None, day: date | None = None, *,
     target = _LOCAL if storage == "naive_local" else UTC
     return (start_local.astimezone(target).replace(tzinfo=None),
             end_local.astimezone(target).replace(tzinfo=None))
+
+
+def market_range_bounds(market: str | None, start_day: date | None = None,
+                        end_day: date | None = None, *,
+                        storage: Storage = "utc") -> tuple[datetime | None, datetime | None]:
+    """用户传的起止**日期** → 存储口径的半开区间 `[start, end)`，两端都是 naive。
+
+    专治「按日期区间筛记录」这个形态。返回 `None` 表示那一端不设限。
+
+    ⛔ 替代 `datetime.fromisoformat(end_date + " 23:59:59")` 这种写法。它有两个毛病：
+      1. **把日期当本地时间解读**，而列可能存 UTC —— 那就整体错一个时区；
+      2. `23:59:59` 是**闭区间且丢精度** —— `23:59:59.7` 落在窗口外，那一秒的记录会
+         凭空消失。半开区间没有这个洞。
+
+    Args:
+        storage: 目标列的存储口径，同 `market_day_bounds`。
+    """
+    start = market_day_bounds(market, start_day, storage=storage)[0] if start_day else None
+    end = market_day_bounds(market, end_day, storage=storage)[1] if end_day else None
+    return start, end
 
 
 # ──────────────── 序列化 ────────────────

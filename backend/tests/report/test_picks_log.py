@@ -9,7 +9,7 @@
 
 用内存 SQLite，不碰生产库。
 """
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -21,6 +21,18 @@ from report_engine import picks_log
 pytestmark = pytest.mark.baseline
 
 TODAY = date(2026, 7, 10)
+
+
+def _sh(y, m, d, hh=0, mm=0) -> datetime:
+    """按**北京墙钟**写用例，返回列里真正存的 naive UTC 值。
+
+    `DecisionLog.created_at` 是 `server_default=func.now()` 写的 → SQLite 落 **UTC**，
+    而「上期推荐是哪一批」是按 Jason 的北京日历分的。用例里直接写北京时间可读，
+    换算收在这一个函数里。（原来用例直接把北京墙钟当列值写，等于假设列存本地时间 ——
+    那正是 `picks_log` 里被修掉的那个 8 小时错位。）
+    """
+    return (datetime(y, m, d, hh, mm, tzinfo=timezone(timedelta(hours=8)))
+            .astimezone(timezone.utc).replace(tzinfo=None))
 
 
 @pytest.fixture
@@ -51,12 +63,12 @@ def test_no_history_returns_empty(session):
 
 
 def test_fetches_only_the_latest_batch(session):
-    old = datetime(2026, 7, 1, 9, 0)
-    latest = datetime(2026, 7, 8, 15, 30)
+    old = _sh(2026, 7, 1, 9, 0)
+    latest = _sh(2026, 7, 8, 15, 30)
     session.add_all([
         _row("600000.SH", old),
         _row("600519.SH", latest),
-        _row("000001.SZ", datetime(2026, 7, 8, 15, 31)),   # 同一天，同批
+        _row("000001.SZ", _sh(2026, 7, 8, 15, 31)),        # 同一天，同批
     ])
     session.commit()
 
@@ -66,7 +78,7 @@ def test_fetches_only_the_latest_batch(session):
 
 
 def test_ignores_other_sources_and_actions(session):
-    ts = datetime(2026, 7, 8, 10, 0)
+    ts = _sh(2026, 7, 8, 10, 0)
     session.add_all([
         _row("600519.SH", ts),
         _row("000001.SZ", ts, source="moneybill_recommend"),   # 别的引擎写的
@@ -81,8 +93,8 @@ def test_ignores_other_sources_and_actions(session):
 def test_excludes_picks_made_on_or_after_current_period_end(session):
     """「上期」必须严格早于本期截止日，否则会拿今天刚推的票回顾今天。"""
     session.add_all([
-        _row("600519.SH", datetime.combine(TODAY, datetime.min.time())),
-        _row("600000.SH", datetime(2026, 7, 9, 23, 59)),
+        _row("600519.SH", _sh(2026, 7, 10, 0, 0)),     # 北京 07-10 零点整 = 本期，排除
+        _row("600000.SH", _sh(2026, 7, 9, 23, 59)),    # 北京 07-09 深夜 = 上期，要取到
     ])
     session.commit()
 
@@ -93,7 +105,7 @@ def test_excludes_picks_made_on_or_after_current_period_end(session):
 
 def test_rec_dict_shape_matches_what_the_scoring_loop_expects(session):
     """回算逻辑读 symbol/name/price/stop_loss/take_profit/strategy/composite_score。"""
-    session.add(_row("600519.SH", datetime(2026, 7, 8, 10, 0), price=1700.0,
+    session.add(_row("600519.SH", _sh(2026, 7, 8, 10, 0), price=1700.0,
                      confidence=88.5, name="贵州茅台"))
     session.commit()
 
@@ -122,14 +134,14 @@ def test_strategy_text_handles_every_reasons_shape(reasons, expected):
 
 def test_missing_confidence_becomes_empty_string_not_none(session):
     """旧 rec dict 里 composite_score 缺失时是 ""，prompt 直接拼进模板。"""
-    session.add(_row("600519.SH", datetime(2026, 7, 8, 10, 0), confidence=None))
+    session.add(_row("600519.SH", _sh(2026, 7, 8, 10, 0), confidence=None))
     session.commit()
     recs, _ = picks_log.fetch_last_picks(session, TODAY)
     assert recs[0]["composite_score"] == ""
 
 
 def test_batch_ordered_by_score_desc(session):
-    ts = datetime(2026, 7, 8, 10, 0)
+    ts = _sh(2026, 7, 8, 10, 0)
     session.add_all([_row("600000.SH", ts, confidence=70.0),
                      _row("600519.SH", ts + timedelta(seconds=1), confidence=90.0)])
     session.commit()
@@ -185,7 +197,7 @@ def test_previous_recommendations_end_to_end_still_scores(session):
     """换了数据源之后，那 220 行止盈/止损/胜率回算必须照常算得出来。"""
     from report_engine.data_collector import ReportDataCollector
 
-    rec_day = datetime(2026, 7, 6, 15, 0)
+    rec_day = _sh(2026, 7, 6, 15, 0)
     # 一只触止盈、一只触止损、一只没数据
     session.add_all([
         _row("600519.SH", rec_day, price=100.0, confidence=90.0),   # sl=95, tp=110

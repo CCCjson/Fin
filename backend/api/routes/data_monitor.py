@@ -5,7 +5,7 @@
 POST /data/update-daily/stream，本模块不重复实现。
 """
 import asyncio
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from loguru import logger
 
 from common.market import A_SHARE
-from common.market_time import market_today
+from common.market_time import market_day_bounds, market_now, market_today
 from sqlalchemy import func
 
 from data_engine.health import get_coverage, get_freshness
@@ -188,10 +188,15 @@ def _catch_up(session, scheduler_status: dict) -> dict:
     is_weekday = today.weekday() < 5
 
     # 今天是否已有日线更新记录（手动「立即更新」也会写 → 补跑后自动消失）
-    today_start = datetime.combine(today, time.min)
+    #
+    # ⚠️ `DataUpdateLog.started_at` 是 **Python 侧 `datetime.now()` 写的本地时间**
+    # （不是 server_default，库里那些值带微秒就是证据），所以边界用 `storage="naive_local"`。
+    # 等全库时间列翻成 UTC 之后，这里连同写入侧一起改成默认的 `storage="utc"`。
+    today_start, today_end = market_day_bounds(A_SHARE, today, storage="naive_local")
     updated_today = session.query(DataUpdateLog.id).filter(
         DataUpdateLog.update_type.in_(["daily", "daily_incremental"]),
         DataUpdateLog.started_at >= today_start,
+        DataUpdateLog.started_at < today_end,
     ).first() is not None
 
     # 上次日线更新的日期（提示里展示「数据还停在哪天」）
@@ -206,7 +211,9 @@ def _catch_up(session, scheduler_status: dict) -> dict:
     sh = scheduler_status.get("scheduled_hour", 15)
     sm = scheduler_status.get("scheduled_minute", 35)
     scheduled_time = f"{sh:02d}:{sm:02d}"
-    past_scheduled = datetime.now() >= datetime.combine(today, time(sh, sm))
+    # 「现在过没过 15:35」按 A 股墙钟判（两边同为该市场时区，不跨口径）
+    now_sh = market_now(A_SHARE)
+    past_scheduled = (now_sh.hour, now_sh.minute) >= (sh, sm)
 
     needed = bool(
         scheduler_status.get("enabled")

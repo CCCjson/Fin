@@ -21,6 +21,8 @@ from loguru import logger
 from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy import case as sql_case
 
+from common.market import A_SHARE, infer_market_from_symbol
+from common.market_time import market_day_of, market_range_bounds, market_today
 from common.outcome_eval import (
     ENGINE_VERSION,
     MAX_WINDOW,
@@ -183,6 +185,18 @@ def record_decision(
         return None
 
 
+
+def _range_bounds(start_date: Optional[str], end_date: Optional[str]):
+    """用户传的 `YYYY-MM-DD` 起止 → `DecisionLog.created_at`（**UTC 列**）的半开区间。
+
+    日期串表达的是「北京的哪一天」（UI 和 agent 都按 Jason 的视角传），而列是
+    `server_default=func.now()` 落的 UTC —— 直接 `fromisoformat` 当 naive 比会整体错 8 小时。
+    """
+    sd = date.fromisoformat(start_date) if start_date else None
+    ed = date.fromisoformat(end_date) if end_date else None
+    return market_range_bounds(A_SHARE, sd, ed, storage="utc")
+
+
 def _to_dict(r: DecisionLog) -> Dict[str, Any]:
     def _load(s):
         if not s:
@@ -259,10 +273,13 @@ def query_decisions(
             q = q.filter(DecisionLog.action == action)
         if outcome_status:
             q = q.filter(DecisionLog.outcome_status == outcome_status)
-        if start_date:
-            q = q.filter(DecisionLog.created_at >= datetime.fromisoformat(start_date))
-        if end_date:
-            q = q.filter(DecisionLog.created_at <= datetime.fromisoformat(end_date + " 23:59:59"))
+        # 用户传的是**北京的日期**，而 created_at 存 UTC —— 必须换算，别直接当 naive 比。
+        # 顺带干掉 `+ " 23:59:59"`：那是闭区间且丢精度，23:59:59.7 那条会凭空消失。
+        rs, re_ = _range_bounds(start_date, end_date)
+        if rs:
+            q = q.filter(DecisionLog.created_at >= rs)
+        if re_:
+            q = q.filter(DecisionLog.created_at < re_)
         total = q.count()
         rows = (q.order_by(DecisionLog.created_at.desc())
                 .offset(offset).limit(limit).all())
@@ -375,13 +392,20 @@ def backfill_outcomes() -> Dict[str, int]:
         for q in all_quotes:
             quotes_by_symbol[q.symbol].append(q)
 
-        today = date.today()
         stats = {"total": len(rows), "completed": 0, "pending": 0, "unable": 0, "errors": 0}
 
         for row in rows:
             # 逐条容错：单条炸了不许拖垮整批（抄 validator.py:53-59）
             try:
-                created = row.created_at.date() if row.created_at else today
+                # ⛔ 两边都必须按**这一行自己市场**的日历算：
+                #   - `created_at` 是 `server_default=func.now()` 落的 **UTC**
+                #   - 原来的 `date.today()` 是**服务器本地**
+                # 于是北京 00:00–08:00 创建的建议 `age_days` 恒偏大 1 天，直接影响
+                # `outcome_eval` 的 stale 判定与胜负归档。decision_logs 里 A 股和 crypto
+                # 混存（crypto 的市场日是 UTC），所以只能逐行按 symbol 推市场。
+                mkt = infer_market_from_symbol(row.symbol)
+                today = market_today(mkt)
+                created = market_day_of(row.created_at, mkt) if row.created_at else today
                 sym_quotes = quotes_by_symbol.get(row.symbol or "", [])
                 # 建议**当天不算**，从次日第一根开始（同 signal_tracker.py:113）。
                 # 内存切片 [:20] 直接就是 20 个交易日 —— 免掉日历日换算。
@@ -486,10 +510,11 @@ def get_decision_stats(
         filters.append(DecisionLog.symbol == symbol)
     if source:
         filters.append(DecisionLog.source == source)
-    if start_date:
-        filters.append(DecisionLog.created_at >= datetime.fromisoformat(start_date))
-    if end_date:
-        filters.append(DecisionLog.created_at <= datetime.fromisoformat(end_date + " 23:59:59"))
+    rs, re_ = _range_bounds(start_date, end_date)
+    if rs:
+        filters.append(DecisionLog.created_at >= rs)
+    if re_:
+        filters.append(DecisionLog.created_at < re_)
 
     def _cnt(cond):
         return func.sum(sql_case((cond, 1), else_=0))

@@ -12,7 +12,7 @@ from pathlib import Path
 from loguru import logger
 
 from common.market import A_SHARE
-from common.market_time import market_today
+from common.market_time import market_day_bounds, market_today
 from dotenv import load_dotenv
 
 from data_engine.storage.database import get_session
@@ -752,14 +752,15 @@ class ReviewService:
 
     def _get_day_decisions(self, session, review_date: date) -> List[Dict[str, Any]]:
         """获取当日所有已决策的 PendingOrder（status != PENDING）"""
-        day_start = datetime.combine(review_date, datetime.min.time())
-        day_end = datetime.combine(review_date, datetime.max.time())
-
+        # ⛔ `PendingOrder.created_at` 是 `server_default=func.now()` 写的，SQLite 落 **UTC**，
+        # 而原来的边界是**本地**零点/午夜 —— 两者差 8 小时，复盘按日归集会把北京
+        # 00:00–08:00 的决策算到前一天、把 16:00–24:00 的漏掉。
+        day_start, day_end = market_day_bounds(A_SHARE, review_date, storage="utc")
         orders = (
             session.query(PendingOrder)
             .filter(
                 PendingOrder.created_at >= day_start,
-                PendingOrder.created_at <= day_end,
+                PendingOrder.created_at < day_end,
                 PendingOrder.status != "PENDING",
             )
             .order_by(PendingOrder.created_at.asc())

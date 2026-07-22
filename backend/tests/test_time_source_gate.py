@@ -63,7 +63,7 @@ _ALLOWED: dict[str, int] = {
     "data_engine/deep_history/a_share_job.py": 1,
     "data_engine/engine.py": 2,
     "data_engine/financial_updater.py": 2,
-    "data_engine/storage/history_repository.py": 9,
+    "data_engine/storage/history_repository.py": 6,
     "data_engine/storage/repository.py": 3,
 }
 

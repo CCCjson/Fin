@@ -7,6 +7,9 @@ import json
 from sqlalchemy.orm import Session
 from loguru import logger
 
+from common.market import A_SHARE
+from common.market_time import from_market_naive, market_today, utc_now
+
 from .models import Signal, BacktestTask, BacktestResult, Order, Trade
 from .database import get_session
 from .repository import get_stock_names
@@ -140,7 +143,7 @@ class HistoryRepository:
 
         if days is not None:
             from datetime import timedelta
-            cutoff_date = datetime.now().date() - timedelta(days=days)
+            cutoff_date = market_today(A_SHARE) - timedelta(days=days)
             query = query.filter(Signal.date >= cutoff_date)
 
         row = query.one()
@@ -482,17 +485,21 @@ class HistoryRepository:
             query = query.filter(Order.symbol == symbol)
         if status:
             query = query.filter(Order.status == status)
+        # 调用方传的 naive datetime 是**北京墙钟**（HTTP query 解析出来的），
+        # 而 `created_at` 是 server_default 落的 UTC —— 直接比会整体错 8 小时
         if start_date:
-            query = query.filter(Order.created_at >= start_date)
+            query = query.filter(Order.created_at >= from_market_naive(start_date, A_SHARE))
         if end_date:
-            query = query.filter(Order.created_at <= end_date)
+            query = query.filter(Order.created_at <= from_market_naive(end_date, A_SHARE))
 
         return query.order_by(Order.created_at.desc()).limit(limit).all()
 
     def get_order_statistics(self, account_id: str, days: int = 30) -> Dict:
         """获取订单统计"""
         from datetime import timedelta
-        cutoff_date = datetime.now() - timedelta(days=days)
+        # ⛔ `Order.created_at` 是 `server_default=func.now()` 写的 → SQLite 落 **UTC**，
+        # 拿本地 now 减出来的 cutoff 去比，窗口会凭空短 8 小时。
+        cutoff_date = utc_now() - timedelta(days=days)
 
         orders = self.session.query(Order).filter(
             Order.account_id == account_id,
@@ -565,16 +572,17 @@ class HistoryRepository:
         if symbol:
             query = query.filter(Trade.symbol == symbol)
         if start_date:
-            query = query.filter(Trade.executed_at >= start_date)
+            query = query.filter(Trade.executed_at >= from_market_naive(start_date, A_SHARE))
         if end_date:
-            query = query.filter(Trade.executed_at <= end_date)
+            query = query.filter(Trade.executed_at <= from_market_naive(end_date, A_SHARE))
 
         return query.order_by(Trade.executed_at.desc()).limit(limit).all()
 
     def get_trade_statistics(self, account_id: str, days: int = 30) -> Dict:
         """获取成交统计"""
         from datetime import timedelta
-        cutoff_date = datetime.now() - timedelta(days=days)
+        # 同上：`Trade.executed_at` 也是 server_default → UTC 列
+        cutoff_date = utc_now() - timedelta(days=days)
 
         trades = self.session.query(Trade).filter(
             Trade.account_id == account_id,

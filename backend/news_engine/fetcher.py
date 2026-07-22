@@ -9,6 +9,8 @@ from typing import Dict, Generator, List, Optional
 from dotenv import load_dotenv
 from common.market import to_bare_code
 from loguru import logger
+
+from common.market_time import utc_now
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from acquisition.markets.finnhub_news import (
@@ -339,8 +341,9 @@ class NewsFetcher:
         session = get_session()
         new_ids: List[str] = []
         # fetched_at 由 server_default=func.now() 写入，SQLite 存的是 UTC——去重窗口也必须
-        # 用 utcnow()，否则跟本地时间(CST=UTC+8)比会把窗口凭空缩短 8 小时。
-        dup_window = datetime.utcnow() - timedelta(hours=48)
+        # 按 UTC 算，否则跟本地时间(CST=UTC+8)比会把窗口凭空缩短 8 小时。
+        # （本来就是对的，这里只是收口到 common.market_time；datetime.utcnow 已弃用）
+        dup_window = utc_now() - timedelta(hours=48)
         try:
             for art in articles:
                 existing = session.query(NewsArticle).filter_by(article_id=art["article_id"]).first()
