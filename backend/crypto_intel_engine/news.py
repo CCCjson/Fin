@@ -23,6 +23,8 @@ from typing import Any
 
 from loguru import logger
 
+from common.market_time import utc_now
+
 # ──────────────────── 硬否决事件规则 ────────────────────
 # (正则, 事件类型, 人话说明)。全部小写匹配。
 _HARD_EVENT_RULES: list[tuple[str, str, str]] = [
@@ -223,7 +225,10 @@ def aggregate_sentiment(symbol: str, *, days: int = 7) -> dict:
 
     base = base_asset(symbol)
     aliases = asset_aliases(symbol)      # 媒体写「Bitcoin」不写「BTC」，没别名会全都匹配不上
-    since = datetime.now() - timedelta(days=days)
+    # ⛔ crypto 新闻的 `published_at` 落的是 **UTC**（`crypto_news._ms_to_dt` 给的是
+    # aware UTC，写库时 offset 被剥掉）——实测库里 crypto 行是 04:23、A股行是 15:21，
+    # 同一列两种口径。这里按 UTC 切才对得上 crypto 那批。
+    since = utc_now() - timedelta(days=days)
     session = get_session()
     try:
         rows = (session.query(NewsArticle, NewsSentiment)

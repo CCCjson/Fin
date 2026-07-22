@@ -7,6 +7,8 @@ import {
   type CryptoStrategyItem,
   type CryptoRunItem,
 } from '../../services/cryptoStrategyService';
+// 后端时间带 UTC offset，必须走解析而不是字符串切片（切片会原样显示 UTC，差 8 小时）
+import { localDateTime } from '../../utils/datetime';
 
 const KIND_LABEL: Record<string, string> = { swing: '波段', arb: '套利', long_hold: '长持' };
 const STATUS_STYLE: Record<string, string> = {
@@ -65,7 +67,7 @@ const StrategyCard: React.FC<{ s: CryptoStrategyItem }> = ({ s }) => {
         </div>
         <div>
           <div className="text-gray-500 text-xs">上次运行</div>
-          <div className="text-gray-400 text-xs">{s.last_run_at?.slice(5, 16) || '—'}</div>
+          <div className="text-gray-400 text-xs">{localDateTime(s.last_run_at)}</div>
         </div>
         <div>
           <div className="text-gray-500 text-xs">策略 ID</div>
@@ -100,7 +102,7 @@ const StrategyCard: React.FC<{ s: CryptoStrategyItem }> = ({ s }) => {
             : runs.length === 0 ? <div className="text-gray-600">暂无运行记录</div>
             : runs.map((r) => (
               <div key={r.id} className="flex items-center gap-2 text-gray-400 font-mono">
-                <span className="text-gray-600">{r.started_at?.slice(5, 16)}</span>
+                <span className="text-gray-600">{localDateTime(r.started_at, '')}</span>
                 <span className="text-gray-300">{r.status}</span>
                 <span>评估{r.symbols_evaluated} / 排单{r.orders_placed}</span>
                 {r.error && <span className="text-red-400">{r.error}</span>}

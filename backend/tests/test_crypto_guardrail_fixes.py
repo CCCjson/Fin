@@ -2,9 +2,12 @@
 
 共同主题：护栏**看起来**都在，但各自被一个不起眼的口径问题掏空了。
 """
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
+
+from common.market import CRYPTO
+from common.market_time import market_today, utc_now
 
 
 @pytest.fixture
@@ -23,10 +26,26 @@ def mem_db(monkeypatch):
     return make
 
 
-class TestLocalTimeDefaults:
-    """⛔ server_default=func.now() 在 SQLite 上落 UTC，和同表其它本地时间列差 8 小时。"""
+class TestUtcTimeDefaults:
+    """列默认值必须与同表其它时刻列同口径 —— 且那个口径是 **naive UTC**。
 
-    def test_pending_created_at_is_local(self, mem_db):
+    ## 这组测试翻过一次面（2026-07-22）
+
+    批 4 原本断言「必须是本地时间」，理由是 `server_default=func.now()` 在 SQLite 上落
+    UTC、与 Python 侧写的本地时间同表混存差 8 小时。**症状看对了，方向选反了**：
+
+    - 全库 40 张表的 `created_at` 本来就是 `server_default=func.now()` = UTC，
+      `_local_now` 反而是唯一的两个异类；
+    - crypto 数据链（`daily_quotes`(crypto)/`crypto_bars`/`crypto_metrics`/
+      `crypto_fills`/两个 APScheduler）本来就全是 UTC；
+    - 本地时间只在「服务器时区 == 用户时区」时才对。
+
+    所以该被拉齐的是本地那一侧。原本「同一行内口径一致」的意图完整保留，见
+    `test_created_at_aligns_with_expires_at`。展示由前端 `utils/datetime.ts` 转本地。
+    """
+
+    def test_pending_created_at_is_utc(self, mem_db):
+        from common.market_time import utc_now
         from data_engine.storage.models import CryptoPendingOrder
         s = mem_db()
         try:
@@ -35,20 +54,31 @@ class TestLocalTimeDefaults:
             s.add(row)
             s.commit()
             s.refresh(row)
-            # 与本地时钟同步（差 <60s）；旧实现在 UTC+8 环境下会差 8 小时
-            assert abs((datetime.now() - row.created_at).total_seconds()) < 60
+            assert row.created_at.tzinfo is None, "库里存 naive（SQLite 存不住 tz）"
+            assert abs((utc_now() - row.created_at).total_seconds()) < 60
         finally:
             s.close()
 
     def test_created_at_aligns_with_expires_at(self, mem_db):
-        """同一行内 created_at 与 expires_at 必须同口径，否则「当日」统计凭空少 8 小时。"""
+        """同一行内 created_at 与 expires_at 必须同口径，否则「当日」统计凭空少 8 小时。
+
+        （批 4 的原意图，一字未改 —— 变的只是两者共同对齐到哪个口径。）
+        """
         from crypto_strategy.pending import crypto_pending_service as svc
         p = svc.create_pending("CS-1", "BTCUSDT.BN", "BUY", 1.0, 100.0, quote_amount=100.0)
         created = datetime.fromisoformat(p["created_at"])
         expires = datetime.fromisoformat(p["expires_at"])
         assert timedelta(minutes=55) < expires - created < timedelta(minutes=65)
 
-    def test_strategy_run_started_at_is_local(self, mem_db):
+    def test_serialized_times_carry_utc_offset(self, mem_db):
+        """⛔ 返给前端必须带 offset：裸 naive 串会被 JS 当本地时间解析，差整整一个时区。"""
+        from crypto_strategy.pending import crypto_pending_service as svc
+        p = svc.create_pending("CS-1", "BTCUSDT.BN", "BUY", 1.0, 100.0, quote_amount=100.0)
+        for key in ("created_at", "expires_at"):
+            assert p[key].endswith("+00:00"), f"{key} 少了时区标记：{p[key]}"
+
+    def test_strategy_run_started_at_is_utc(self, mem_db):
+        from common.market_time import utc_now
         from data_engine.storage.models import CryptoStrategyRun
         s = mem_db()
         try:
@@ -56,7 +86,7 @@ class TestLocalTimeDefaults:
             s.add(row)
             s.commit()
             s.refresh(row)
-            assert abs((datetime.now() - row.started_at).total_seconds()) < 60
+            assert abs((utc_now() - row.started_at).total_seconds()) < 60
         finally:
             s.close()
 
@@ -100,7 +130,7 @@ class TestDailyOrderCount:
         s = get_session()
         try:
             s.add(CryptoStrategyRun(strategy_id="CS-1", status="order_staged", orders_placed=5,
-                                    started_at=datetime.now() - timedelta(days=1)))
+                                    started_at=utc_now() - timedelta(days=1)))
             s.commit()
         finally:
             s.close()
@@ -127,12 +157,12 @@ class TestFeeUnits:
         from crypto_intel_engine import cost_basis as cb
         self._fill(mem_db, fee=0.000001, fee_asset="BTC")
         # 0.000001 BTC × 65000 = 0.065 USDT，而不是 0.000001
-        assert cb.fees_on(date.today()) == pytest.approx(0.065)
+        assert cb.fees_on(market_today(CRYPTO)) == pytest.approx(0.065)
 
     def test_quote_asset_fee_is_face_value(self, mem_db):
         from crypto_intel_engine import cost_basis as cb
         self._fill(mem_db, fee=0.02, fee_asset="USDT")
-        assert cb.fees_on(date.today()) == pytest.approx(0.02)
+        assert cb.fees_on(market_today(CRYPTO)) == pytest.approx(0.02)
 
     def test_engine_uses_converted_fees(self, mem_db):
         from crypto_strategy.engine import CryptoStrategyEngine
@@ -160,7 +190,7 @@ class TestExpiryOnConfirm:
         s = mem_db()
         try:
             row = s.query(CryptoPendingOrder).filter_by(order_ref=p["order_ref"]).first()
-            row.expires_at = datetime.now() - timedelta(hours=72)
+            row.expires_at = utc_now() - timedelta(hours=72)
             s.commit()
         finally:
             s.close()

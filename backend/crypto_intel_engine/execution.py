@@ -12,6 +12,9 @@ from typing import Any
 
 from loguru import logger
 
+from common.market import CRYPTO
+from common.market_time import market_today
+
 # ──────────────────── 风控 broker_info + 连亏台账回放 ────────────────────
 
 
@@ -354,7 +357,6 @@ def record_crypto_trade(symbol: str, action: str, price: float, qty: float,
     """
     # ① 成交台账（连亏风控的回放数据源）
     try:
-        from datetime import date as _date
 
         from data_engine.storage.database import get_session
         from data_engine.storage.models import CryptoTrade
@@ -363,7 +365,9 @@ def record_crypto_trade(symbol: str, action: str, price: float, qty: float,
             session.add(CryptoTrade(
                 symbol=symbol, side=action, price=price, quantity=qty,
                 amount=round(price * qty, 8), commission=commission or 0.0,
-                order_id=order_id, trade_date=_date.today(),
+                # 交易日按 **crypto 市场日**（UTC）—— 要和 `crypto_fills` 回放出的
+                # `closed[].date`、以及引擎的当日熔断/费用窗口对得上
+                order_id=order_id, trade_date=market_today(CRYPTO),
             ))
             session.commit()
         finally:

@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Query
 from loguru import logger
 
+from common.market_time import utc_iso
 from crypto_strategy.pending import PendingError, crypto_pending_service
 from crypto_strategy.service import StrategyError, crypto_strategy_service
 
@@ -110,7 +111,8 @@ async def list_runs(strategy_id: str = Query(...), limit: int = Query(50, le=500
                 .order_by(CryptoStrategyRun.started_at.desc()).limit(limit).all())
         return {"runs": [{"id": r.id, "status": r.status, "mode": r.mode,
                           "symbols_evaluated": r.symbols_evaluated, "orders_placed": r.orders_placed,
-                          "started_at": str(r.started_at) if r.started_at else None,
+                          # 带 offset：前端 CryptoStrategyTab 走 utils/datetime.ts 转本地
+                          "started_at": utc_iso(r.started_at),
                           "decision_detail": r.decision_detail, "error": r.error_message}
                          for r in rows]}
     finally:

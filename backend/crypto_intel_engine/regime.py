@@ -9,10 +9,13 @@
 判定用 200 日 SMA（加密日线的经典大周期线）。样本不足 200 根时返回 `regime="unknown"`，
 不硬凑（宁可说不知道，也不用半截均线误导波段决策）。
 """
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any
 
 import pandas as pd
+
+from common.market import CRYPTO
+from common.market_time import market_today
 
 _MA_WINDOW = 200
 _LOOKBACK_DAYS = 320  # 拉够 200 根 + 缓冲（含可能的缺口）
@@ -74,7 +77,9 @@ def _load_btc_daily() -> pd.DataFrame:
     # 回退：实时拉币安
     from acquisition.markets.base import MarketDataRequest
     from acquisition.markets.crypto import CryptoFetcher
-    end = date.today()
+    # 这个 end 直接当币安 `end_date` 用，而 `crypto._date_to_ms` 按 **UTC** 解析它。
+    # 用服务器本地日期的话，本地 00:00–08:00 会多要一天（币安还没有那根 bar）。
+    end = market_today(CRYPTO)
     start = end - timedelta(days=_LOOKBACK_DAYS)
     resp = CryptoFetcher().fetch_daily(MarketDataRequest(
         symbol=symbol, start_date=start.isoformat(), end_date=end.isoformat(), freq="1d"))

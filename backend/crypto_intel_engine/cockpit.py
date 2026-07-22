@@ -16,6 +16,9 @@ from typing import Any
 
 from loguru import logger
 
+from common.market import CRYPTO
+from common.market_time import market_today
+
 
 # ── 价格自适应精度（镜像前端 marketDetect.priceDecimalsFor，小币不被 round(,2) 抹平）──
 def _price_decimals(price: float) -> int:
@@ -228,7 +231,7 @@ _BAR_STALE_HOURS = 14
 
 def _bars_fresh(bars: list[dict], max_age_hours: int = _BAR_STALE_HOURS) -> bool:
     """末根 bar 是否足够新。空/无时间戳一律判不新鲜（宁可多打一次网，不可用陈数据打分）。"""
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta, timezone
     if not bars:
         return False
     ot = bars[-1].get("open_time")
@@ -416,9 +419,10 @@ def analyze_crypto_symbol(symbol: str, *, broker_info: dict | None = None,
     )
     from data_engine.engine import DataEngine
 
-    now = datetime.now()
-    end = now.strftime("%Y-%m-%d")
-    start = (now - timedelta(days=300)).strftime("%Y-%m-%d")
+    # crypto 日线按 UTC 日落库（币安 klines openTime），窗口也得按 UTC 日切
+    today = market_today(CRYPTO)
+    end = today.isoformat()
+    start = (today - timedelta(days=300)).isoformat()
     base = base_asset(symbol)
     result: dict[str, Any] = {"symbol": symbol, "base_asset": base}
 

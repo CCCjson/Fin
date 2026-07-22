@@ -48,18 +48,10 @@ MANAGED_DIRS = (
 )
 
 # 存量豁免基线：`相对路径 → 允许的裸时间调用数`。**只减不增**。
-# 批 2 会把 crypto 链路整体翻成 UTC 口径，届时这些全部归零并从表里删掉。
-_ALLOWED: dict[str, int] = {
-    "crypto_intel_engine/cockpit.py": 1,
-    "crypto_intel_engine/context.py": 1,
-    "crypto_intel_engine/execution.py": 1,
-    "crypto_intel_engine/news.py": 1,
-    "crypto_intel_engine/regime.py": 1,
-    "crypto_intel_engine/store.py": 1,
-    "crypto_strategy/engine.py": 10,
-    "crypto_strategy/pending.py": 5,
-    "crypto_strategy/service.py": 4,
-}
+#
+# 批 1 登记了 crypto 两个域的 25 处存量，批 2 全部清零 —— **表是空的，就该保持空的**。
+# 这两个域现在是「零裸时间」的干净域，任何一处回潮都会被咬。
+_ALLOWED: dict[str, int] = {}
 
 
 def _is_naive_time_call(node: ast.AST) -> bool:

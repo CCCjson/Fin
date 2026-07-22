@@ -11,10 +11,15 @@
 CryptoTrade + DecisionLog，本表只当「活的工作队列」，始终干净。⛔ 逐笔人工确认红线保留。
 """
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from loguru import logger
+
+from common.market_time import utc_iso, utc_now
+
+# ⏱ 本模块所有时刻一律 **naive UTC**（`utc_now()`），与 `CryptoPendingOrder` 的列口径
+# 一致，见 docs/CODING_STANDARDS.md §11。展示交给前端 `utils/datetime.ts` 转本地。
 
 _DEFAULT_EXPIRE_MIN = 60
 _DEFAULT_DRIFT = 0.02       # 无 spec 兜底漂移阈值
@@ -34,8 +39,10 @@ class PendingError(Exception):
 
 
 def _gen_ref() -> str:
+    # 时间戳部分用 UTC：这个 ref 会当幂等键透传给币安 `newClientOrderId`，跟交易所对
+    # 成交记录时按 UTC 对得上；随机 hex 才是区分度所在，时间戳只是可读性。
     import secrets
-    return f"CPO-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    return f"CPO-{utc_now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
 
 def summary(row) -> dict[str, Any]:
@@ -45,8 +52,10 @@ def summary(row) -> dict[str, Any]:
         "quote_amount": row.quote_amount, "price": row.price,
         "est_notional": row.est_notional, "status": row.status, "net_edge": row.net_edge,
         "reason": json.loads(row.reason) if row.reason else None,
-        "created_at": str(row.created_at) if row.created_at else None,
-        "expires_at": str(row.expires_at) if row.expires_at else None,
+        # 带显式 offset（`utc_iso`），前端 `new Date()` 才会转成浏览器本地时区。
+        # ⛔ 别退回 `str(dt)`：裸 naive 串会被 JS 当本地时间解析，整整差一个时区。
+        "created_at": utc_iso(row.created_at),
+        "expires_at": utc_iso(row.expires_at),
         "executed_order_id": row.executed_order_id,
         "fill_price": row.fill_price, "fill_quantity": row.fill_quantity,
         "error_message": row.error_message,
@@ -95,7 +104,7 @@ class CryptoPendingOrderService:
                 else (round((price or 0) * quantity, 2) if price else None),
                 status="PENDING", net_edge=net_edge,
                 reason=json.dumps(reason, ensure_ascii=False, default=str) if reason else None,
-                expires_at=datetime.now() + timedelta(minutes=expire_minutes))
+                expires_at=utc_now() + timedelta(minutes=expire_minutes))
             session.add(row)
             session.commit()
             data = summary(row)
@@ -161,7 +170,7 @@ class CryptoPendingOrderService:
         session = self._session()
         stranded: list = []
         try:
-            now = datetime.now()
+            now = utc_now()
             expired = session.query(CryptoPendingOrder).filter(
                 CryptoPendingOrder.status == "PENDING",
                 CryptoPendingOrder.expires_at.isnot(None),
@@ -265,7 +274,7 @@ class CryptoPendingOrderService:
             claimed = session.query(CryptoPendingOrder).filter(
                 CryptoPendingOrder.order_ref == order_ref,
                 CryptoPendingOrder.status == "PENDING",
-            ).update({"status": "EXECUTING", "confirmed_at": datetime.now()},
+            ).update({"status": "EXECUTING", "confirmed_at": utc_now()},
                      synchronize_session=False)
             session.commit()
             if not claimed:
@@ -281,13 +290,21 @@ class CryptoPendingOrderService:
             # （还在 kill 分支之后），调度器默认关。靠它兜的话，引擎一停/后端一重启，
             # 三天前的陈单就一直躺在列表里可点确认，横盘币漂移 <2% 就按陈旧决策真成交了。
             # 这里是「确认」这条路径上唯一保证过期生效的地方。
-            if row.expires_at and row.expires_at < datetime.now():
+            now = utc_now()
+            if row.expires_at and row.expires_at < now:
+                # ⛔ 文案用**相对时间**而不是绝对时刻：库里存 UTC，而这句话直接进前端 toast，
+                # 后端没机会知道 Jason 的浏览器时区，印绝对时刻就会印出一个他看不懂的
+                # UTC 钟点。相对时间没有时区歧义。
+                stale_min = int((now - row.expires_at).total_seconds() // 60)
+                ago = (f"{stale_min} 分钟" if stale_min < 60 else
+                       f"{stale_min // 60} 小时" if stale_min < 1440 else
+                       f"{stale_min // 1440} 天")
                 row.status = "EXPIRED"
                 session.commit()
                 session.delete(row)          # 与 cleanup 同口径：过期即删，不堆积
                 session.commit()
                 raise PendingError(
-                    f"这张单已于 {row.expires_at:%m-%d %H:%M} 过期（决策依据已陈旧），已作废。"
+                    f"这张单已过期 {ago}（决策依据已陈旧），已作废。"
                     f"引擎下一轮若条件仍成立会按现价重排新单。")
             return {"strategy_id": row.strategy_id, "symbol": row.symbol, "side": row.side,
                     "quote_amount": row.quote_amount, "quantity": row.quantity,

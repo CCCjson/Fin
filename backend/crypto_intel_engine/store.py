@@ -9,10 +9,13 @@ SQL 幂等口径。全部 INSERT OR REPLACE，撞唯一键即覆盖，重跑天�
 （资金费率现在这个值在过去 60 天里算高还是低）。读写同表、同一套 symbol/metric 口径，
 放一处才不会漂。读取器返回**纯 list**，打分器仍是纯函数（吃 list 不碰 DB）。
 """
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from sqlalchemy import text
+
+from common.market import CRYPTO
+from common.market_time import market_today
 
 MARKET_SENTINEL = "MARKET"   # 市场级指标（恐慌贪婪/主导率/总市值）的 symbol 哨兵
 
@@ -47,7 +50,8 @@ def read_metric_map(session, symbol: str, metric: str, days: int = 90) -> dict[s
     回测闸的逐日回放要按 bar 日期查值，光有 list 对不上时间轴 —— 故按日索引这一份是真源，
     `read_metric_series` 只是它按日期升序取值的视图（同一条 SQL，不写两份口径）。
     """
-    since = (datetime.now().date() - timedelta(days=days)).isoformat()
+    # 比的是 `crypto_metrics.date`，那是 `crypto_updater` 按 UTC 落的
+    since = (market_today(CRYPTO) - timedelta(days=days)).isoformat()
     rows = session.execute(text("""
         SELECT date, value FROM crypto_metrics
         WHERE symbol = :symbol AND metric = :metric AND date >= :since AND value IS NOT NULL

@@ -4,11 +4,13 @@
 都调这一份，业务逻辑不重复。DSL 子对象以 JSON 串存 Text 列，读回时重建 pydantic。
 """
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from loguru import logger
 
+from common.market import CRYPTO
+from common.market_time import market_today, utc_iso, utc_now
 from crypto_intel_engine.dsl import CryptoStrategySpec
 from crypto_strategy.backtest_gate import run_backtest_gate
 
@@ -51,7 +53,7 @@ def spec_from_row(row) -> CryptoStrategySpec:
 
 def _gen_id() -> str:
     import secrets
-    return f"CS-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    return f"CS-{utc_now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
 
 def row_summary(row) -> dict[str, Any]:
@@ -62,7 +64,8 @@ def row_summary(row) -> dict[str, Any]:
         "strategy_kind": row.strategy_kind, "interval_minutes": row.interval_minutes,
         "backtest_passed": bool(row.backtest_passed),
         "backtest_net_return": row.backtest_net_return,
-        "last_run_at": str(row.last_run_at) if row.last_run_at else None,
+        # 带 offset，前端 utils/datetime.ts 负责转本地（裸串会被 JS 当本地时间解析）
+        "last_run_at": utc_iso(row.last_run_at),
         "halted_reason": row.halted_reason,
     }
 
@@ -77,9 +80,10 @@ class CryptoStrategyService:
     # ---- 回测（技术代理 + 真实费率）----
     def _load_bars(self, symbols: list[str], lookback_days: int = 400) -> dict[str, list[dict]]:
         from data_engine.engine import DataEngine
-        now = datetime.now()
-        end = now.strftime("%Y-%m-%d")
-        start = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        # crypto 日线按 UTC 日落库（币安 klines openTime），回测窗口也按 UTC 日切
+        today = market_today(CRYPTO)
+        end = today.isoformat()
+        start = (today - timedelta(days=lookback_days)).isoformat()
         out: dict[str, list[dict]] = {}
         engine = DataEngine()
         try:
@@ -116,7 +120,7 @@ class CryptoStrategyService:
             row = CryptoStrategy(strategy_id=_gen_id(), description_nl=description_nl,
                                  enabled=0, status="draft", **_spec_to_columns(spec))
             if bt is not None:
-                row.last_backtest_at = datetime.now()
+                row.last_backtest_at = utc_now()
                 row.backtest_net_return = bt.get("net_return")
                 row.backtest_metrics = json.dumps(
                     {"metrics": bt.get("metrics"), "degraded": bt.get("degraded"),
@@ -225,7 +229,7 @@ class CryptoStrategyService:
             row = self._get_row(session, strategy_id)
             spec = spec_from_row(row)
             bt = self.backtest(spec)
-            row.last_backtest_at = datetime.now()
+            row.last_backtest_at = utc_now()
             row.backtest_net_return = bt.get("net_return")
             row.backtest_metrics = json.dumps(
                 {"metrics": bt.get("metrics"), "degraded": bt.get("degraded"),

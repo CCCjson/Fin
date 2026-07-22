@@ -10,12 +10,13 @@
 逐笔人工确认红线原样保留。执行/风控/资金/台账复用 `crypto_intel_engine/execution.py`。
 """
 import json
-from datetime import date, datetime
 from typing import Any
 
 from loguru import logger
 from sqlalchemy import func
 
+from common.market import CRYPTO
+from common.market_time import market_day_bounds, market_today, utc_now
 from crypto_intel_engine.dsl import gross_target_edge
 from crypto_strategy import guardrails as gr
 from crypto_strategy.evaluator import evaluate
@@ -66,7 +67,7 @@ class CryptoStrategyEngine:
     def _due(self, row) -> bool:
         if not row.last_run_at:
             return True
-        delta = (datetime.now() - row.last_run_at).total_seconds() / 60.0
+        delta = (utc_now() - row.last_run_at).total_seconds() / 60.0
         return delta >= (row.interval_minutes or 30)
 
     # ──────────────── 单策略 ────────────────
@@ -316,7 +317,7 @@ class CryptoStrategyEngine:
         from crypto_intel_engine import cost_basis as cb
         try:
             if cb.has_any_fills():
-                return cb.realized_on(date.today())
+                return cb.realized_on(market_today(CRYPTO))
         except Exception as e:  # noqa: BLE001 — 回放失败退回台账，不让熔断断供
             logger.warning(f"成交明细回放今日盈亏失败，退回台账口径: {e}")
         return self._realized_today_from_ledger()
@@ -331,7 +332,7 @@ class CryptoStrategyEngine:
                       .order_by(CryptoTrade.trade_date.asc(), CryptoTrade.id.asc()).all())
         finally:
             session.close()
-        today = date.today()
+        today = market_today(CRYPTO)
         positions: dict[str, dict[str, float]] = {}
         realized = 0.0
         for t in trades:
@@ -365,12 +366,16 @@ class CryptoStrategyEngine:
         from data_engine.storage.models import CryptoStrategyRun, CryptoTrade
         session = get_session()
         try:
-            day_start = datetime.combine(date.today(), datetime.min.time())
+            # 「当日」= crypto 市场日（UTC），不是服务器本地日。`started_at` 存 naive UTC，
+            # 用半开区间比而不是 `>= 本地零点`——后者在 UTC+8 上会漏掉 UTC 当日的头 8 小时。
+            day_start, day_end = market_day_bounds(CRYPTO)
             orders = session.query(
                 func.coalesce(func.sum(CryptoStrategyRun.orders_placed), 0)).filter(
                 CryptoStrategyRun.strategy_id == strategy_id,
-                CryptoStrategyRun.started_at >= day_start).scalar() or 0
-            trades = session.query(CryptoTrade).filter(CryptoTrade.trade_date == date.today()).all()
+                CryptoStrategyRun.started_at >= day_start,
+                CryptoStrategyRun.started_at < day_end).scalar() or 0
+            trades = session.query(CryptoTrade).filter(
+                CryptoTrade.trade_date == market_today(CRYPTO)).all()
             round_trips = sum(1 for t in trades if t.side == "SELL")
         finally:
             session.close()
@@ -386,7 +391,7 @@ class CryptoStrategyEngine:
         from crypto_intel_engine import cost_basis as cb
         try:
             if cb.has_any_fills():
-                return cb.fees_on(date.today())
+                return cb.fees_on(market_today(CRYPTO))
         except Exception as e:  # noqa: BLE001 — 折算失败退回台账，不让护栏断供
             logger.warning(f"成交明细折算当日手续费失败，退回台账口径: {e}")
         from data_engine.storage.database import get_session
@@ -395,7 +400,7 @@ class CryptoStrategyEngine:
         try:
             return sum(t.commission or 0.0 for t in
                        session.query(CryptoTrade).filter(
-                           CryptoTrade.trade_date == date.today()).all())
+                           CryptoTrade.trade_date == market_today(CRYPTO)).all())
         finally:
             session.close()
 
@@ -413,7 +418,7 @@ class CryptoStrategyEngine:
                 decision_detail=json.dumps(detail, ensure_ascii=False, default=str) if detail else None,
                 executed_order_ids=json.dumps(order_ids) if order_ids else None,
                 pnl_realized_today=realized, error_message=error,
-                completed_at=datetime.now()))
+                completed_at=utc_now()))
             session.commit()
         except Exception as e:  # noqa: BLE001
             logger.warning(f"策略 run 日志写入失败: {e}")
@@ -428,9 +433,9 @@ class CryptoStrategyEngine:
             row = session.query(CryptoStrategy).filter(
                 CryptoStrategy.strategy_id == strategy_id).first()
             if row:
-                row.last_run_at = datetime.now()
+                row.last_run_at = utc_now()
                 if signaled:
-                    row.last_signal_at = datetime.now()
+                    row.last_signal_at = utc_now()
                 session.commit()
         finally:
             session.close()

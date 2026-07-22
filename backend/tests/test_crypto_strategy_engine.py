@@ -3,10 +3,11 @@
 核心断言：引擎 live 只**排 CryptoPendingOrder**，绝不写 CryptoTrade；paper 只记日志；
 成本/风控/去重各自拦截；确认时**重跑风控**才经 execution 成交；kill/过期正确。
 """
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
+from common.market_time import utc_now
 from crypto_intel_engine.dsl import (
     Condition,
     ConditionGroup,
@@ -302,7 +303,7 @@ def test_cleanup_deletes_expired(mem_db, monkeypatch):
     s = mem_db()
     try:
         row = s.query(CryptoPendingOrder).filter_by(order_ref=p["order_ref"]).first()
-        row.expires_at = datetime.now() - timedelta(minutes=1)
+        row.expires_at = utc_now() - timedelta(minutes=1)
         s.commit()
     finally:
         s.close()
@@ -406,7 +407,7 @@ def test_stranded_executing_becomes_stale_and_blocks_restage(mem_db, monkeypatch
     try:
         row = s.query(CryptoPendingOrder).filter_by(order_ref=p["order_ref"]).first()
         row.status = "EXECUTING"
-        row.confirmed_at = datetime.now() - timedelta(minutes=30)
+        row.confirmed_at = utc_now() - timedelta(minutes=30)
         s.commit()
     finally:
         s.close()
@@ -447,7 +448,7 @@ def test_fresh_executing_not_marked_stale(mem_db, monkeypatch):
     try:
         row = s.query(CryptoPendingOrder).filter_by(order_ref=p["order_ref"]).first()
         row.status = "EXECUTING"
-        row.confirmed_at = datetime.now()
+        row.confirmed_at = utc_now()
         s.commit()
     finally:
         s.close()

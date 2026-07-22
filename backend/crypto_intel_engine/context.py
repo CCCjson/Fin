@@ -18,6 +18,9 @@ from typing import Any
 
 from loguru import logger
 
+from common.market import US_STOCK
+from common.market_time import market_today
+
 # 市场级上下文缓存时长（秒）。这些量都是日频的，10 分钟内不会有意义变化。
 _TTL = 600.0
 
@@ -183,14 +186,15 @@ def macro_context(days: int = 20) -> dict[str, float] | None:
     抢不到锁就返回 None（本轮不带宏观，不阻塞、不排队等）。
     """
     def _produce():
-        from datetime import date, timedelta
+        from datetime import timedelta
 
         from acquisition.markets.yf_batch import download_daily_history, yahoo_job_lock
 
         with yahoo_job_lock("crypto 宏观上下文") as ok:
             if not ok:
                 return None
-            start = (date.today() - timedelta(days=days * 2 + 20)).isoformat()
+            # 拉的是美股日线（DXY/^TNX 这类宏观 ticker），窗口按美东交易日算
+            start = (market_today(US_STOCK) - timedelta(days=days * 2 + 20)).isoformat()
             raw = download_daily_history(list(_MACRO_TICKERS.values()), start)
             if raw is None or raw.empty:
                 return None

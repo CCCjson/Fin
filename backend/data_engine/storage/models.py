@@ -1,25 +1,28 @@
 """
 数据库模型定义
 """
-from datetime import datetime
-
 from sqlalchemy import Column, String, Float, Integer, DateTime, Date, Index, ForeignKey, Text
 from sqlalchemy.sql import func
+from common.market_time import utc_now
 from data_engine.storage.database import Base
 
-
-def _local_now() -> datetime:
-    """本地时间默认值（Python 侧求值）。
-
-    ⛔ 用它而**不是** `server_default=func.now()`：后者在 SQLite 上落的是
-    `CURRENT_TIMESTAMP` = **UTC**，而本项目所有业务时间（`date.today()`、
-    `datetime.now()` 写的 expires_at / confirmed_at / completed_at / last_run_at）
-    都是本地时间。两者混在同一张表里会差 8 小时（实测 UTC 02:24 vs 本地 10:24），
-    后果是「当日」类统计凭空少掉本地 00:00–08:00 那一段。
-
-    crypto 是 7×24 市场，「今天」只能按 Jason 所在时区算才有意义。
-    """
-    return datetime.now()
+# `default=utc_now` —— 列默认值一律 **naive UTC**，见 docs/CODING_STANDARDS.md §11。
+#
+# ## 这里曾经修反过一次（2026-07-22 纠正）
+#
+# 原来是 `_local_now()`（本地时间），理由写的是「server_default=func.now() 在 SQLite
+# 上落 UTC，而本项目业务时间都是本地时间，同表混存差 8 小时」。**症状看对了，方向选反了。**
+#
+# 同一行内口径一致确实是必须的，但该被拉齐的是**本地那一侧**：
+#   - 全库 40 张表的 `created_at` 本来就是 `server_default=func.now()` = UTC，
+#     `_local_now` 反而是唯一的两个异类；
+#   - crypto 数据链（`daily_quotes`(crypto) / `crypto_bars` / `crypto_metrics` /
+#     `crypto_fills` / 两个 APScheduler）本来就全是 UTC；
+#   - 本地时间只在「服务器时区 == 用户时区」时才对，换台机器就全错，而且跨市场
+#     聚合时没有任何办法对齐。
+#
+# 「今天」按谁算的问题，答案不是「服务器本地」而是「**该市场自己的时区**」——
+# 那是 `common.market_time.market_today(market)` 的职责，不该由存储层的默认值来表达。
 
 
 class StockInfo(Base):
@@ -1428,10 +1431,10 @@ class CryptoStrategyRun(Base):
     pnl_realized_today = Column(Float)                 # 当日已实现盈亏快照
     fees_today = Column(Float)                         # 当日累计手续费快照（费用漂移护栏）
     error_message = Column(Text)
-    # 本地时间（见 _local_now）：和同行的 completed_at、策略卡上的 last_run_at 同口径。
-    # 用 UTC 的 server_default 会让运行日志显示的时间比策略卡「上次运行」早 8 小时，
-    # 排查「引擎到底跑没跑」时直接被带沟里。
-    started_at = Column(DateTime, default=_local_now)
+    # naive UTC（见文件头）：和同行的 completed_at、策略卡上的 last_run_at 同口径，
+    # 也和 `_today_counts` 用 `market_day_bounds(CRYPTO)` 切的「当日」窗口同口径。
+    # 展示由前端转本地（`utils/datetime.ts`），后端不再自作主张存本地时间。
+    started_at = Column(DateTime, default=utc_now)
     completed_at = Column(DateTime)
 
     __table_args__ = (
@@ -1473,9 +1476,9 @@ class CryptoPendingOrder(Base):
     reason = Column(Text)                            # JSON：命中的进/出场条件 + 净边际等决策依据
     risk_snapshot = Column(Text)                     # JSON：产单时的风控预检结果
     net_edge = Column(Float)                         # 买单的净边际（扣完往返成本）
-    # ⚠️ 本地时间（见 _local_now）：要和同表的 expires_at/confirmed_at 以及
-    # 引擎侧按 date.today() 切的「当日」口径对齐，否则本地 00:00-08:00 的单会统计不到
-    created_at = Column(DateTime, default=_local_now)
+    # ⚠️ naive UTC（见文件头）：要和同表的 expires_at/confirmed_at（`pending.py` 用
+    # `utc_now()` 写）以及引擎按 `market_day_bounds(CRYPTO)` 切的「当日」窗口同口径。
+    created_at = Column(DateTime, default=utc_now)
     expires_at = Column(DateTime)                    # 过期时间（到点自动 EXPIRED，防陈单误成交）
     confirmed_at = Column(DateTime)
     executed_order_id = Column(String(50))           # 币安 orderId（成交后）

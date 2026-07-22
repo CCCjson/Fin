@@ -34,7 +34,8 @@ from typing import Any
 
 from loguru import logger
 
-from common.market import to_binance_symbol
+from common.market import CRYPTO, to_binance_symbol
+from common.market_time import market_day_bounds, market_day_of
 
 STABLE_QUOTE = "USDT"          # v1 只处理 USDT 计价对（与 execution.STABLE_QUOTE 同口径）
 _PAGE = 1000                   # myTrades 每页上限
@@ -229,8 +230,13 @@ def replay(symbol: str | None = None) -> dict[str, dict[str, Any]]:
     for r in rows:
         sym, price, qty, quote_qty, fee, fee_asset, is_buyer, t_time = r
         base, quote = split_pair(sym)
-        day = (t_time.date() if hasattr(t_time, "date")
-               else datetime.fromisoformat(str(t_time)).date())
+        # `trade_time` 存 naive UTC。归到**市场日**而不是裸 `.date()`：crypto 的市场时区
+        # 就是 UTC，两者当下相等，但写成 market_day_of 才是在声明口径——`closed[].date`
+        # 要和 `realized_on(market_today(CRYPTO))` 对得上，也要和 `daily_quotes`(crypto)
+        # 的 UTC 日同轴（`_FeePricer.close_price` 正好查那张表）。
+        raw_time = (t_time if isinstance(t_time, datetime)
+                    else datetime.fromisoformat(str(t_time)))
+        day = market_day_of(raw_time, CRYPTO)
         st = out.setdefault(sym, {"quantity": 0.0, "total_cost": 0.0, "avg_cost": 0.0,
                                   "closed": [], "fills": 0, "unpriced_fees": {},
                                   "has_uncosted_sell": False})
@@ -338,22 +344,28 @@ def closed_pnls(limit: int = 10) -> tuple[list[float], str | None]:
 
 
 def fees_on(day: date) -> float:
-    """某一天的**手续费合计（USDT）**，按 `commissionAsset` 正确折算。
+    """某个**crypto 市场日**（UTC）的手续费合计（USDT），按 `commissionAsset` 正确折算。
 
     喂引擎的「单日手续费上限」护栏。⛔ 不能拿 `sum(commission)` 直接加：币安现货买入
     默认扣**基础币**（买 BTC 扣 BTC），把 0.00001 BTC 当成 0.00001 美元累加会让费用
     恒等于约 0，护栏结构上不可能触发。折算不了的（如本地没有 BNB 日线）计入返回值时
     按 0 处理，但 `_FeePricer.unpriced` 已在回放侧留痕。
+
+    ⛔ **必须用 `market_day_bounds` 切区间，不能写 `DATE(trade_time) = :day`**。
+    `trade_time` 存的是 naive UTC，而调用方给的 `day` 曾经是服务器本地的 `date.today()`
+    ——实测本地凌晨 3 点的成交按旧写法查**恒为 0**（那笔的 UTC 日期还是昨天），
+    于是本地 00:00–08:00 的成交完全不进这条护栏，也不进当日回撤熔断。
     """
     from sqlalchemy import text
 
     from data_engine.storage.database import get_session
+    start, end = market_day_bounds(CRYPTO, day)
     session = get_session()
     try:
         rows = session.execute(text("""
             SELECT symbol, commission, commission_asset, quantity, price, quote_qty, is_buyer
-            FROM crypto_fills WHERE DATE(trade_time) = :day
-        """), {"day": day.isoformat()}).fetchall()
+            FROM crypto_fills WHERE trade_time >= :start AND trade_time < :end
+        """), {"start": start, "end": end}).fetchall()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"当日手续费读取失败: {e}")
         return 0.0
@@ -378,7 +390,11 @@ def fees_on(day: date) -> float:
 
 
 def realized_on(day: date) -> float:
-    """某一天的已实现盈亏（该日所有平仓的 pnl 之和）。喂引擎当日回撤熔断。"""
+    """某个 **crypto 市场日**（UTC）的已实现盈亏。喂引擎当日回撤熔断。
+
+    `day` 必须来自 `market_today(CRYPTO)` —— `replay()` 里的 `closed[].date` 是按
+    `market_day_of(..., CRYPTO)` 归的，拿服务器本地 `date.today()` 来对会错开 8 小时。
+    """
     key = day.isoformat()
     return sum(c["pnl"] for st in replay().values()
                for c in st["closed"] if c["date"] == key)

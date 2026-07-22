@@ -16,6 +16,8 @@ export interface CryptoStrategyItem {
   halted_reason: string | null;
 }
 
+// ⏱ 所有 *_at 字段都是**带 UTC offset 的 ISO 串**（后端 common/market_time.utc_iso）。
+//    渲染一律走 utils/datetime.ts，禁止字符串切片——切片会原样显示 UTC 时刻。
 export interface CryptoPendingItem {
   order_ref: string;
   strategy_id: string;
