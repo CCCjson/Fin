@@ -337,6 +337,46 @@ def closed_pnls(limit: int = 10) -> tuple[list[float], str | None]:
     return pnls, last_loss
 
 
+def fees_on(day: date) -> float:
+    """某一天的**手续费合计（USDT）**，按 `commissionAsset` 正确折算。
+
+    喂引擎的「单日手续费上限」护栏。⛔ 不能拿 `sum(commission)` 直接加：币安现货买入
+    默认扣**基础币**（买 BTC 扣 BTC），把 0.00001 BTC 当成 0.00001 美元累加会让费用
+    恒等于约 0，护栏结构上不可能触发。折算不了的（如本地没有 BNB 日线）计入返回值时
+    按 0 处理，但 `_FeePricer.unpriced` 已在回放侧留痕。
+    """
+    from sqlalchemy import text
+
+    from data_engine.storage.database import get_session
+    session = get_session()
+    try:
+        rows = session.execute(text("""
+            SELECT symbol, commission, commission_asset, quantity, price, quote_qty, is_buyer
+            FROM crypto_fills WHERE DATE(trade_time) = :day
+        """), {"day": day.isoformat()}).fetchall()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"当日手续费读取失败: {e}")
+        return 0.0
+    finally:
+        session.close()
+
+    pricer = _FeePricer()
+    total = 0.0
+    for sym, fee, fee_asset, qty, price, quote_qty, _is_buyer in rows:
+        fee = float(fee or 0)
+        if fee <= 0:
+            continue
+        base, _quote = split_pair(sym)
+        asset = (fee_asset or "").upper()
+        if asset == base:
+            # 扣基础币 → 按这笔成交自己的成交价折算（比查日线更准，也不用出网）
+            px = float(price or 0) or (float(quote_qty or 0) / float(qty) if qty else 0.0)
+            total += fee * px
+        else:
+            total += pricer.to_quote(fee, asset, day) or 0.0
+    return round(total, 6)
+
+
 def realized_on(day: date) -> float:
     """某一天的已实现盈亏（该日所有平仓的 pnl 之和）。喂引擎当日回撤熔断。"""
     key = day.isoformat()

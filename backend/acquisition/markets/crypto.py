@@ -74,7 +74,8 @@ class CryptoFetcher(BaseFetcher):
             df = _klines_to_df(rows)
 
             if df.empty:
-                logger.warning(f"{request.symbol} 没有数据")
+                # 盘中增量更新时这是常态：只剩今天那根未收盘的 bar，被刻意丢掉了
+                logger.debug(f"{request.symbol} 无已收盘的新 K 线")
                 return MarketDataResponse(
                     symbol=request.symbol, market=CRYPTO, data=pd.DataFrame(),
                     metadata={"source": self.source, "message": "No data"},
@@ -318,17 +319,30 @@ def estimate_slippage(order_book: dict, notional_usdt: float, side: str = "BUY")
     }
 
 
-def _klines_to_df(rows: list[list]) -> pd.DataFrame:
+def _klines_to_df(rows: list[list], include_unclosed: bool = False) -> pd.DataFrame:
     """币安 klines 数组 → 标准 DataFrame（列 date/open/high/low/close/volume）。
 
     币安 kline 结构：[openTime(ms), open, high, low, close, volume, closeTime, ...]，
     价量都是字符串，需转 float；openTime 是 UTC 当日 00:00。
+
+    Args:
+        include_unclosed: 是否保留**未收盘**的那根 K 线（默认丢弃）。
+
+    ⛔ 默认丢弃是有原因的。crypto 是 7×24 市场、**没有收盘时点**，币安会把「当天正在走」
+    的那根日线一并返回。股票市场靠「收盘后才更新」天然规避，crypto 不会。把未收盘的
+    bar 写进 `daily_quotes` 会让下游 `SignalDetector` 的 MACD 金叉/布林突破在同一个 UTC 日
+    内反复成立又消失（repaint），而策略每 30 分钟 tick 一次，唯一的防抖只有
+    `cooldown_minutes`——等于按一个随时会变的「今天收盘价」反复下决策。
+    判据用 `closeTime < 现在`，不做时区推算，对任何周期都成立。
     """
     if not rows:
         return pd.DataFrame()
+    now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
     recs = []
     for k in rows:
         open_ms = int(k[0])
+        if not include_unclosed and int(k[6]) >= now_ms:
+            continue        # 这根还在走，收盘价随时会变
         vol = float(k[5])
         recs.append({
             "date": datetime.fromtimestamp(open_ms / 1000, tz=timezone.utc).date(),
@@ -338,6 +352,9 @@ def _klines_to_df(rows: list[list]) -> pd.DataFrame:
             "amount": float(k[7]),
             "taker_buy_ratio": round(float(k[9]) / vol, 4) if vol > 0 else None,
         })
+    if not recs:
+        # 拿到的全是未收盘 bar（盘中增量更新时的常态：今天这根还没走完）
+        return pd.DataFrame()
     return pd.DataFrame(recs)[["date", "open", "high", "low", "close", "volume",
                                "amount", "taker_buy_ratio"]]
 

@@ -1,9 +1,25 @@
 """
 数据库模型定义
 """
+from datetime import datetime
+
 from sqlalchemy import Column, String, Float, Integer, DateTime, Date, Index, ForeignKey, Text
 from sqlalchemy.sql import func
 from data_engine.storage.database import Base
+
+
+def _local_now() -> datetime:
+    """本地时间默认值（Python 侧求值）。
+
+    ⛔ 用它而**不是** `server_default=func.now()`：后者在 SQLite 上落的是
+    `CURRENT_TIMESTAMP` = **UTC**，而本项目所有业务时间（`date.today()`、
+    `datetime.now()` 写的 expires_at / confirmed_at / completed_at / last_run_at）
+    都是本地时间。两者混在同一张表里会差 8 小时（实测 UTC 02:24 vs 本地 10:24），
+    后果是「当日」类统计凭空少掉本地 00:00–08:00 那一段。
+
+    crypto 是 7×24 市场，「今天」只能按 Jason 所在时区算才有意义。
+    """
+    return datetime.now()
 
 
 class StockInfo(Base):
@@ -1412,7 +1428,10 @@ class CryptoStrategyRun(Base):
     pnl_realized_today = Column(Float)                 # 当日已实现盈亏快照
     fees_today = Column(Float)                         # 当日累计手续费快照（费用漂移护栏）
     error_message = Column(Text)
-    started_at = Column(DateTime, server_default=func.now())
+    # 本地时间（见 _local_now）：和同行的 completed_at、策略卡上的 last_run_at 同口径。
+    # 用 UTC 的 server_default 会让运行日志显示的时间比策略卡「上次运行」早 8 小时，
+    # 排查「引擎到底跑没跑」时直接被带沟里。
+    started_at = Column(DateTime, default=_local_now)
     completed_at = Column(DateTime)
 
     __table_args__ = (
@@ -1454,7 +1473,9 @@ class CryptoPendingOrder(Base):
     reason = Column(Text)                            # JSON：命中的进/出场条件 + 净边际等决策依据
     risk_snapshot = Column(Text)                     # JSON：产单时的风控预检结果
     net_edge = Column(Float)                         # 买单的净边际（扣完往返成本）
-    created_at = Column(DateTime, server_default=func.now())
+    # ⚠️ 本地时间（见 _local_now）：要和同表的 expires_at/confirmed_at 以及
+    # 引擎侧按 date.today() 切的「当日」口径对齐，否则本地 00:00-08:00 的单会统计不到
+    created_at = Column(DateTime, default=_local_now)
     expires_at = Column(DateTime)                    # 过期时间（到点自动 EXPIRED，防陈单误成交）
     confirmed_at = Column(DateTime)
     executed_order_id = Column(String(50))           # 币安 orderId（成交后）

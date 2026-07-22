@@ -221,11 +221,41 @@ def _safe_ctx(label: str, fn, *args):
         return None
 
 
+# 4h bar 允许的最大陈旧度：超过这么久没有新 bar，就认为库里的不能代表「当前」。
+# 取 3 根 bar 的跨度（12h）+ 余量：正常情况下 updater 每 30 分钟补一轮，落后半天必有问题。
+_BAR_STALE_HOURS = 14
+
+
+def _bars_fresh(bars: list[dict], max_age_hours: int = _BAR_STALE_HOURS) -> bool:
+    """末根 bar 是否足够新。空/无时间戳一律判不新鲜（宁可多打一次网，不可用陈数据打分）。"""
+    from datetime import datetime, timedelta, timezone
+    if not bars:
+        return False
+    ot = bars[-1].get("open_time")
+    if ot is None:
+        return False
+    if isinstance(ot, str):
+        try:
+            ot = datetime.fromisoformat(ot)
+        except ValueError:
+            return False
+    # 库里存的是 naive UTC（见 store.upsert_bars）
+    ot = ot.replace(tzinfo=timezone.utc) if ot.tzinfo is None else ot
+    return datetime.now(tz=timezone.utc) - ot <= timedelta(hours=max_age_hours)
+
+
 def _load_4h_bars(symbol: str, limit: int = 200) -> list[dict]:
-    """取 4h K 线：库里（`crypto_bars`）优先，不够则实时拉币安。
+    """取 4h K 线：库里（`crypto_bars`）优先，不够**或不新鲜**则实时拉币安。
 
     库优先是为了少打网（updater 每轮会补）；库里不够 60 根就回退实时拉——4h 线是
     「定扣扳机时机」用的，缺了整个多周期确认就废了，值得多打一次请求。
+
+    ⛔ **光判「够不够 60 根」不行，还得判新鲜度**。`read_bars` 的 SQL 没有任何时间下限，
+    crypto 的 bar 更新一旦中断（调度器活在后端进程里，App 关了就不跑——本项目有过
+    静默丢整天数据的前科），几天前的旧 bar 照样够 60 根、照样被当成「当前」：
+    `score_timeframe_alignment` 会拿几天前的 MA10/MA30 推技术分 ±8，
+    `_spot_flow_from_bars` 会把「最后 6 根」当成「近 24h」算主动买压和成交额，
+    后者还喂 `thin_liquidity`（-10 分排雷罚分 + 风险旗）。
     """
     try:
         from crypto_intel_engine.store import read_bars
@@ -235,8 +265,10 @@ def _load_4h_bars(symbol: str, limit: int = 200) -> list[dict]:
             bars = read_bars(session, symbol, interval="4h", limit=limit)
         finally:
             session.close()
-        if len(bars) >= 60:
+        if len(bars) >= 60 and _bars_fresh(bars):
             return bars
+        if bars and not _bars_fresh(bars):
+            logger.info(f"{symbol} 库内 4h bar 已陈旧（末根 {bars[-1].get('open_time')}），改实时拉")
     except Exception as e:  # noqa: BLE001 — 表不存在/查询失败，回退拉网
         logger.debug(f"4h 线读库失败 {symbol}: {e}")
     try:

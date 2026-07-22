@@ -277,6 +277,18 @@ class CryptoPendingOrderService:
                 raise PendingError(f"单状态为 {row.status}，不可确认（仅 PENDING 可）")
             row = session.query(CryptoPendingOrder).filter(
                 CryptoPendingOrder.order_ref == order_ref).first()
+            # ⛔ 抢占后立刻校验过期：`cleanup()` 是唯一的过期执行点，而它只在引擎 tick 里跑
+            # （还在 kill 分支之后），调度器默认关。靠它兜的话，引擎一停/后端一重启，
+            # 三天前的陈单就一直躺在列表里可点确认，横盘币漂移 <2% 就按陈旧决策真成交了。
+            # 这里是「确认」这条路径上唯一保证过期生效的地方。
+            if row.expires_at and row.expires_at < datetime.now():
+                row.status = "EXPIRED"
+                session.commit()
+                session.delete(row)          # 与 cleanup 同口径：过期即删，不堆积
+                session.commit()
+                raise PendingError(
+                    f"这张单已于 {row.expires_at:%m-%d %H:%M} 过期（决策依据已陈旧），已作废。"
+                    f"引擎下一轮若条件仍成立会按现价重排新单。")
             return {"strategy_id": row.strategy_id, "symbol": row.symbol, "side": row.side,
                     "quote_amount": row.quote_amount, "quantity": row.quantity,
                     "decision_price": row.price}

@@ -14,6 +14,7 @@ from datetime import date, datetime
 from typing import Any
 
 from loguru import logger
+from sqlalchemy import func
 
 from crypto_intel_engine.dsl import gross_target_edge
 from crypto_strategy import guardrails as gr
@@ -279,7 +280,17 @@ class CryptoStrategyEngine:
         except Exception:  # noqa: BLE001
             filt = {}
         max_pct = pol.max_position_pct
+        # ⛔ `total_capital` 必须显式传：不传的话 size_crypto_position 会回落到
+        # `get_total_capital()`——那是 UserSettings 里 A 股口径的全局总资金（人民币），
+        # 和 spec.capital_basis 算出来的 `capital`（币安真实 USDT）完全是两码事，
+        # 于是 spec.capital_basis 被静默忽略。真实后果不是「仓位偏一点」：
+        # 全局资金设成 100 万时 max_single=20 万 > 币安可用 5000 → amount 取到全部可用买力
+        # → 随后 _risk 里的 MaxPositionPercentRule（用真实 total_value 算）把它拦下 →
+        # **live 策略每笔 BUY 恒定 blocked_risk，一单也下不出来**，且只在 run 日志里留痕。
+        # 反向（全局资金设得小）则长期严重欠仓。同函数里 _planned_notional 和
+        # check_daily_loss 用的都是这个 capital，口径必须一致。
         sizing = size_crypto_position(symbol, price, target, broker_info=broker_info,
+                                      total_capital=capital,
                                       max_position_pct=max_pct,
                                       step_size=filt.get("step_size"), min_qty=filt.get("min_qty"),
                                       min_notional=filt.get("min_notional"))
@@ -336,19 +347,52 @@ class CryptoStrategyEngine:
         return realized
 
     def _today_counts(self, strategy_id: str) -> dict:
-        """单日笔数=当日为本策略排出的待确认单数（防刷屏）；费用/往返=真实成交台账。"""
+        """当日频次/费用统计（喂 `check_daily_counts` 的防刷屏与费用漂移护栏）。
+
+        ⛔ 笔数**不能数 `crypto_pending_orders` 的行数**：拒绝/过期/作废都是物理删行
+        （`pending.reject/cleanup` 立即 delete），于是「排了 30 张、Jason 拒了 25 张」之后
+        计数会回落到 5，`max_orders_per_day` 永远够不着上限——护栏形同虚设，而它本来就是
+        为了防刷屏。改数**永不删除**的运行日志 `CryptoStrategyRun.orders_placed`：
+        它记的是「本策略今天一共排出过多少单」，正是这条护栏想约束的量。
+
+        费用优先走币安原始成交明细（已按 commissionAsset 正确折算成 USDT），
+        明细未同步时退回台账口径。
+        """
         from data_engine.storage.database import get_session
-        from data_engine.storage.models import CryptoPendingOrder, CryptoTrade
+        from data_engine.storage.models import CryptoStrategyRun, CryptoTrade
         session = get_session()
         try:
             day_start = datetime.combine(date.today(), datetime.min.time())
-            orders = session.query(CryptoPendingOrder).filter(
-                CryptoPendingOrder.strategy_id == strategy_id,
-                CryptoPendingOrder.created_at >= day_start).count()
+            orders = session.query(
+                func.coalesce(func.sum(CryptoStrategyRun.orders_placed), 0)).filter(
+                CryptoStrategyRun.strategy_id == strategy_id,
+                CryptoStrategyRun.started_at >= day_start).scalar() or 0
             trades = session.query(CryptoTrade).filter(CryptoTrade.trade_date == date.today()).all()
-            fees = sum(t.commission or 0.0 for t in trades)
             round_trips = sum(1 for t in trades if t.side == "SELL")
-            return {"orders": orders, "fees": fees, "round_trips": round_trips}
+        finally:
+            session.close()
+        return {"orders": int(orders), "fees": self._today_fees(), "round_trips": round_trips}
+
+    def _today_fees(self) -> float:
+        """当日手续费（USDT）。
+
+        ⛔ 旧实现 `sum(CryptoTrade.commission)` **不看 commissionAsset**：币安现货买入默认
+        扣**基础币**（买 BTC 扣 BTC），0.00001 BTC 被当成 0.00001 美元累加 → fees ≈ 1e-5 →
+        `max_fees_per_day_usdt` 这条护栏结构上不可能触发。成交明细层已有正确折算，直接复用。
+        """
+        from crypto_intel_engine import cost_basis as cb
+        try:
+            if cb.has_any_fills():
+                return cb.fees_on(date.today())
+        except Exception as e:  # noqa: BLE001 — 折算失败退回台账，不让护栏断供
+            logger.warning(f"成交明细折算当日手续费失败，退回台账口径: {e}")
+        from data_engine.storage.database import get_session
+        from data_engine.storage.models import CryptoTrade
+        session = get_session()
+        try:
+            return sum(t.commission or 0.0 for t in
+                       session.query(CryptoTrade).filter(
+                           CryptoTrade.trade_date == date.today()).all())
         finally:
             session.close()
 
