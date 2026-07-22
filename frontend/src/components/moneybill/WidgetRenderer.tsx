@@ -876,9 +876,32 @@ const CryptoAccountWidget: React.FC<{ data: any; title?: string }> = ({ data, ti
         <div className="bg-dark-light rounded-lg p-2.5">
           <div className="text-gray-500 text-xs">总资产</div>
           <div className="text-white font-medium">{usd(data.total_value)}</div>
-          <div className="text-[10px] text-gray-600 mt-0.5">含持仓市值 {usd(data.market_value)}</div>
+          <div className="text-[10px] text-gray-600 mt-0.5">
+            含持仓市值 {usd(data.market_value)}
+            {typeof data.unrealized_pnl === 'number' && data.unrealized_pnl !== 0 && (
+              <span className={data.unrealized_pnl > 0 ? 'text-green-400 ml-1' : 'text-red-400 ml-1'}>
+                · 浮动 {data.unrealized_pnl > 0 ? '+' : ''}{usd(data.unrealized_pnl)}
+              </span>
+            )}
+          </div>
         </div>
       </div>
+      {/* 成本覆盖不全时如实告知——交易所不给成本价，靠成交明细回放，有些币本就无成本可算 */}
+      {data.cost_basis_issues && Object.keys(data.cost_basis_issues).length > 0 && (
+        <div className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded-lg px-2.5 py-2 mb-3">
+          ⚠️ 这些币的成本不完整：
+          {Object.entries(data.cost_basis_issues).map(([sym, q]) => (
+            <span key={sym} className="ml-1">
+              {sym}（{q === 'unknown' ? '无成交记录' : '部分覆盖'}）
+            </span>
+          ))}
+          <div className="text-amber-400/60 mt-1">
+            币安不提供持仓成本，本系统按成交明细回放重建。链上充值、空投、理财利息、法币买币
+            进来的币没有成本记录——这部分不会拿现价冒充，止损也会跳过。
+            可以让我「同步币安成交明细」再看一次。
+          </div>
+        </div>
+      )}
       {/* 四钱包分列 */}
       {wallets.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mb-3">
@@ -900,8 +923,10 @@ const CryptoAccountWidget: React.FC<{ data: any; title?: string }> = ({ data, ti
               <th className="px-3 py-2 text-left text-xs text-gray-500">币种</th>
               <th className="px-3 py-2 text-left text-xs text-gray-500">钱包</th>
               <th className="px-3 py-2 text-right text-xs text-gray-500">数量</th>
+              <th className="px-3 py-2 text-right text-xs text-gray-500">成本价</th>
               <th className="px-3 py-2 text-right text-xs text-gray-500">现价</th>
               <th className="px-3 py-2 text-right text-xs text-gray-500">市值</th>
+              <th className="px-3 py-2 text-right text-xs text-gray-500">浮动盈亏</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -922,8 +947,29 @@ const CryptoAccountWidget: React.FC<{ data: any; title?: string }> = ({ data, ti
                       <div className="text-[10px] text-gray-600">现货可卖 {Number(avail).toLocaleString(undefined, { maximumFractionDigits: 8 })}</div>
                     )}
                   </td>
+                  <td className="px-3 py-2 text-right text-gray-300">
+                    {/* 成本未知时明确说「未知」，绝不用现价冒充 */}
+                    {r.avg_cost ? usd(r.avg_cost) : <span className="text-gray-600">未知</span>}
+                    {r.cost_basis_quality === 'partial' && (
+                      <div className="text-[10px] text-amber-400/70" title={r.cost_basis_note || ''}>
+                        部分覆盖
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right text-gray-300">{usd(r.current_price)}</td>
                   <td className="px-3 py-2 text-right text-gray-300">{usd(r.market_value)}</td>
+                  <td className="px-3 py-2 text-right">
+                    {r.avg_cost && typeof r.unrealized_pnl === 'number' ? (
+                      <span className={r.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                        {r.unrealized_pnl >= 0 ? '+' : ''}{usd(r.unrealized_pnl)}
+                        {typeof r.unrealized_pnl_pct === 'number' && (
+                          <div className="text-[10px] opacity-70">
+                            {r.unrealized_pnl_pct >= 0 ? '+' : ''}{r.unrealized_pnl_pct}%
+                          </div>
+                        )}
+                      </span>
+                    ) : <span className="text-gray-600">—</span>}
+                  </td>
                 </tr>
               );
             })}

@@ -153,6 +153,42 @@ def open_orders(symbol: str | None = None) -> list[dict]:
     return _signed_request("GET", "/api/v3/openOrders", params)
 
 
+def my_trades(symbol: str, from_id: int | None = None, limit: int = 1000) -> list[dict]:
+    """某交易对的**账户成交明细**（持仓成本的唯一数据来源）。签名，权重 20。
+
+    币安不提供任何「持仓成本」端点，成本只能靠本接口的逐笔成交回放重建
+    （App 里的成本价也是这么算的）。
+
+    ⚠️ **必须用 `from_id` 翻页拉全历史，不要用时间窗**：币安限制 `startTime`/`endTime`
+    跨度不超过 24 小时，用时间窗拉几年历史要几百次请求还容易漏；`fromId` 没有这个限制，
+    每页最多 1000 条，下一页传 `上页末条 id + 1`。
+
+    Args:
+        from_id: 从这个 tradeId 开始（含）。None = 拉**最近**的一批（首次全量应传 0）。
+
+    Returns:
+        逐笔成交，字段：`id`/`orderId`/`price`/`qty`/`quoteQty`/`commission`/
+        `commissionAsset`/`isBuyer`/`isMaker`/`time`(ms UTC)。按 id 升序。
+    """
+    params: dict[str, Any] = {"symbol": to_binance_symbol(symbol), "limit": limit}
+    if from_id is not None:
+        params["fromId"] = from_id
+    return _signed_request("GET", "/api/v3/myTrades", params) or []
+
+
+def convert_trade_flow(start_ms: int, end_ms: int, limit: int = 1000) -> list[dict]:
+    """币安「闪兑」成交历史。签名，权重高（UID 3000），**窗口最长 30 天**。
+
+    闪兑**不进 `myTrades`** —— 用过闪兑换币的话，光看现货成交会漏掉那部分成本。
+    `startTime`/`endTime` 都是必填，超过 30 天要自己分段。
+    """
+    d = _signed_request("GET", "/sapi/v1/convert/tradeFlow",
+                        {"startTime": start_ms, "endTime": end_ms, "limit": limit})
+    if isinstance(d, dict):
+        return d.get("list", []) or []
+    return d or []
+
+
 def ticker_price(symbol: str) -> float:
     d = _public_get("/api/v3/ticker/price", {"symbol": to_binance_symbol(symbol)})
     return float(d.get("price", 0))

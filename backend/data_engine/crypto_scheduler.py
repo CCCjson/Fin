@@ -102,6 +102,20 @@ class CryptoScheduler:
         finally:
             self._updating = False
 
+        # 成交明细增量同步（持仓成本的数据源）。**独立于行情更新的成败**：行情挂了
+        # 也要同步成交，否则成本停更 → 止损/浮亏风控跟着降级。首轮拉全量，之后按
+        # fromId 续拉，很轻。
+        try:
+            import asyncio
+
+            from crypto_intel_engine import cost_basis as cb
+            loop = asyncio.get_event_loop()
+            synced = await loop.run_in_executor(None, cb.sync_held_fills)
+            if synced.get("inserted") or synced.get("errors"):
+                logger.info(f"[crypto] 成交明细同步: {synced}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[crypto] 成交明细同步异常: {e}")
+
 
 # 模块级单例（与 daily_pipeline_scheduler / news_scheduler 一致的用法）
 crypto_scheduler = CryptoScheduler()

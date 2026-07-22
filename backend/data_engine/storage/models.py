@@ -1283,6 +1283,60 @@ class CryptoTrade(Base):
         return f"<CryptoTrade({self.symbol} {self.side} {self.quantity}@{self.price})>"
 
 
+class CryptoFill(Base):
+    """币安**原始成交明细**（`GET /api/v3/myTrades` 的逐笔回执）—— 持仓成本的唯一真源。
+
+    ## 为什么要这张表（而不是复用 CryptoTrade）
+
+    币安**没有**任何返回「持仓成本」的端点：`/api/v3/account`、资金钱包、Simple Earn
+    三处全是纯余额。币安 App 里那个成本价是**客户端自己按成交历史回放算出来的**，
+    我们也只能这么做（官方社区专帖 "Determining Cost Basis from Trade History" 是同一结论）。
+
+    `crypto_trades`（`CryptoTrade`）记的是「**本系统下的单**」，语义是台账；Jason 在币安
+    App 里手动买卖的、以及接入本系统之前的历史，它一概不知道 —— 拿它算成本会漏掉大半。
+    本表存的是币安侧的客观事实，两张表**语义不同、不可互相替代**，故分立。
+
+    ## 幂等
+
+    `(source, symbol, trade_id)` 唯一。全量回填按 `fromId` 翻页可以反复跑，撞键即跳过。
+    ⚠️ `myTrades` 的 `startTime/endTime` **跨度不能超 24 小时**，所以拉全历史必须走
+    `fromId` 翻页，不能用时间窗切片。
+
+    ## 覆盖边界（`source` 字段的意义）
+
+    - `spot`    ：`/api/v3/myTrades` 的现货成交，绝大多数交易走这里。
+    - `convert` ：币安「闪兑」**不进 myTrades**，得单独拉 `/sapi/v1/convert/tradeFlow`。
+    链上充值、空投、理财利息、法币一键买币等来源**本就没有成本**，谁也算不出来 ——
+    这类缺口由 `cost_basis` 的覆盖度三态如实标注，绝不拿现价冒充成本。
+    """
+    __tablename__ = "crypto_fills"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(12), nullable=False, default="spot")   # spot / convert
+    symbol = Column(String(20), nullable=False, index=True)       # BTCUSDT.BN
+    trade_id = Column(String(40), nullable=False)                 # 币安 tradeId（同 symbol 内唯一）
+    order_id = Column(String(50), index=True)
+
+    price = Column(Float, nullable=False)
+    quantity = Column(Float, nullable=False)      # 成交币量（base）
+    quote_qty = Column(Float)                     # 成交额（quote），币安直接给，不自己乘
+    commission = Column(Float, default=0.0)
+    commission_asset = Column(String(20))         # ⚠️ 可能是 base/quote/BNB，单位不同不可混加
+    is_buyer = Column(Integer, nullable=False)    # 1=买入 0=卖出
+
+    trade_time = Column(DateTime, nullable=False, index=True)   # **UTC**（币安 ms 时间戳）
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_crypto_fill_uniq", "source", "symbol", "trade_id", unique=True),
+        Index("idx_crypto_fill_symbol_time", "symbol", "trade_time"),
+    )
+
+    def __repr__(self):
+        side = "BUY" if self.is_buyer else "SELL"
+        return f"<CryptoFill({self.symbol} {side} {self.quantity}@{self.price})>"
+
+
 class CryptoStrategy(Base):
     """crypto 半自动交易策略（规则对象）—— MoneyBill 把 Jason 人话编译成的确定性 DSL。
 

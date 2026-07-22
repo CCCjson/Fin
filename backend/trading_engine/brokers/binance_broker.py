@@ -38,6 +38,7 @@ except Exception:  # noqa: BLE001 — dotenv 缺失不致命，仍可从进程 e
 
 # 稳定币视为现金等价物（不算币持仓敞口）
 _STABLES = ("USDT", "USDC", "BUSD", "FDUSD")
+_QUOTE = "USDT"      # v1 只处理 USDT 计价对（与 cost_basis.STABLE_QUOTE 同口径）
 
 
 def _is_earn_mirror(asset: str, earn_assets: set[str]) -> bool:
@@ -114,6 +115,38 @@ class BinanceBroker(BaseBroker):
             except Exception:  # noqa: BLE001 — 没有 USDT 对的小币跳过计价
                 continue
         return mv
+
+    @staticmethod
+    def _unrealized(bt, held: dict[str, float]) -> tuple[float, dict[str, str]]:
+        """按回放出的成本算各币浮盈亏之和 + 收集成本不完整的币。
+
+        只对**有成本**（quality != unknown）的部分算盈亏；来源不明的币（充值/空投/理财利息）
+        不瞎猜——宁可少算一部分浮盈亏，也不能凭现价编一个数出来喂风控。
+        """
+        from crypto_intel_engine import cost_basis as cb
+        total = 0.0
+        issues: dict[str, str] = {}
+        try:
+            replayed = cb.replay()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"成本回放失败，浮动盈亏按 0 处理: {e}")
+            return 0.0, {}
+        for asset, qty in held.items():
+            if qty <= 0:
+                continue
+            symbol = f"{asset}{_QUOTE}.BN"
+            cost = cb.cost_for(symbol, qty, replayed=replayed)
+            if cost["quality"] != "full":
+                issues[symbol] = cost["quality"]
+            if cost["avg_cost"] <= 0:
+                continue
+            try:
+                price = bt.ticker_price(f"{asset}{_QUOTE}")
+            except Exception:  # noqa: BLE001 — 无 USDT 对的小币跳过计价
+                continue
+            covered = min(cost["covered_quantity"], qty)
+            total += (price - cost["avg_cost"]) * covered
+        return round(total, 2), issues
 
     def get_account_info(self) -> dict:
         """聚合**四个钱包**（现货/资金/理财活期/理财定期）→ 资金全貌 + 三档买力。
@@ -220,6 +253,17 @@ class BinanceBroker(BaseBroker):
              "coins_value": round(earn_flex_coins_value, 2)},
             {"name": "理财定期", "stable": round(earn_locked_stable, 2), "coins_value": 0.0},
         ]
+        # 未实现盈亏 = 各币持仓浮盈亏之和（成本由成交明细回放重建，见 cost_basis）。
+        # ⛔ 这个数**必须是真的**：它是「单日最大亏损 3%」硬风控与策略引擎当日回撤熔断的
+        # 唯一输入，此前硬编码 0 让这两条风控结构性失效（浮亏 -30% 也照常放行下单）。
+        # ⚠️ 直接用上面已经读到的三钱包币量算，**不调 get_positions()**——那会把本方法的
+        # 网络请求数翻倍，而它在风控链路上每单都要跑。
+        held: dict[str, float] = {}
+        for src in (spot_coins, funding_coins, earn_flex_coins):
+            for a, q in src.items():
+                held[a] = held.get(a, 0.0) + q
+        unrealized, cost_quality = self._unrealized(bt, held)
+
         return {
             "cash": round(cash, 2),
             "spot_cash": round(spot_cash, 2),
@@ -227,7 +271,8 @@ class BinanceBroker(BaseBroker):
             "transferable_cash": round(funding_stable, 2),
             "market_value": round(market_value, 2),
             "total_value": round(total_value, 2),
-            "unrealized_pnl": 0.0,   # 交易所不给成本价，盈亏靠系统成交记录另算
+            "unrealized_pnl": round(unrealized, 2),
+            "cost_basis_issues": cost_quality,   # 哪些币的成本不完整（供上层如实告知）
             "wallets": wallets,
             "earn_coins": earn_coins,   # 理财里的币（如活期 BTC）——单列，不是可交易持仓，可赎回现货
         }
@@ -248,7 +293,11 @@ class BinanceBroker(BaseBroker):
         另列 `spot_locked`，让上层能说清「差的那部分卡在挂单里」（本 broker 绝不替 Jason 撤单）。
 
         现货里的 LD 镜像项由 `_is_earn_mirror` 跳过（需先读理财持仓集合做二次校验，
-        否则 LDO 这种真币会被误杀）。avg_cost 置当前价（交易所无成本价）。
+        否则 LDO 这种真币会被误杀）。
+
+        `avg_cost` / `unrealized_pnl` 由 `cost_basis` 按成交明细回放重建（交易所不给成本价），
+        并带 `cost_basis_quality` 标注可信度。⚠️ **回放只读本地 `crypto_fills` 不出网**——
+        本方法在风控链路上被高频调用，同步成交明细是调度器的活（见 `sync_crypto_fills`）。
         """
         self._ensure_connected()
         from acquisition.markets import binance_trade as bt
@@ -295,6 +344,10 @@ class BinanceBroker(BaseBroker):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"币安资金钱包持仓读取失败: {e}")
 
+        # 一次回放全表，供下面所有持仓复用（避免每个币各回放一遍全表）
+        from crypto_intel_engine import cost_basis as cb
+        replayed = cb.replay()
+
         out: list[BrokerPosition] = []
         for asset, wal in breakdown.items():
             try:
@@ -303,11 +356,18 @@ class BinanceBroker(BaseBroker):
                 continue
             # spot_locked 是 spot 的**子集**，不能再进合计（否则锁定量被重复计敞口）
             qty = sum(q for w, q in wal.items() if w != "spot_locked")
+            symbol = f"{asset}USDT.BN"
+            cost = cb.cost_for(symbol, qty, replayed=replayed)
+            avg_cost = cost["avg_cost"]
+            # 浮盈亏只按**有成本的那部分**算：partial 时对来源不明的币不瞎猜盈亏
+            covered = min(cost["covered_quantity"], qty) if avg_cost > 0 else 0.0
+            unrealized = (price - avg_cost) * covered if avg_cost > 0 else 0.0
             out.append(BrokerPosition(
-                symbol=f"{asset}USDT.BN", quantity=qty, avg_cost=price,
+                symbol=symbol, quantity=qty, avg_cost=avg_cost,
                 current_price=price, market_value=qty * price,
-                unrealized_pnl=0.0, available=spot_free.get(asset, 0.0),
+                unrealized_pnl=round(unrealized, 4), available=spot_free.get(asset, 0.0),
                 wallet_breakdown=dict(wal),
+                cost_basis_quality=cost["quality"], cost_basis_note=cost["note"],
             ))
         return out
 

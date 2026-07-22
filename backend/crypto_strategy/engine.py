@@ -290,7 +290,25 @@ class CryptoStrategyEngine:
         return risk_check(symbol, action, qty, price, broker_info)
 
     def _realized_today(self) -> float:
-        """今日已实现盈亏：全量回放加权成本，只累加卖出日期=今天的平仓盈亏。"""
+        """今日已实现盈亏（喂当日回撤熔断）。
+
+        **优先用币安原始成交明细回放**（`cost_basis.realized_on`）：`crypto_trades` 台账只记
+        「本系统下的单」，Jason 在币安 App 手动买的币没有买入记录，系统卖掉时旧实现会按
+        `avg=0` 把**整笔卖出金额算成利润** → 当日已实现盈亏被灌成巨额正数 → 当天剩余时间
+        熔断线彻底失效（还会把持仓量算成负数污染后续计算）。
+
+        明细未同步时退回台账口径（向后兼容）。
+        """
+        from crypto_intel_engine import cost_basis as cb
+        try:
+            if cb.has_any_fills():
+                return cb.realized_on(date.today())
+        except Exception as e:  # noqa: BLE001 — 回放失败退回台账，不让熔断断供
+            logger.warning(f"成交明细回放今日盈亏失败，退回台账口径: {e}")
+        return self._realized_today_from_ledger()
+
+    def _realized_today_from_ledger(self) -> float:
+        """旧口径：从 `crypto_trades` 台账回放（仅当成交明细未同步时使用）。"""
         from data_engine.storage.database import get_session
         from data_engine.storage.models import CryptoTrade
         session = get_session()

@@ -59,15 +59,22 @@ class BrokerPosition:
       "funding": q}`（只放非零项），卖出时据此算「需从理财赎回/从资金划转多少」。A 股/paper 留 None。
       ⚠️ `spot_locked` 是 `spot` 的**子集**（挂单锁定量，不可直接卖、也无法靠赎回/划转变出来），
       算总敞口时**不要**把它再加一遍。`available` 恒等于 `spot - spot_locked`。
+    - `cost_basis_quality`：仅 crypto 用。`full` / `partial` / `unknown`。交易所**不提供**
+      持仓成本，crypto 的 `avg_cost` 是按成交明细回放重建的（见
+      `crypto_intel_engine/cost_basis.py`）。⚠️ **`unknown` 时 `avg_cost` 为 0**，这样
+      `StopLossRule` 会走「无持仓成本，跳过」分支明说跳过 —— 而不是拿现价当成本算出
+      「亏损 0%」假装安全（那是止损失效的老病根）。A 股/paper 留 None。
     """
     symbol: str              # 股票代码 / 交易对
     quantity: float          # 总敞口（见类 docstring）
-    avg_cost: float          # 平均成本
+    avg_cost: float          # 平均成本（crypto：回放重建，unknown 时为 0）
     current_price: float     # 当前价格
     market_value: float      # 市值
     unrealized_pnl: float    # 未实现盈亏
     available: float         # 可直接交易量（见类 docstring）
     wallet_breakdown: Optional[dict[str, float]] = None  # crypto 分钱包明细（只放非零项）
+    cost_basis_quality: Optional[str] = None   # crypto 成本可信度（见类 docstring）
+    cost_basis_note: Optional[str] = None      # 人话说明覆盖缺口，直接给 Jason 看
 
     @property
     def unrealized_pnl_pct(self) -> float:

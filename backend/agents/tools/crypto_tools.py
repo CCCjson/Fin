@@ -219,10 +219,40 @@ def get_crypto_account() -> ToolEnvelope:
     positions = [{"symbol": p.symbol, "quantity": p.quantity,
                   "current_price": p.current_price, "market_value": round(p.market_value, 2),
                   "available": p.available, "wallet_breakdown": p.wallet_breakdown,
-                  "wallet": _primary_wallet(p.wallet_breakdown)}
+                  "wallet": _primary_wallet(p.wallet_breakdown),
+                  # 成本/浮盈亏按成交明细回放重建（交易所不给成本价），带可信度
+                  "avg_cost": p.avg_cost or None,
+                  "unrealized_pnl": p.unrealized_pnl,
+                  "unrealized_pnl_pct": round(p.unrealized_pnl_pct, 2) if p.avg_cost else None,
+                  "cost_basis_quality": p.cost_basis_quality,
+                  "cost_basis_note": p.cost_basis_note}
                  for p in broker.get_positions()]
     data = {"account": acct, "positions": positions}
     return ToolEnvelope(data=data, widget=crypto_account_widget(data))
+
+
+@tool(
+    name="sync_crypto_fills",
+    description="从币安拉取历史成交明细，重建持仓成本价与浮动盈亏。"
+                "用户问「我的成本价是多少 / 我这个币赚了多少 / 为什么看不到成本」时先调这个，"
+                "再调 get_crypto_account 看结果。首次会拉全部历史，之后是增量。",
+    args_model=NoArgs, category="crypto", group="crypto",
+)
+def sync_crypto_fills() -> ToolEnvelope:
+    from acquisition.markets import binance_trade as bt
+    if not bt.has_credentials():
+        return ToolEnvelope(business_result="negative",
+                            message="币安 API key 未配置（.env 的 BINANCE_API_KEY/SECRET），无法拉成交明细")
+    from crypto_intel_engine import cost_basis as cb
+    r = cb.sync_held_fills()
+    if r.get("skipped"):
+        return ToolEnvelope(business_result="negative", message="币安凭证不可用，未同步")
+    msg = f"已同步 {r['symbols']} 个交易对的成交明细，新增 {r['inserted']} 笔。"
+    if r.get("errors"):
+        msg += f"⚠️ 这些币没拉全（网络/限速）：{'、'.join(r['errors'])}，成本覆盖度会偏低。"
+    msg += ("\n\n注意：链上充值、空投、理财利息、法币买币进来的币**本来就没有成本记录**，"
+            "币安也算不出来——这部分会在持仓里标成「成本未知/部分覆盖」，不会拿现价冒充成本。")
+    return ToolEnvelope(data=r, message=msg)
 
 
 # ──────────────────── 下单（需确认 + 风控 + key）────────────────────

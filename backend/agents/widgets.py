@@ -239,8 +239,12 @@ def crypto_account_widget(r: dict) -> dict:
             "transferable_cash": acct.get("transferable_cash"),   # 资金钱包可划
             "market_value": acct.get("market_value"),
             "total_value": acct.get("total_value"),
-            "unrealized_pnl": acct.get("unrealized_pnl"),
+            "unrealized_pnl": acct.get("unrealized_pnl"),         # 真实浮盈亏（按回放成本算）
+            # 哪些币成本不完整 {symbol: partial|unknown}——交易所不给成本价，靠成交明细回放，
+            # 充值/空投/理财利息进来的币本就无成本可算，这里如实标注而不是拿现价冒充
+            "cost_basis_issues": acct.get("cost_basis_issues", {}),
             "wallets": acct.get("wallets", []),                   # [{name, stable, coins_value}]
+            # 持仓含 avg_cost / unrealized_pnl / unrealized_pnl_pct / cost_basis_quality
             "positions": r.get("positions", []),                  # 现货可交易持仓
             "earn_coins": acct.get("earn_coins", []),             # 理财里的币（非持仓，可赎回）
         },

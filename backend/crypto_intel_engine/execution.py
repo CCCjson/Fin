@@ -16,12 +16,26 @@ from loguru import logger
 
 
 def get_recent_crypto_closed_pnls(limit: int = 10) -> tuple[list[float], str | None]:
-    """回放 crypto 成交台账（CryptoTrade），算最近 N 笔平仓盈亏（最新在前）+ 最近亏损日期。
+    """最近 N 笔平仓盈亏（最新在前）+ 最近亏损日期。喂 RiskManager 的 ConsecutiveLossRule。
 
-    加权平均成本法逐 symbol 回放，镜像 A 股 `adapter.get_recent_closed_pnls`，
-    数据源换成 `crypto_trades` —— crypto 与股票各算各的「连亏 3 次」streak，互不污染。
-    喂给 RiskManager 的 ConsecutiveLossRule；台账空则返回 ([], None)（规则自动放行）。
+    **优先用币安原始成交明细 `crypto_fills` 回放**（`cost_basis.closed_pnls`）——那是交易所
+    侧的客观事实，含 Jason 在币安 App 里手动做的买卖；`crypto_trades` 台账只记「本系统下的
+    单」，拿它算连亏会漏掉大半，还会把「系统外买入、系统内卖出」算成 0 成本的暴利。
+
+    明细尚未同步时退回旧的台账口径（向后兼容，不因为没同步就把风控变哑）。
+    crypto 与股票各算各的 streak，互不污染。
     """
+    from crypto_intel_engine import cost_basis as cb
+    try:
+        if cb.has_any_fills():
+            return cb.closed_pnls(limit)
+    except Exception as e:  # noqa: BLE001 — 回放失败退回台账，不让风控断供
+        logger.warning(f"成交明细回放平仓盈亏失败，退回台账口径: {e}")
+    return _closed_pnls_from_ledger(limit)
+
+
+def _closed_pnls_from_ledger(limit: int = 10) -> tuple[list[float], str | None]:
+    """旧口径：从 `crypto_trades` 台账回放（仅当成交明细未同步时使用）。"""
     from data_engine.storage.database import get_session
     from data_engine.storage.models import CryptoTrade
     session = get_session()
@@ -80,12 +94,35 @@ def crypto_broker_info(broker) -> dict[str, Any]:
     }
 
 
+def crypto_risk_config(broker_info: dict) -> dict:
+    """crypto 专用风控配置：**日亏阈值按币安真实总值算**，不用 A 股那份全局总资金。
+
+    ⛔ 修的是一处单位串味：`RiskManager` 在只给 `max_daily_loss_pct` 时会自己去
+    `get_total_capital()` 取阈值基数，而那读的是 `UserSettings.total_capital` ——
+    **Jason 的 A 股总资金，单位人民币（默认 5000）**，却拿去和币安的 USDT 浮亏比大小。
+    此前因为 `unrealized_pnl` 恒为 0 从没暴露；成本价一修好它立刻变成活的错误。
+
+    这里预先把 `max_daily_loss`（绝对值）算好塞进配置，`RiskManager` 就会走
+    「配置里有绝对值」的分支，不再回落到全局资金。共用的 `manager.py`/`rules.py` 一行不改
+    （A 股路径零风险）。
+    """
+    from trading_engine.risk.adapter import get_effective_risk_config
+    cfg = dict(get_effective_risk_config())
+    pct = cfg.pop("max_daily_loss_pct", None)
+    total = float((broker_info or {}).get("total_value") or 0.0)
+    if pct and total > 0:
+        cfg["max_daily_loss"] = total * float(pct)
+    elif pct:
+        # 读不到真实总值时**保留百分比**让 RiskManager 走旧路径，总比完全没有日亏闸好
+        cfg["max_daily_loss_pct"] = pct
+    return cfg
+
+
 def risk_check(symbol: str, action: str, quantity: float, price: float,
                broker_info: dict) -> tuple[bool, list[str], list[str]]:
     """无条件过 RiskManager.check_order。返回 (是否全过, 全部消息, 未过规则消息)。"""
-    from trading_engine.risk.adapter import get_effective_risk_config
     from trading_engine.risk.manager import RiskManager
-    rm = RiskManager(get_effective_risk_config())
+    rm = RiskManager(crypto_risk_config(broker_info))
     passed, results = rm.check_order(symbol=symbol, action=action,
                                      quantity=quantity, price=price, broker_info=broker_info)
     return passed, [r.message for r in results], [r.message for r in results if not r.passed]
