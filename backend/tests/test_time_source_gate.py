@@ -85,8 +85,10 @@ def _is_naive_time_call(node: ast.AST) -> bool:
         # datetime.now() 无参才咬；datetime.now(tz)/now(timezone.utc) 是显式的，放行
         return not node.args and not node.keywords
     if attr == "combine":
-        # datetime.combine(某日, time.min) —— 「当日边界」的经典错法，比上面两种更隐蔽
-        return True
+        # datetime.combine(某日, time.min) —— 「当日边界」的经典错法，比上面两种更隐蔽。
+        # ⚠️ 必须限定接收者是 `datetime`：`combine` 是个太常见的方法名，实测
+        # `EnsemblePredictor.combine(lstm, xgb)`（prediction_engine/engine.py）就被误报过。
+        return isinstance(node.func.value, ast.Name) and node.func.value.id == "datetime"
     return False
 
 
@@ -167,6 +169,7 @@ def test_detector_bites(src):
     "market_day_bounds(A_SHARE, day)",
     "time.time()",                           # epoch float，与时区无关
     "df.now",                                # 属性访问不是调用
+    "EnsemblePredictor.combine(a, b)",       # combine 是个常见方法名，只认 datetime.combine
 ])
 def test_detector_lets_these_through(src):
     assert not _detects(src), f"这种写法不该被咬：{src}"
