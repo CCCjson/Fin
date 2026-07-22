@@ -1218,6 +1218,42 @@ class CryptoAsset(Base):
         return f"<CryptoAsset({self.symbol} mcap={self.market_cap})>"
 
 
+class CryptoBar(Base):
+    """加密日内 K 线（4h/1h）—— 多周期确认专用，**不与 `daily_quotes` 混住**。
+
+    为什么单独一张表：`daily_quotes` 是 A股/港股/美股/crypto 四市场共用的**日线**表，
+    主键语义是 (symbol, date)，塞日内 K 线会破坏它的日线语义与全部下游统计。加密是
+    7×24 市场、策略每 30 分钟 tick，需要比日线更细的周期来定扣扳机时机。
+
+    `taker_buy_ratio` 是币安 kline 自带的主动买入占比（>0.5 买方主动吃单），免费的
+    现货买压真数据，多数实现都把它丢了。
+    """
+    __tablename__ = "crypto_bars"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True)   # BTCUSDT.BN
+    interval = Column(String(10), nullable=False, index=True)  # 4h / 1h
+    open_time = Column(DateTime, nullable=False, index=True)   # UTC 开盘时刻
+
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Float, nullable=False)
+
+    quote_volume = Column(Float)          # 成交额（USDT）
+    trades = Column(Integer)
+    taker_buy_ratio = Column(Float)       # 主动买入量/总量，None=零成交（不造假中性）
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_crypto_bar_uniq", "symbol", "interval", "open_time", unique=True),
+    )
+
+    def __repr__(self):
+        return f"<CryptoBar({self.symbol} {self.interval} {self.open_time} close={self.close})>"
+
+
 class CryptoTrade(Base):
     """币安现货成交台账 —— crypto 独立成交记录（与 A 股 ManualTrade 分书本）。
 

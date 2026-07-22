@@ -19,9 +19,10 @@ const DIM_LABELS: Record<string, string> = {
   sentiment: '新闻情感',
   ml: 'ML 预测',
   position: '持仓风险',
-  // crypto 择时三维
+  // crypto 择时五维（sentiment 与股票共用「新闻情感」标签）
   derivatives: '衍生品情绪',
   regime: 'BTC 大势',
+  flow: '资金流',
 };
 
 // 排雷 verdict → 徽章样式
@@ -849,9 +850,17 @@ const CryptoDerivativesWidget: React.FC<{ data: any; title?: string }> = ({ data
   );
 };
 
+// 钱包归属徽章：现货可直接卖 / 理财与资金需先赎回或划转
+const WALLET_BADGE: Record<string, { label: string; cls: string }> = {
+  spot: { label: '现货', cls: 'bg-green-500/15 text-green-300 border-green-500/30' },
+  earn_flexible: { label: '理财·需赎回', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
+  funding: { label: '资金·需划转', cls: 'bg-sky-500/15 text-sky-300 border-sky-500/30' },
+};
+
 const CryptoAccountWidget: React.FC<{ data: any; title?: string }> = ({ data, title }) => {
   const rows = data.positions || [];
   const wallets = Array.isArray(data.wallets) ? data.wallets : [];
+  const earnCoins = Array.isArray(data.earn_coins) ? data.earn_coins : [];
   return (
     <WidgetShell className="p-4">
       <div className="text-base font-bold text-white mb-3">💰 {title || '币安账户'}</div>
@@ -889,22 +898,53 @@ const CryptoAccountWidget: React.FC<{ data: any; title?: string }> = ({ data, ti
           <thead className="bg-dark-light border-b border-border">
             <tr>
               <th className="px-3 py-2 text-left text-xs text-gray-500">币种</th>
+              <th className="px-3 py-2 text-left text-xs text-gray-500">钱包</th>
               <th className="px-3 py-2 text-right text-xs text-gray-500">数量</th>
               <th className="px-3 py-2 text-right text-xs text-gray-500">现价</th>
               <th className="px-3 py-2 text-right text-xs text-gray-500">市值</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {rows.map((r: any, i: number) => (
-              <tr key={i} className="hover:bg-dark-light/50">
-                <td className="px-3 py-2 text-gray-300">{r.symbol}</td>
-                <td className="px-3 py-2 text-right text-gray-300">{Number(r.quantity).toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
-                <td className="px-3 py-2 text-right text-gray-300">{usd(r.current_price)}</td>
-                <td className="px-3 py-2 text-right text-gray-300">{usd(r.market_value)}</td>
-              </tr>
-            ))}
+            {rows.map((r: any, i: number) => {
+              const badge = WALLET_BADGE[r.wallet] || WALLET_BADGE.spot;
+              // 现货可直接卖量 < 总量 → 提示有部分在理财/资金，卖出会自动赎回/划转
+              const avail = typeof r.available === 'number' ? r.available : undefined;
+              const partlyLocked = avail !== undefined && avail < Number(r.quantity) - 1e-12;
+              return (
+                <tr key={i} className="hover:bg-dark-light/50">
+                  <td className="px-3 py-2 text-gray-300">{r.symbol}</td>
+                  <td className="px-3 py-2">
+                    <span className={`px-2 py-0.5 rounded border text-[10px] font-medium ${badge.cls}`}>{badge.label}</span>
+                  </td>
+                  <td className="px-3 py-2 text-right text-gray-300">
+                    {Number(r.quantity).toLocaleString(undefined, { maximumFractionDigits: 8 })}
+                    {partlyLocked && (
+                      <div className="text-[10px] text-gray-600">现货可卖 {Number(avail).toLocaleString(undefined, { maximumFractionDigits: 8 })}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right text-gray-300">{usd(r.current_price)}</td>
+                  <td className="px-3 py-2 text-right text-gray-300">{usd(r.market_value)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+      )}
+      {/* 理财里的币（活期，可秒赎）——单列明细，卖出时系统会自动先赎回 */}
+      {earnCoins.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[11px] text-gray-500 mb-1">🏦 理财活期持币（可赎回，卖出自动先赎）</div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+            {earnCoins.map((c: any, i: number) => (
+              <div key={i} className="bg-dark-light rounded-lg p-2">
+                <div className="text-gray-300 font-medium">{c.asset}</div>
+                <div className="text-[10px] text-gray-600">
+                  {Number(c.quantity).toLocaleString(undefined, { maximumFractionDigits: 8 })} · {usd(c.value)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </WidgetShell>
   );

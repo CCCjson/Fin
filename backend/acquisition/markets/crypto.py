@@ -38,11 +38,12 @@ _SPOT_BASE = os.getenv("BINANCE_REST_BASE", "https://api.binance.com").rstrip("/
 # 币安 K 线 limit 单次上限
 _KLINES_LIMIT = 1000
 
-# 频率 → 币安 interval。项目内部主用 1d，其余按需扩。
+# 频率 → 币安 interval。项目内部主用 1d；4h 供多周期确认（`crypto_bars` 表）。
 _FREQ_MAP = {
     "1d": "1d", "1day": "1d", "daily": "1d",
     "1w": "1w", "1week": "1w", "weekly": "1w",
     "1M": "1M", "1mon": "1M", "monthly": "1M",
+    "4h": "4h", "4hour": "4h", "1h": "1h", "1hour": "1h",
 }
 
 
@@ -144,6 +145,49 @@ class CryptoFetcher(BaseFetcher):
             logger.error(f"获取实时行情失败: {e}")
             raise
 
+    # ── 多周期 K 线（4h 确认用）────────────────────────────────────────
+    def fetch_bars(self, symbol: str, interval: str = "4h", limit: int = 500) -> list[dict]:
+        """拉近 `limit` 根指定周期 K 线（不分页，最新在末）。
+
+        与 `fetch_daily` 的区别：这条按**根数**取最新的、保留 `open_time` 时间戳精度
+        （日线按日期落 `daily_quotes`，4h 按 open_time 落 `crypto_bars`）。
+        额外保留币安自带的 `taker_buy_base`（主动买入量）与 `quote_volume`。
+        """
+        bn = to_binance_symbol(symbol)
+        iv = _FREQ_MAP.get(interval, interval)
+        rows = self._get("/api/v3/klines",
+                         {"symbol": bn, "interval": iv, "limit": min(limit, _KLINES_LIMIT)}) or []
+        return [_kline_to_bar(symbol, iv, k) for k in rows]
+
+    # ── 流动性 / 盘口 ───────────────────────────────────────────────────
+    def get_ticker_24hr(self, symbol: str) -> dict:
+        """24 小时行情统计（流动性闸用 `quote_volume`，即 24h 成交额 USDT）。"""
+        bn = to_binance_symbol(symbol)
+        d = self._get("/api/v3/ticker/24hr", {"symbol": bn}) or {}
+        return {
+            "symbol": f"{bn}.BN",
+            "quote_volume": float(d.get("quoteVolume") or 0),
+            "volume": float(d.get("volume") or 0),
+            "trades": int(d.get("count") or 0),
+            "price_change_pct": float(d.get("priceChangePercent") or 0),
+            "high": float(d.get("highPrice") or 0),
+            "low": float(d.get("lowPrice") or 0),
+        }
+
+    def get_order_book(self, symbol: str, limit: int = 100) -> dict:
+        """盘口深度（买卖各 `limit` 档）。返回 {bids, asks}，每档 [价, 量] 均为 float。"""
+        bn = to_binance_symbol(symbol)
+        d = self._get("/api/v3/depth", {"symbol": bn, "limit": limit}) or {}
+        def _side(rows):
+            out = []
+            for r in rows or []:
+                try:
+                    out.append([float(r[0]), float(r[1])])
+                except (TypeError, ValueError, IndexError):
+                    continue
+            return out
+        return {"symbol": f"{bn}.BN", "bids": _side(d.get("bids")), "asks": _side(d.get("asks"))}
+
     # ── 校验 / 搜索 ─────────────────────────────────────────────────────
     def validate_symbol(self, symbol: str) -> bool:
         """校验交易对是否存在（查 exchangeInfo）。"""
@@ -205,6 +249,75 @@ def _date_to_ms(date_str: str, *, end_of_day: bool = False) -> int:
     return int(dt.timestamp() * 1000)
 
 
+def _kline_to_bar(symbol: str, interval: str, k: list) -> dict:
+    """币安 kline 数组 → `crypto_bars` 记录。
+
+    币安 kline 12 字段：[openTime, o, h, l, c, volume, closeTime, quoteVolume,
+    trades, takerBuyBase, takerBuyQuote, ignore]。第 9/10 位的**主动买入量**是
+    免费的现货买压真数据（多数实现都把它丢了），这里留下来喂资金流维。
+    """
+    vol = float(k[5])
+    taker_buy = float(k[9])
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "open_time": datetime.fromtimestamp(int(k[0]) / 1000, tz=timezone.utc),
+        "open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4]),
+        "volume": vol,
+        "quote_volume": float(k[7]),
+        "trades": int(k[8]),
+        "taker_buy_base": taker_buy,
+        # 主动买入占比：>0.5 买方主动吃单，<0.5 卖方主动砸盘。零成交时留 None 不造 0.5 假中性
+        "taker_buy_ratio": round(taker_buy / vol, 4) if vol > 0 else None,
+    }
+
+
+def estimate_slippage(order_book: dict, notional_usdt: float, side: str = "BUY") -> dict | None:
+    """扫单簿算「吃掉 `notional_usdt` 名义额」的实测滑点（纯函数，可离线测）。
+
+    BUY 吃 asks、SELL 吃 bids，逐档累加到目标金额，算成交均价相对最优价的偏离。
+    这是把 `CostModel.slippage_pct` 从**拍脑袋的 0.05%** 换成**当下真实盘口**的关键。
+
+    Returns:
+        {slippage_pct, avg_price, best_price, filled_notional, exhausted} —
+        `exhausted=True` 表示单簿档位吃光仍没凑够金额（流动性不足，调用方应视为高风险）；
+        单簿为空返 None。
+    """
+    levels = (order_book or {}).get("asks" if side == "BUY" else "bids") or []
+    if not levels or notional_usdt <= 0:
+        return None
+    best = levels[0][0]
+    if best <= 0:
+        return None
+
+    remaining = notional_usdt
+    cost = 0.0
+    qty = 0.0
+    for price, amount in levels:
+        level_notional = price * amount
+        take = min(level_notional, remaining)
+        if take <= 0:
+            break
+        cost += take
+        qty += take / price
+        remaining -= take
+        if remaining <= 0:
+            break
+
+    if qty <= 0:
+        return None
+    avg = cost / qty
+    # BUY 买贵了为正滑点，SELL 卖便宜了也记为正（成本方向统一）
+    slip = (avg - best) / best if side == "BUY" else (best - avg) / best
+    return {
+        "slippage_pct": round(max(0.0, slip), 6),
+        "avg_price": avg,
+        "best_price": best,
+        "filled_notional": round(cost, 2),
+        "exhausted": remaining > 0,
+    }
+
+
 def _klines_to_df(rows: list[list]) -> pd.DataFrame:
     """币安 klines 数组 → 标准 DataFrame（列 date/open/high/low/close/volume）。
 
@@ -216,12 +329,17 @@ def _klines_to_df(rows: list[list]) -> pd.DataFrame:
     recs = []
     for k in rows:
         open_ms = int(k[0])
+        vol = float(k[5])
         recs.append({
             "date": datetime.fromtimestamp(open_ms / 1000, tz=timezone.utc).date(),
             "open": float(k[1]), "high": float(k[2]),
-            "low": float(k[3]), "close": float(k[4]), "volume": float(k[5]),
+            "low": float(k[3]), "close": float(k[4]), "volume": vol,
+            # 币安免费带的两个字段，此前被丢弃：成交额（落 amount）与主动买入占比（喂资金流维）
+            "amount": float(k[7]),
+            "taker_buy_ratio": round(float(k[9]) / vol, 4) if vol > 0 else None,
         })
-    return pd.DataFrame(recs)[["date", "open", "high", "low", "close", "volume"]]
+    return pd.DataFrame(recs)[["date", "open", "high", "low", "close", "volume",
+                               "amount", "taker_buy_ratio"]]
 
 
 def klines_df_to_records(symbol: str, df: pd.DataFrame) -> list[dict]:
@@ -241,6 +359,7 @@ def klines_df_to_records(symbol: str, df: pd.DataFrame) -> list[dict]:
             "date": d.isoformat() if hasattr(d, "isoformat") else str(d)[:10],
             "open": float(o), "high": float(h), "low": float(low_), "close": float(c),
             "volume": float(row.get("volume") or 0),
-            "amount": None, "turnover": None,
+            "amount": float(row["amount"]) if row.get("amount") is not None else None,
+            "turnover": None,
         })
     return records

@@ -34,8 +34,21 @@ FIELD_RESOLVERS: dict[str, Callable[[dict], Any]] = {
     "dim.technical": lambda r: _g(r, "dimensions", "technical", "score"),
     "dim.derivatives": lambda r: _g(r, "dimensions", "derivatives", "score"),
     "dim.regime": lambda r: _g(r, "dimensions", "regime", "score"),
+    "dim.flow": lambda r: _g(r, "dimensions", "flow", "score"),
+    "dim.sentiment": lambda r: _g(r, "dimensions", "sentiment", "score"),
     "funding_rate": lambda r: _g(r, "derivatives_snapshot", "funding", "funding_rate"),
+    "funding_pctile": lambda r: _g(r, "dimensions", "derivatives", "detail", "funding_pctile"),
     "long_short_ratio": lambda r: _g(r, "derivatives_snapshot", "long_short", "ratio"),
+    "top_trader_ratio": lambda r: _g(r, "derivatives_snapshot", "top_trader", "ratio"),
+    "taker_ratio": lambda r: _g(r, "derivatives_snapshot", "taker_flow", "ratio"),
+    "basis_rate": lambda r: _g(r, "derivatives_snapshot", "basis", "basis_rate"),
+    "oi_change_pct": lambda r: _g(r, "dimensions", "derivatives", "detail", "oi_price", "oi_change_pct"),
+    "spot_taker_buy_ratio": lambda r: _g(r, "dimensions", "flow", "detail", "spot_taker_buy_ratio"),
+    "stablecoin_change_pct": lambda r: _g(r, "dimensions", "flow", "detail", "stablecoin_change_pct"),
+    "category_change_24h": lambda r: _g(r, "dimensions", "flow", "detail", "category_change_24h"),
+    "quote_volume_24h": lambda r: _g(r, "dimensions", "flow", "detail", "quote_volume_24h"),
+    "news_sentiment": lambda r: _g(r, "dimensions", "sentiment", "detail", "net_sentiment"),
+    "unlock_pct_30d": lambda r: _g(r, "screen", "unlock", "pct_of_supply"),
     "screen.score": lambda r: _g(r, "screen", "score"),
     "fear_greed": lambda r: _fng_num(_g(r, "market_context", "fear_greed", "value")),
     "price.change_5d_pct": lambda r: _g(r, "price", "change_5d_pct"),
@@ -47,19 +60,32 @@ FIELD_RESOLVERS: dict[str, Callable[[dict], Any]] = {
     "recommendation": lambda r: _g(r, "recommendation"),
     "screen.verdict": lambda r: _g(r, "screen", "verdict"),
     "btc_regime": lambda r: _g(r, "btc_regime", "regime"),
+    "tf_4h_trend": lambda r: _g(r, "dimensions", "technical", "detail",
+                                "timeframe_4h", "tf_4h_trend"),
+    "tf_4h_aligned": lambda r: _bool_str(
+        _g(r, "dimensions", "technical", "detail", "timeframe_4h", "aligned")),
 }
 
 # 类别型字段只支持 eq / in（其余为数值型，支持 gt/gte/lt/lte/eq/between）
-CATEGORICAL_FIELDS = {"recommendation", "screen.verdict", "btc_regime"}
+CATEGORICAL_FIELDS = {"recommendation", "screen.verdict", "btc_regime",
+                      "tf_4h_trend", "tf_4h_aligned"}
 NUMERIC_FIELDS = set(FIELD_RESOLVERS) - CATEGORICAL_FIELDS
 
 # 字段 → 中文名（给待确认单/运行日志的条件展示用人话，别露原始字段名）
 FIELD_LABELS: dict[str, str] = {
     "composite": "综合分", "raw_composite": "原始综合分",
     "dim.technical": "技术分", "dim.derivatives": "衍生品分", "dim.regime": "大势分",
-    "funding_rate": "资金费率", "long_short_ratio": "多空比",
+    "dim.flow": "资金流分", "dim.sentiment": "新闻情绪分",
+    "funding_rate": "资金费率", "funding_pctile": "资金费率分位",
+    "long_short_ratio": "散户多空比", "top_trader_ratio": "大户持仓比",
+    "taker_ratio": "合约主动买卖比", "basis_rate": "期现基差",
+    "oi_change_pct": "未平仓变化",
+    "spot_taker_buy_ratio": "现货主动买入占比", "stablecoin_change_pct": "稳定币供应变化",
+    "category_change_24h": "所属赛道24h涨跌", "quote_volume_24h": "24h成交额",
+    "news_sentiment": "新闻净情绪", "unlock_pct_30d": "未来30天解锁占比",
     "screen.score": "排雷分", "screen.verdict": "排雷结论",
     "fear_greed": "恐慌贪婪", "btc_regime": "BTC大势", "recommendation": "系统建议",
+    "tf_4h_trend": "4h趋势", "tf_4h_aligned": "4h与日线同向",
     "price.change_5d_pct": "近5日涨幅", "price.change_20d_pct": "近20日涨幅",
     "price.change_60d_pct": "近60日涨幅",
     "suggested_position_pct": "建议仓位", "current_position_pct": "当前持仓",
@@ -68,10 +94,14 @@ FIELD_LABELS: dict[str, str] = {
 # 合法字段名枚举 —— 塞进 Condition.field 的 JSON schema，让 MoneyBill 只能从中选、不再猜错。
 FieldName = Literal[
     "composite", "raw_composite",
-    "dim.technical", "dim.derivatives", "dim.regime",
-    "funding_rate", "long_short_ratio",
+    "dim.technical", "dim.derivatives", "dim.regime", "dim.flow", "dim.sentiment",
+    "funding_rate", "funding_pctile", "long_short_ratio", "top_trader_ratio",
+    "taker_ratio", "basis_rate", "oi_change_pct",
+    "spot_taker_buy_ratio", "stablecoin_change_pct", "category_change_24h",
+    "quote_volume_24h", "news_sentiment", "unlock_pct_30d",
     "screen.score", "screen.verdict",
     "fear_greed", "btc_regime", "recommendation",
+    "tf_4h_trend", "tf_4h_aligned",
     "price.change_5d_pct", "price.change_20d_pct", "price.change_60d_pct",
     "suggested_position_pct", "current_position_pct",
 ]
@@ -80,6 +110,13 @@ assert set(get_args(FieldName)) == set(FIELD_RESOLVERS), "FieldName 与 FIELD_RE
 
 _NUMERIC_OPS = {"gt", "gte", "lt", "lte", "eq", "between"}
 _CATEGORICAL_OPS = {"eq", "in"}
+
+
+def _bool_str(v: Any) -> str | None:
+    """布尔 → 'yes'/'no' 字符串（类别型字段只吃字符串，让 MoneyBill 写 eq: 'yes' 更直观）。"""
+    if v is None:
+        return None
+    return "yes" if v else "no"
 
 
 def _fng_num(v: Any) -> float | None:
@@ -104,11 +141,21 @@ def resolve_field(field: str, analysis: dict) -> Any:
 class Condition(BaseModel):
     field: FieldName = Field(
         ...,
-        description="条件字段（只能从枚举里选）：综合分 composite / 三维分 dim.technical|dim.derivatives|"
-                    "dim.regime / 资金费率 funding_rate / 多空比 long_short_ratio / 排雷 screen.score|"
-                    "screen.verdict(pass|caution|avoid|unknown) / 恐慌贪婪 fear_greed / BTC大势 "
-                    "btc_regime(bull|bear|unknown) / 建议 recommendation(BUY|HOLD|SELL) / 涨幅 "
-                    "price.change_5d_pct|20d|60d / 仓位 suggested_position_pct|current_position_pct")
+        description=(
+            "条件字段（只能从枚举里选）："
+            "综合分 composite / 五维分 dim.technical|dim.derivatives|dim.regime|dim.flow|dim.sentiment"
+            " / 衍生品 funding_rate(绝对值)|funding_pctile(历史分位0-100,越高越拥挤)|"
+            "long_short_ratio(散户,反向)|top_trader_ratio(大户,顺向)|taker_ratio(合约主动买卖)|"
+            "basis_rate(期现基差)|oi_change_pct(未平仓变化%)"
+            " / 资金流 spot_taker_buy_ratio(现货主动买入占比,0-1,>0.5买方主动)|"
+            "stablecoin_change_pct(稳定币供应30日变化%)|category_change_24h(所属赛道)|"
+            "quote_volume_24h(24h成交额USDT,流动性)"
+            " / 事件 news_sentiment(-1到1) / 解锁 unlock_pct_30d(未来30天解锁占流通%)"
+            " / 排雷 screen.score|screen.verdict(pass|caution|avoid|unknown)"
+            " / 恐慌贪婪 fear_greed / BTC大势 btc_regime(bull|bear|unknown)"
+            " / 多周期 tf_4h_trend(bullish|bearish)|tf_4h_aligned(yes|no)"
+            " / 建议 recommendation(BUY|HOLD|SELL) / 涨幅 price.change_5d_pct|20d|60d"
+            " / 仓位 suggested_position_pct|current_position_pct"))
     op: Literal["gt", "gte", "lt", "lte", "eq", "in", "between"]
     value: Any = Field(..., description="比较值：数值型给数字/区间[lo,hi]；类别型给字符串或字符串列表")
 
@@ -181,7 +228,11 @@ class PositionPolicy(BaseModel):
 
 class CostModel(BaseModel):
     taker_fee_pct: float = Field(0.001, ge=0, description="单边 taker 费率（币安现货 0.1%）")
-    slippage_pct: float = Field(0.0005, ge=0, description="单边滑点假设（v1 固定 bp）")
+    slippage_pct: float = Field(0.0005, ge=0, description="单边滑点假设（fixed 档用；measured 取不到时的兜底）")
+    slippage_source: Literal["fixed", "measured"] = Field(
+        "measured",
+        description="fixed=用上面的固定假设；measured=下单前扫真实盘口按本单名义额实测滑点"
+                    "（拿不到盘口自动回落 fixed，并在决策里标注）")
     min_net_edge_pct: float = Field(0.0, ge=0, description="扣完往返成本后仍要求的最小净边际")
     target_edge_source: Literal["take_profit", "fixed"] = "take_profit"
     fixed_target_edge_pct: float | None = Field(None, gt=0, description="target_edge_source=fixed 时的毛边际")

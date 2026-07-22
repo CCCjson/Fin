@@ -149,7 +149,12 @@ class CryptoStrategyEngine:
 
         # 空仓 → 看买入（过成本净边际闸）
         if not held and entry_hit:
-            cm = spec.cost_model
+            # 滑点用**真实盘口实测**替换固定假设（成本闸是「赚不赚」的最后判断，别喂假数）。
+            # 必须在成本闸之前换：先估本单名义额 → 扫单簿 → 再判净边际。
+            planned_notional = self._planned_notional(spec, symbol, price, analysis,
+                                                      broker_info, capital)
+            cm, slip_detail = gr.effective_cost_model(spec.cost_model, symbol, planned_notional)
+            d["slippage"] = slip_detail
             gross = gross_target_edge(cm, price, analysis.get("take_profit"))
             cost_ok, cost_reason, net = gr.cost_gate(gross, cm)
             tp_ok, tp_reason = gr.take_profit_clears_cost(price, analysis.get("take_profit"), cm)
@@ -246,6 +251,18 @@ class CryptoStrategyEngine:
             return float(p.quantity) if p else 0.0
         except Exception:  # noqa: BLE001
             return 0.0
+
+    def _planned_notional(self, spec, symbol, price, analysis, broker_info, capital) -> float | None:
+        """本单**预计**名义额（USDT）—— 只为实测滑点估个量级，正式数量仍走 `_size_buy`。
+
+        直接用目标仓位%×资金，不重跑一遍取整/风控（那些在后面做）。
+        """
+        pol = spec.position_policy
+        target = (pol.fixed_target_pct * 100 if pol.target_pct_source == "fixed"
+                  else analysis.get("suggested_position_pct") or 0.0)
+        if not target or not capital:
+            return None
+        return target / 100.0 * float(capital)
 
     def _size_buy(self, spec, symbol, price, analysis, broker_info, capital) -> float | None:
         from crypto_intel_engine.cockpit import size_crypto_position

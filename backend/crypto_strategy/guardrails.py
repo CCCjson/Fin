@@ -4,6 +4,8 @@
 整体别失控」（总开关/当日熔断/频次与费用漂移/单笔与单币上限/成本净边际）。每个函数返回
 `(passed, reason)`：passed=True 放行，False 拦截并给人话原因。
 """
+from loguru import logger
+
 from crypto_intel_engine.dsl import CostModel, Guardrails, round_trip_cost
 
 # ──────────────────── 全局 kill-switch（DB 持久化，跨 tick 即时生效）────────────────────
@@ -49,6 +51,44 @@ def set_killed(killed: bool) -> None:
 def net_edge(gross_edge: float, cm: CostModel) -> float:
     """净边际 = 毛目标边际 - 往返成本（2×taker + 滑点）。"""
     return gross_edge - round_trip_cost(cm)
+
+
+def effective_cost_model(cm: CostModel, symbol: str,
+                         notional_usdt: float | None) -> tuple[CostModel, dict]:
+    """把成本模型里的**滑点假设**换成当下真实盘口的**实测值**。
+
+    `slippage_pct` 默认 0.05% 是个拍脑袋的数——薄盘小币真实滑点可能是它的十倍，
+    厚盘 BTC 又远小于它。成本闸是「这笔到底赚不赚」的最后一道判断，喂它假数据等于白判。
+    做法：按本单名义额扫真实单簿算 VWAP 偏离（`estimate_slippage`）。
+
+    拿不到盘口 / 未开启 measured → **原样返回**并在 detail 里标 `source='fixed'`
+    （不假装测过）。单簿被吃穿（`exhausted`）时额外标 `thin_book`，调用方应当心。
+    """
+    detail: dict = {"source": "fixed", "slippage_pct": cm.slippage_pct}
+    if cm.slippage_source != "measured" or not notional_usdt or notional_usdt <= 0:
+        return cm, detail
+    try:
+        from acquisition.markets.crypto import CryptoFetcher, estimate_slippage
+        book = CryptoFetcher().get_order_book(symbol, limit=100)
+        est = estimate_slippage(book, notional_usdt, "BUY")
+    except Exception as e:  # noqa: BLE001 — 盘口取不到就用固定假设，不阻断决策
+        logger.warning(f"盘口滑点实测失败 {symbol}: {e}")
+        detail["error"] = str(e)
+        return cm, detail
+
+    if not est:
+        return cm, detail
+    measured = est["slippage_pct"]
+    detail.update({
+        "source": "measured", "slippage_pct": measured,
+        "fixed_assumption": cm.slippage_pct,
+        "thin_book": est.get("exhausted", False),
+        "best_price": est.get("best_price"), "avg_price": est.get("avg_price"),
+    })
+    # 单簿被吃穿说明深度不够，实测值是**低估**的 → 取实测与固定假设的较大者，偏保守
+    slip = max(measured, cm.slippage_pct) if est.get("exhausted") else measured
+    detail["applied_slippage_pct"] = slip
+    return cm.model_copy(update={"slippage_pct": slip}), detail
 
 
 def cost_gate(gross_edge: float | None, cm: CostModel) -> tuple[bool, str, float | None]:

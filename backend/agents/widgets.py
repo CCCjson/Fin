@@ -241,7 +241,8 @@ def crypto_account_widget(r: dict) -> dict:
             "total_value": acct.get("total_value"),
             "unrealized_pnl": acct.get("unrealized_pnl"),
             "wallets": acct.get("wallets", []),                   # [{name, stable, coins_value}]
-            "positions": r.get("positions", []),                  # [{symbol, quantity, current_price, market_value}]
+            "positions": r.get("positions", []),                  # 现货可交易持仓
+            "earn_coins": acct.get("earn_coins", []),             # 理财里的币（非持仓，可赎回）
         },
     }
 

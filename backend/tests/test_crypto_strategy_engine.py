@@ -44,7 +44,9 @@ def _spec(mode="live", **over):
             all_of=[Condition(field="composite", op="gte", value=60)])),
         exit_rules=ExitRules(when=ConditionGroup(
             all_of=[Condition(field="composite", op="lt", value=40)])),
-        cost_model=CostModel(min_net_edge_pct=0.0),
+        # 固定滑点档：让成本闸的断言只考察纯算术，不去打币安盘口（单测必须 hermetic）。
+        # 实测档（slippage_source="measured"）单独在 TestMeasuredSlippage 里用桩验证。
+        cost_model=CostModel(min_net_edge_pct=0.0, slippage_source="fixed"),
         position_policy=PositionPolicy(per_symbol_exposure_cap_pct=0.99),
         guardrails=Guardrails(per_order_notional_usdt=1e9, max_orders_per_day=100),
     )
@@ -301,3 +303,69 @@ def test_cleanup_deletes_expired(mem_db, monkeypatch):
     assert svc.cleanup()["expired_deleted"] == 1
     with pytest.raises(PendingError):        # 过期即删
         svc.get(p["order_ref"])
+
+
+class TestMeasuredSlippage:
+    """滑点从「拍脑袋固定值」升级为「实测盘口」——用桩单簿验证，不打网。"""
+
+    @staticmethod
+    def _stub_book(monkeypatch, bids, asks):
+        from acquisition.markets import crypto as crypto_mod
+
+        class _StubFetcher:
+            def __init__(self, *a, **kw):
+                pass
+
+            def get_order_book(self, symbol, limit=100):
+                return {"bids": bids, "asks": asks}
+
+        monkeypatch.setattr(crypto_mod, "CryptoFetcher", _StubFetcher)
+
+    def test_measured_replaces_fixed_assumption(self, monkeypatch):
+        """厚盘：实测滑点远小于 0.05% 假设 → 用实测值，成本判定更准。"""
+        from crypto_strategy.guardrails import effective_cost_model
+        self._stub_book(monkeypatch, bids=[[100.0, 1000.0]], asks=[[100.0, 1000.0]])
+        cm, detail = effective_cost_model(
+            CostModel(slippage_source="measured", slippage_pct=0.0005), "BTCUSDT.BN", 1000)
+        assert detail["source"] == "measured"
+        assert cm.slippage_pct == 0.0          # 单档就吃完，零滑点
+        assert detail["fixed_assumption"] == 0.0005
+
+    def test_thin_book_stays_conservative(self, monkeypatch):
+        """薄盘被吃穿：实测值是低估的 → 取实测与固定假设的较大者，偏保守。"""
+        from crypto_strategy.guardrails import effective_cost_model
+        self._stub_book(monkeypatch, bids=[[100.0, 0.01]], asks=[[100.0, 0.01]])
+        cm, detail = effective_cost_model(
+            CostModel(slippage_source="measured", slippage_pct=0.0005), "SHIBUSDT.BN", 1_000_000)
+        assert detail["thin_book"] is True
+        assert cm.slippage_pct >= 0.0005       # 不因「实测=0」而低估薄盘成本
+
+    def test_fixed_source_never_touches_network(self, monkeypatch):
+        """fixed 档必须直接返回，连盘口都不查（省请求 + 保证可离线）。"""
+        from crypto_strategy.guardrails import effective_cost_model
+
+        def _boom(*a, **kw):
+            raise AssertionError("fixed 档不该去取盘口")
+
+        from acquisition.markets import crypto as crypto_mod
+        monkeypatch.setattr(crypto_mod, "CryptoFetcher", _boom)
+        cm, detail = effective_cost_model(
+            CostModel(slippage_source="fixed", slippage_pct=0.0005), "BTCUSDT.BN", 1000)
+        assert detail["source"] == "fixed" and cm.slippage_pct == 0.0005
+
+    def test_book_failure_falls_back_to_fixed(self, monkeypatch):
+        """盘口取不到 → 回落固定假设，绝不阻断决策（也不假装测过）。"""
+        from acquisition.markets import crypto as crypto_mod
+        from crypto_strategy.guardrails import effective_cost_model
+
+        class _Broken:
+            def __init__(self, *a, **kw):
+                pass
+
+            def get_order_book(self, symbol, limit=100):
+                raise RuntimeError("网络挂了")
+
+        monkeypatch.setattr(crypto_mod, "CryptoFetcher", _Broken)
+        cm, detail = effective_cost_model(
+            CostModel(slippage_source="measured", slippage_pct=0.0005), "BTCUSDT.BN", 1000)
+        assert detail["source"] == "fixed" and cm.slippage_pct == 0.0005
