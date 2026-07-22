@@ -85,12 +85,28 @@ class TestDerivatives:
         assert d["degraded"] is True
 
     def test_top_trader_is_directional_long_short_is_contrarian(self):
-        """大户持仓比顺向、散户账户比反向 —— 方向必须相反。"""
-        top_bull, _ = score_derivatives({"top_trader": {"ratio": 2.0}})
-        top_bear, _ = score_derivatives({"top_trader": {"ratio": 0.5}})
-        assert top_bull > 50 > top_bear
-        retail_bull, _ = score_derivatives({"long_short": {"ratio": 2.0}})
-        assert retail_bull < 50          # 散户看多 → 反向指标 → 偏空
+        """大户持仓比顺向、散户账户比反向 —— 方向必须相反。
+
+        断言看**子信号自己的分**（detail 里的 *_score）而不是维度合成分：这两个子信号权重
+        分别只有 0.15 / 0.05，单独可得时不够代表整个衍生品维（合成分会返 None，见
+        `_SUBSIGNAL_MIN_WEIGHT`）。本用例要验的是方向，不是覆盖度。
+        """
+        _, bull = score_derivatives({"top_trader": {"ratio": 2.0}})
+        _, bear = score_derivatives({"top_trader": {"ratio": 0.5}})
+        assert bull["top_trader_score"] > 50 > bear["top_trader_score"]
+        _, retail = score_derivatives({"long_short": {"ratio": 2.0}})
+        assert retail["long_short_score"] < 50    # 散户看多 → 反向指标 → 偏空
+
+    def test_single_minor_subsignal_cannot_represent_dimension(self):
+        """权重 0.05 的 basis 不许独占整个衍生品维（它占 composite 20%）。"""
+        score, detail = score_derivatives({"basis": {"basis_rate": 0.001}})
+        assert score is None and detail["available"] is False
+        assert detail["weight_covered"] == pytest.approx(0.05)
+
+    def test_enough_subsignal_weight_still_scores(self):
+        """别把闸做成「谁都不给分」：funding 权重 0.30 达线，单独可得也要出分。"""
+        score, detail = score_derivatives({"funding": {"funding_rate": 0.0001}})
+        assert score is not None and detail["weight_covered"] == pytest.approx(0.30)
 
     def test_components_used_reported(self):
         s, d = score_derivatives({

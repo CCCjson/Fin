@@ -121,6 +121,9 @@ class CryptoStrategyService:
                 row.backtest_metrics = json.dumps(
                     {"metrics": bt.get("metrics"), "degraded": bt.get("degraded"),
                      "degraded_reasons": bt.get("degraded_reasons"),
+                     # caveats 与 degraded 正交：规则回放了，但数字本身的含义比看上去弱
+                     # （费率口径对不上 / 大量日子结构上不可能开仓）
+                     "caveats": bt.get("caveats"),
                      "per_symbol": bt.get("per_symbol")}, ensure_ascii=False)
                 row.backtest_passed = 1 if bt.get("passed") else 0
                 row.status = "backtested"
@@ -227,6 +230,7 @@ class CryptoStrategyService:
             row.backtest_metrics = json.dumps(
                 {"metrics": bt.get("metrics"), "degraded": bt.get("degraded"),
                  "degraded_reasons": bt.get("degraded_reasons"),
+                 "caveats": bt.get("caveats"),
                  "per_symbol": bt.get("per_symbol")}, ensure_ascii=False)
             row.backtest_passed = 1 if bt.get("passed") else 0
             if row.status in ("draft",):

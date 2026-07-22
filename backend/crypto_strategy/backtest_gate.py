@@ -111,6 +111,13 @@ def _non_replayable_fields(spec: CryptoStrategySpec,
     return sorted(fields)
 
 
+# C++ 引擎对 market="crypto" 写死的 taker 费率（`CommissionConfig::crypto()`）。
+# 接口不接受费率覆盖，故策略 CostModel 的 taker_fee_pct 传不下去 —— 差异如实报出来。
+_ENGINE_TAKER_PCT = 0.001
+# 回放覆盖度低于此值就提醒：net_return 被大量「结构上不可能开仓」的日子稀释了
+_MIN_REPLAY_COVERAGE = 0.5
+
+
 def run_backtest_gate(
     spec: CryptoStrategySpec,
     bars_by_symbol: dict[str, list[dict[str, Any]]],
@@ -181,17 +188,58 @@ def run_backtest_gate(
     net_return = round(sum(returns) / len(returns), 6) if returns else None
     degraded_fields = _non_replayable_fields(spec, matured)
     mode = "proxy" if proxy_used and not evaluated else ("hybrid" if proxy_used else "dsl")
+    # `degraded` 专指「你的规则没能被逐日回放」（原语不可回放 → 用了双均线代理）。
+    # 下面两条是**另一类**问题：规则回放了，但这个 net_return 的含义比看上去弱。
+    # 混进 degraded_reasons 会让两种完全不同的警告纠缠在一起，故单列 `caveats`。
+    caveats: list[str] = []
+
+    # ① 费率口径：C++ 引擎按 market="crypto" 用**标准 taker 0.1%**，接口不接受费率覆盖，
+    #    策略 CostModel 里配的 taker_fee_pct **传不下去**（滑点能传，费率不能）。
+    #    改这个要动 C++ 引擎重编译，超出本次范围——但必须如实说明，别让「按你的费率回测过了」
+    #    这句话骗人。BNB 抵扣（0.075%）或 VIP 费率与 0.1% 有差时，真实净收益有系统性偏差。
+    fee_basis = {"engine_taker_pct": _ENGINE_TAKER_PCT,
+                 "strategy_taker_pct": cm.taker_fee_pct,
+                 "matches": abs(cm.taker_fee_pct - _ENGINE_TAKER_PCT) < 1e-9}
+    if not fee_basis["matches"]:
+        caveats.append(
+            f"回测按引擎标准 taker {_ENGINE_TAKER_PCT:.3%} 计费，而策略配置的是 "
+            f"{cm.taker_fee_pct:.3%}（引擎接口不支持费率覆盖）——净收益有系统性偏差")
+
+    # ② 回放覆盖度：原语「成熟」后 net_return 会**静默换口径**。指标只从 crypto_metrics
+    #    开始攒（几十天），而 bars 拉 400 天：没有指标帧的那些日子里 evaluate 对缺值一律
+    #    判 False → 结构上不可能开仓，却照样按全窗口平均算进 net_return。
+    #    同一个数字在原语成熟前后含义完全不同，必须把「几天真有指标」摆出来。
+    coverage = _replay_coverage(per_symbol, bars_by_symbol)
+    if coverage is not None and coverage < _MIN_REPLAY_COVERAGE and evaluated:
+        caveats.append(
+            f"只有 {coverage:.0%} 的回测日有真实指标帧，其余日子进场条件结构上恒为 False"
+            f"（指标历史还没攒够）——net_return 被大量「不可能开仓」的日子稀释，仅供参考")
+
     return {
         "passed": bool(net_return is not None and net_return > 0),
         "net_return": net_return,
         "metrics": {"avg_net_return": net_return, "symbols_tested": len(returns),
                     "round_trip_cost": round(round_trip_cost(cm), 6),
-                    "matured_fields": sorted(matured)},
+                    "matured_fields": sorted(matured),
+                    "fee_basis": fee_basis, "replay_coverage": coverage},
         "degraded": bool(degraded_fields),
         "degraded_reasons": _degraded_reasons(mode, degraded_fields, evaluated),
+        "caveats": caveats,     # 「数字本身可信度」的警告，与 degraded 正交
         "replay": {"mode": mode, "proxy_used": proxy_used, "evaluated_fields": evaluated},
         "per_symbol": per_symbol,
     }
+
+
+def _replay_coverage(per_symbol: list[dict], bars_by_symbol: dict) -> float | None:
+    """「有真实指标帧的天数 / 回测总天数」。没有可比对的币返回 None。"""
+    have = total = 0
+    for r in per_symbol:
+        bars = bars_by_symbol.get(r.get("symbol")) or []
+        if r.get("skipped") or not bars:
+            continue
+        have += int(r.get("replay_days") or 0)
+        total += len(bars)
+    return round(have / total, 4) if total else None
 
 
 def _frames_for(symbol: str, dates: list[str], fields: set[str],

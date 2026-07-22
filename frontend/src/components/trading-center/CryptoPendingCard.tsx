@@ -30,6 +30,9 @@ export const CryptoPendingCard: React.FC<{
   // STALE = 下单后失联/后端中途重启，币安那边成交与否未知。
   // 绝不能让 Jason 在这个状态下点「确认成交」——那可能是在下第二笔单。
   const stale = order.status === 'STALE';
+  // 漂移阈值随策略配置走（决策时写进 reason），拿不到才退回默认 2%
+  const driftRaw = order.reason?.drift_threshold_pct as number | undefined;
+  const driftPct = `${((typeof driftRaw === 'number' ? driftRaw : 0.02) * 100).toFixed(1)}%`;
 
   return (
     <div className="rounded-xl border border-border bg-dark-light/40 p-4 space-y-3">
@@ -91,10 +94,10 @@ export const CryptoPendingCard: React.FC<{
         </div>
       </div>
 
-      {/* 现价重估提示 */}
+      {/* 现价重估提示。阈值取决策时生效的配置值，不写死——改了配置文案就不准了 */}
       <div className="text-xs text-gray-500 bg-dark/50 rounded px-2 py-1.5 border border-border/50">
         ⚠️ 确认时后端会按<b className="text-gray-400">当前市价</b>重新核算数量、重跑触发条件，
-        价格较决策时漂移超 2% 会自动拦下要你重新决策。
+        价格较决策时漂移超 {driftPct} 会自动拦下要你重新决策。
       </div>
 
       {/* 命中条件（可展开）*/}

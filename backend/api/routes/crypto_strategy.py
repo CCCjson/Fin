@@ -61,7 +61,12 @@ async def backtest_strategy(strategy_id: str):
 
 @router.post("/strategies/{strategy_id}/arm")
 async def arm_strategy(strategy_id: str):
-    """武装 live（排真单等确认）。必须已过净费回测，否则 400。"""
+    """武装 live：引擎开始按 DSL 产**待确认单**（每笔仍由 Jason 点确认才成交）。
+
+    ⚠️ **不以回测为门槛**（刻意设计，见 `service.arm` 的说明）：半自动的安全边界是
+    逐笔人工确认 + 护栏 + 硬风控，而那个回测是双均线代理、并不测你写的 DSL 规则。
+    此处此前写着「必须已过净费回测否则 400」，与实现不符，已更正。
+    """
     try:
         return crypto_strategy_service.arm(strategy_id)
     except StrategyError as e:

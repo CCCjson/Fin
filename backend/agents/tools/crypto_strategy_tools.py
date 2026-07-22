@@ -9,7 +9,12 @@ CLAUDE.md 逐笔确认红线原样保留、不动。
 
 ⛔ 本工具标 `requires_confirmation=True`：创建一条自主策略是高风险动作，Jason 先审 DSL（预览
 把条件树+成本闸用人话回给他）再落库。落库默认 `paper` 未启用（干跑观察）；上实盘（排真单等
-确认）要显式 arm，且必须先过含真实费率的回测。
+确认）要显式 arm。
+
+⚠️ **arm 不卡回测，这是刻意设计**（见 `crypto_strategy/service.py::arm`）：半自动系统的安全
+边界是**逐笔人工确认 + 护栏 + 硬风控**，不是回测。那个回测是双均线代理、并不测你写的 DSL
+规则，把它当准入门槛只会给人虚假的安心。烂策略只会提烂建议、被 Jason 拒掉，赔不了钱。
+（此前本文件与 route 都写着「必须先过回测」，与代码不符，已更正。）
 """
 from typing import Any
 
@@ -66,18 +71,19 @@ def preview_compile_crypto_strategy(args: dict) -> dict:
     except ValidationError as e:
         return {"error": "策略规格校验失败", "details": [str(err) for err in e.errors()]}
     out = _dsl_plain(spec)
-    out["note"] = ("确认后将：① 校验 ② 用真实费率跑净费回测 ③ 落库为 paper 未启用。"
-                   "上实盘（arm 到 live）后=引擎自动产决策+排队待确认，每笔仍由你点确认才成交。")
+    out["note"] = ("确认后将：① 校验 ② 跑一次参考回测（双均线代理，不测你的规则）③ 落库为 "
+                   "paper 未启用。上实盘（arm 到 live）后=引擎自动产决策+排队待确认，"
+                   "每笔仍由你点确认才成交。arm 不以回测为门槛——安全靠逐笔确认+护栏+硬风控。")
     return out
 
 
 @tool(
     name="compile_crypto_strategy",
     description="【crypto 半自动策略·编译】把 Jason 用自然语言描述的加密交易规则编译成一条结构化策略，"
-               "校验→净费回测→落库。用户说「以后按这个规则半自动交易/帮我做一个自动策略」时用。"
+               "校验→参考回测→落库。用户说「以后按这个规则半自动交易/帮我做一个自动策略」时用。"
                "半自动=引擎自动产决策并排队待确认，**每笔仍由 Jason 点确认才成交**（不自动成交）。"
                "你负责把人话映射成 spec（DSL）字段；工具确定性地校验+回测+持久化。"
-               "落库默认纸面未启用，上实盘要另外 arm 且须先过回测。会先让 Jason 确认 DSL。",
+               "落库默认纸面未启用，上实盘要另外 arm（arm 不以回测为门槛）。会先让 Jason 确认 DSL。",
     args_model=CompileCryptoStrategyArgs,
     category="crypto", group="crypto",
     requires_confirmation=True, preview_fn=preview_compile_crypto_strategy,
@@ -115,6 +121,8 @@ def compile_crypto_strategy(spec: Any, description_nl: str | None = None) -> Too
         "strategy_id": result.get("strategy_id"),
         "backtest_net_return_ref": net,   # ⚠️ 参考值：双均线代理，不代表你的 DSL 规则
         "degraded": bt.get("degraded"), "degraded_reasons": bt.get("degraded_reasons"),
+        # 「数字本身可信度」的警告（费率口径 / 回放覆盖度），与 degraded 正交
+        "caveats": bt.get("caveats"),
         "next_steps": (
             "已落库。可先 enable 纸面干跑观察它「本该下什么单」，或直接 arm 上实盘"
             "（引擎按你的规则排单、你逐笔确认成交）。"

@@ -225,6 +225,16 @@ SCREEN_UNKNOWN_PENALTY = 12.0
 # 缺数据不等于有雷，但绝不能是 pass（≥75）。
 _SCREEN_DATA_STARVED_CAP = 60
 
+# 出买入级结论所需的最低维度覆盖度（按权重算，不是按维度个数）。
+# 0.5 = 至少半数权重的维度真的取到了数。低于此则封顶到 HOLD 区。
+MIN_DIMENSION_COVERAGE = 0.5
+# 覆盖不足时的封顶分：落在 HOLD 区（<BUY 线 65），不否决只是不给买。
+LOW_COVERAGE_CAP = 60.0
+
+
+# 子信号重归一的权重下限：一个维度里可得子信号的权重和低于此，整维判不可用。
+# 防的是「权重 0.05 的边缘指标独占一个 20% 权重的维度」这种以偏概全。
+_SUBSIGNAL_MIN_WEIGHT = 0.30
 
 # 衍生品各子信号权重（和不必为 1，按可得项重归一）
 _DERIV_WEIGHTS = {
@@ -352,8 +362,17 @@ def score_derivatives(snap: dict | None, *, funding_history: list[float] | None 
         return None, {"available": False}
 
     total_w = sum(_DERIV_WEIGHTS[k] for k in parts)
+    # ⛔ 子信号层同样不能无下限重归一：只有 basis（权重 0.05）成功时，它会独占整个
+    # 衍生品维（占 composite 20%），一个边缘指标冒充「衍生品情绪全貌」。
+    # 覆盖太低就整维判不可用（返回 None = 该维退出加权），而不是给一个假的代表值。
+    if total_w < _SUBSIGNAL_MIN_WEIGHT:
+        detail.update({"available": False, "components_used": sorted(parts),
+                       "weight_covered": round(total_w, 4),
+                       "note": "衍生品子信号覆盖不足，该维不参与打分"})
+        return None, detail
     score = sum(parts[k] * _DERIV_WEIGHTS[k] for k in parts) / total_w
     detail["components_used"] = sorted(parts)
+    detail["weight_covered"] = round(total_w, 4)
     return round(clamp(score, 0, 100), 1), detail
 
 
@@ -417,8 +436,16 @@ def score_flow(ctx: dict | None) -> tuple[float | None, dict]:
     if not parts:
         return None, {"available": False}
     total_w = sum(_FLOW_WEIGHTS[k] for k in parts)
+    # 同 score_derivatives：只有 category（0.25）成功时，赛道涨跌会独占整个资金流维。
+    # 覆盖不足则整维判不可用，不给假的代表值。
+    if total_w < _SUBSIGNAL_MIN_WEIGHT:
+        detail.update({"available": False, "components_used": sorted(parts),
+                       "weight_covered": round(total_w, 4),
+                       "note": "资金流子信号覆盖不足，该维不参与打分"})
+        return None, detail
     score = sum(parts[k] * _FLOW_WEIGHTS[k] for k in parts) / total_w
     detail["components_used"] = sorted(parts)
+    detail["weight_covered"] = round(total_w, 4)
     return round(clamp(score, 0, 100), 1), detail
 
 
@@ -585,6 +612,17 @@ def score_crypto_cockpit(dimensions: dict[str, float | None],
     if quality is not None and getattr(quality, "core_degraded", False) and composite > CLAMP_CAP:
         composite = CLAMP_CAP
         adjustments.append("composite_capped_core_data_degraded")
+
+    # ⛔ 最小维度覆盖闸：缺维重归一是刻意设计，但**没有下限就成了漏洞**。
+    # 实测只有 sentiment 一维可得（3 篇正面新闻 → 92 分）、其余四维全 None 时，
+    # 旧实现给出 composite=92 / BUY / 建议仓位 16.8%，而 coverage 只有 0.15 ——
+    # 一条新闻就能推出一个买入建议。BUY 线（65 分）是按五维一起校准的，
+    # 覆盖度太低时那条线的含义已经不成立。`dimension_coverage` 此前算了但没人用。
+    # 不否决（缺数据不等于看空），但封顶到 HOLD 区，别让单维冒充全景。
+    # 注意 `quality` 硬钳只探 daily_bars 一个块，管不到另外几维的降级，两者互补。
+    if dimension_coverage < MIN_DIMENSION_COVERAGE and composite > LOW_COVERAGE_CAP:
+        composite = LOW_COVERAGE_CAP
+        adjustments.append("composite_capped_low_dimension_coverage")
 
     # ── 排雷否决闸（加密独有）──
     verdict = (screen_result or {}).get("verdict")

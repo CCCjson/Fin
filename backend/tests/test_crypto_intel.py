@@ -208,11 +208,24 @@ class TestCryptoCockpitScoring:
         assert caution < base                        # 温和扣分，不否决
 
     def test_missing_dimension_renormalizes(self):
+        """缺维重归一：覆盖度达线时，合成分 = 可得维度的加权平均。"""
         from crypto_intel_engine.scorer import score_crypto_cockpit
-        r = score_crypto_cockpit({"technical": 70, "derivatives": None, "regime": None},
+        # technical(0.30) + regime(0.20) = 0.50 覆盖度，达最低线
+        r = score_crypto_cockpit({"technical": 70, "derivatives": None, "regime": 70},
                                  {"verdict": "pass"})
         assert r["dimension_coverage"] < 1.0
-        assert r["composite"] == 70.0                # 单维=该维分（重归一）
+        assert r["composite"] == 70.0                # 重归一后 = 该两维分
+        assert "composite_capped_low_dimension_coverage" not in r["adjustments"]
+
+    def test_low_coverage_capped_below_buy_line(self):
+        """⛔ 单维（technical 仅 0.30 覆盖）不许出买入级结论——BUY 线是按五维校准的。"""
+        from crypto_intel_engine.scorer import LOW_COVERAGE_CAP, score_crypto_cockpit
+        r = score_crypto_cockpit({"technical": 90, "derivatives": None, "regime": None},
+                                 {"verdict": "pass"})
+        assert r["composite"] == LOW_COVERAGE_CAP
+        assert r["recommendation"] != "BUY"
+        assert "composite_capped_low_dimension_coverage" in r["adjustments"]
+        assert r["raw_composite"] == 90.0            # 原始分仍如实留痕
 
 
 class TestCryptoLevels:

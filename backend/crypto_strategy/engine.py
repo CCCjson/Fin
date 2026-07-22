@@ -204,7 +204,10 @@ class CryptoStrategyEngine:
             row.strategy_id, symbol, action, qty, price, quote_amount=quote_amount,
             net_edge=d.get("net_edge"),
             reason={"fired": d.get("fired"), "composite": d.get("composite"),
-                    "recommendation": d.get("recommendation"), "notional": d.get("notional")})
+                    "recommendation": d.get("recommendation"), "notional": d.get("notional"),
+                    # 决策时生效的漂移阈值（可配）。带上它前端才不用把「2%」写死在文案里——
+                    # 改了配置文案就不准了，而这句话是 Jason 判断「该不该点确认」的依据之一。
+                    "drift_threshold_pct": spec.guardrails.max_confirm_slippage_pct})
         d["staged"] = True
         d["pending_ref"] = pending["order_ref"]
         return pending["order_ref"]
