@@ -20,6 +20,8 @@ from sqlalchemy.orm import Session
 
 from net.proxy_pool import ProxyPool, is_proxy_connect_error
 
+from common.market import A_SHARE
+from common.market_time import market_now, market_today
 from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo, DailyQuote, DataUpdateLog
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, klines_to_records
@@ -241,7 +243,7 @@ class DailyUpdater:
         try:
             data = self.crawler.fetch_stock_history(
                 "000001", "20260101",
-                date.today().strftime("%Y%m%d"),
+                market_today(A_SHARE).strftime("%Y%m%d"),
                 proxies=proxies,
             )
             if data and data.get("klines"):
@@ -267,19 +269,17 @@ class DailyUpdater:
         - target_date < today → True（历史日期，肯定已收盘）
         - target_date == today 且当前北京时间 > 15:05 → True
         - 其他 → False
+
+        「今天」和「现在几点」都按 **A 股市场时区**（Asia/Shanghai）算，不再各写各的：
+        原实现「今天」用裸 `date.today()`（本地）、「几点」用 ZoneInfo，两半口径不一致，
+        且 except 分支注释写着「假设本地就是东八区」——服务器一挪就悄悄错。
         """
-        today = date.today()
+        today = market_today(A_SHARE)
         if target_date < today:
             return True
         if target_date > today:
             return False
-        # target_date == today，检查当前时间（使用本地时间，假设运行在东八区）
-        try:
-            from zoneinfo import ZoneInfo
-            now_sh = datetime.now(ZoneInfo("Asia/Shanghai"))
-        except Exception:
-            # fallback: 假设本地就是东八区
-            now_sh = datetime.now()
+        now_sh = market_now(A_SHARE)
         return now_sh.hour > 15 or (now_sh.hour == 15 and now_sh.minute >= 5)
 
     # ------------------------------------------------------------------
@@ -383,7 +383,7 @@ class DailyUpdater:
         if target_date:
             logger.info(f"探测到最新交易日: {target_date}, 上一交易日: {prev_trading_date}")
         else:
-            target_date = date.today()
+            target_date = market_today(A_SHARE)
             logger.warning(f"探测失败，使用今天 {target_date} 作为目标日期")
         target_date_str = target_date.strftime("%Y%m%d")
 
@@ -407,15 +407,21 @@ class DailyUpdater:
         # 属于盘中不完整数据，需要用收盘后的完整数据覆盖
         needs_refresh: set = set()
         market_closed = self._is_market_closed(target_date)
-        if target_date == date.today() and market_closed:
-            try:
-                from zoneinfo import ZoneInfo
-                cutoff = datetime.combine(target_date, datetime.min.time().replace(hour=15, minute=0),
-                                          tzinfo=ZoneInfo("Asia/Shanghai"))
-                # updated_at 存的是本地时间（无时区），直接比较 naive
-                cutoff_naive = cutoff.replace(tzinfo=None)
-            except Exception:
-                cutoff_naive = datetime.combine(target_date, datetime.min.time().replace(hour=15, minute=0))
+        if target_date == market_today(A_SHARE) and market_closed:
+            # ⚠️ `daily_quotes.updated_at` 是**混合口径**列，这是既成事实：
+            #   - `server_default/onupdate=func.now()` → SQLite 落 **UTC**
+            #   - `storage/repository.py:107` 显式 `= datetime.now()` → **本地**
+            # 逐行分不清是哪种（59M 行也不值得重写历史），所以这里选**安全的那个方向**：
+            # 阈值取「北京 15:00 的墙钟值」，它能盖住两种写法里所有真·盘中行
+            #   本地写的盘中行 < 15:00 ✓ ；UTC 写的盘中行 < 07:00 < 15:00 ✓
+            # 代价是 UTC 写的、北京 15:00–23:00 之间的收盘后行会被**多刷一次**——
+            # 多抓几只是几秒钟的事，漏判盘中脏数据却是静默的错，宁可偏这边。
+            #
+            # ⛔ 原实现在这里构造了带 `ZoneInfo("Asia/Shanghai")` 的 aware 时间，
+            # 下一行又 `.replace(tzinfo=None)` 把时区整个剥掉 —— 那个 ZoneInfo 是
+            # **装饰性的**，等价于 except 分支的裸 combine。别再照着它写。
+            cutoff_naive = datetime.combine(
+                target_date, datetime.min.time().replace(hour=15, minute=0))
 
             stale_rows = session.query(DailyQuote.symbol).filter(
                 DailyQuote.date == target_date,

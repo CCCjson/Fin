@@ -7,13 +7,15 @@ POST /data/financial/backfill/stream 桥接输出。
 """
 import json
 import threading
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Generator, List
 
 from loguru import logger
 from sqlalchemy import func
 
 from acquisition.markets.financial import FinancialFetcher
+from common.market import A_SHARE
+from common.market_time import market_today
 from data_engine.storage.database import get_session
 from data_engine.storage.models import DataUpdateLog, FinancialData, StockInfo
 from data_engine.storage.repository import FinancialRepository
@@ -84,7 +86,7 @@ class FinancialUpdater:
             skipped = 0
             todo = all_symbols
             if mode == "incremental":
-                cutoff = date.today() - timedelta(days=stale_days)
+                cutoff = market_today(A_SHARE) - timedelta(days=stale_days)
                 fresh_rows = (
                     session.query(FinancialData.symbol)
                     .group_by(FinancialData.symbol)

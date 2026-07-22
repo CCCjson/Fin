@@ -450,13 +450,13 @@ def test_weekday_span_counts_real_multiday_outage():
 
 
 def _run_overseas_catchup(monkeypatch, *, frontier, today):
-    """跑一次 `_overseas_catchup`，返回它有没有触发港美股补跑（`_overseas_job`）。"""
-    class _FakeDate(date):
-        @classmethod
-        def today(cls):
-            return today
+    """跑一次 `_overseas_catchup`，返回它有没有触发港美股补跑（`_overseas_job`）。
 
-    monkeypatch.setattr(sched_mod, "date", _FakeDate)
+    `today` 可以是单个 date（两个市场共用，写老用例方便），也可以是
+    `{market: date}` —— 港美股现在**各按自己时区算今天**（见 common/market_time）。
+    """
+    days = today if isinstance(today, dict) else {"hk_stock": today, "us_stock": today}
+    monkeypatch.setattr(sched_mod, "market_today", lambda market: days[market])
 
     sch = DailyPipelineScheduler()
     sch._overseas_enabled = True
@@ -481,6 +481,23 @@ def test_overseas_catchup_does_not_fire_on_monday_after_weekend(monkeypatch):
         today=date(2026, 7, 20),   # 周一
     )
     assert fired is False, "周末造成的 1-2 工作日落后不该触发 10-15min 空拉"
+
+
+def test_overseas_uses_each_markets_own_today(monkeypatch):
+    """⭐ 北京周一早上 = 纽约还是周日。美股必须用纽约的今天，否则凭空多算一天。
+
+    港股前沿 07-17(周五)、美股前沿 07-16(周四)，北京 07-20(周一) 早上：
+      - 港股 today=07-20 → 落后 1 个工作日
+      - 美股 today=07-19(周日，纽约还没到周一) → 落后 1 个工作日
+    两边都不该触发。而拿北京日期问美股会算成 2 个工作日，离 3 的门槛只差一步 ——
+    港美股误判的代价是 10-15 分钟白打 Yahoo。
+    """
+    fired = _run_overseas_catchup(
+        monkeypatch,
+        frontier={"hk_stock": date(2026, 7, 17), "us_stock": date(2026, 7, 16)},
+        today={"hk_stock": date(2026, 7, 20), "us_stock": date(2026, 7, 19)},
+    )
+    assert fired is False
 
 
 def test_overseas_catchup_still_fires_on_real_outage(monkeypatch):

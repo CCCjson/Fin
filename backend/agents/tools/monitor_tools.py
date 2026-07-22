@@ -27,10 +27,19 @@ def _recent_events(limit: int = 20, types=None):
 def _signals_today_count(session) -> int:
     """今日生成的信号数（原 api/routes/data_monitor.py::_signals_today 已在页面重构时
     删掉，这两个概念不再属于"资产健康看板"，改成这里直接查 Signal 表）。"""
-    from datetime import date
     from sqlalchemy import func
+
+    from common.market import A_SHARE
+    from common.market_time import market_today
     from data_engine.storage.models import Signal
-    return int(session.query(func.count(Signal.id)).filter(Signal.date == date.today()).scalar() or 0)
+    # 「今天」按 A 股时区（这张卡是 A 股看板），不是服务器本地日期。
+    #
+    # ⚠️ **本来还想加 market 过滤（港美股信号混进 A 股计数，同「日线覆盖率 300%」的形状），
+    #    但 `signals` 表压根没有 market 列**（实测 `no such column: market`，模型里也没有）。
+    #    要过滤只能靠 symbol 后缀反推，那是另一件事（得先给表加列 + 回填 180 万行）。
+    #    这里先如实留个记号，别让人以为已经过滤过了。
+    return int(session.query(func.count(Signal.id)).filter(
+        Signal.date == market_today(A_SHARE)).scalar() or 0)
 
 
 def _tracking_win_rate() -> "float | None":

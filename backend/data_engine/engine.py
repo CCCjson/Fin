@@ -6,6 +6,9 @@ from datetime import datetime, timedelta
 import pandas as pd
 from loguru import logger
 
+from common.market import A_SHARE
+from common.market_time import market_today
+
 from acquisition.markets import FetcherFactory, MarketDataRequest
 from net import ProxyExhaustedError
 from data_engine.storage import (
@@ -348,7 +351,7 @@ class DataEngine:
             if not df.empty:
                 latest = self.financial_repo.get_latest_report_date(symbol)
                 # 如果最新数据距今不超过 120 天，认为足够新
-                if latest and (datetime.now().date() - latest).days <= 120:
+                if latest and (market_today(A_SHARE) - latest).days <= 120:
                     logger.info(f"{symbol} 财务数据足够新（最新报告期 {latest}），使用缓存")
                     return df
 

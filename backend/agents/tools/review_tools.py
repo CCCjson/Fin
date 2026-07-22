@@ -11,15 +11,18 @@ from pydantic import BaseModel, Field
 from agents.registry import tool
 from agents.tool_envelope import ToolEnvelope
 from agents.widgets import metric_cards_widget
+from common.market import A_SHARE
+from common.market_time import market_today
 
 
 def _parse_date(s: str = None) -> date:
+    """复盘日期。缺省/解析失败都落到 **A 股今天**（复盘本来就是 A 股功能）。"""
     if not s:
-        return date.today()
+        return market_today(A_SHARE)
     try:
         return date.fromisoformat(s)
     except ValueError:
-        return date.today()
+        return market_today(A_SHARE)
 
 
 class GetDailyReviewArgs(BaseModel):

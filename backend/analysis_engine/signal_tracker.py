@@ -6,6 +6,9 @@ from datetime import datetime, date, timedelta
 from sqlalchemy import func, and_, text
 from loguru import logger
 
+from common.market import A_SHARE
+from common.market_time import market_today
+
 from data_engine.storage.database import get_session
 from data_engine.storage.models import Signal, SignalTracking, DailyQuote, StockInfo
 
@@ -249,7 +252,7 @@ class SignalTracker:
         if strategy:
             filters.append(SignalTracking.strategy == strategy)
         if days:
-            cutoff = datetime.now().date() - timedelta(days=days)
+            cutoff = market_today(A_SHARE) - timedelta(days=days)
             filters.append(SignalTracking.signal_date >= cutoff)
 
         def _agg_cols(with_strategy: bool):

@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from loguru import logger
 
 from automation.trading_hours import _is_trading_hours
+from common.market import A_SHARE
+from common.market_time import market_today
 
 # 轮询间隔（秒）
 TRADING_INTERVAL = 30
@@ -142,7 +144,7 @@ def build_guard_status() -> Dict[str, Any]:
 def _scan_once() -> List[Dict[str, Any]]:
     """同步：定向拉持仓票实时行情，检查止损/止盈/急跌/放量，返回命中事件。"""
     global _last_scan_date
-    today = datetime.now().date()
+    today = market_today(A_SHARE)
     if _last_scan_date != today:
         # 跨天：清空轮间价格缓存，避免用昨天的最后一次价格算「短时急跌」，
         # 把正常的隔夜跳空误判成急跌

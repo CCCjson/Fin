@@ -16,6 +16,9 @@ import pandas as pd
 from datetime import date, timedelta, datetime
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
+
+from common.market import A_SHARE
+from common.market_time import market_today
 from sqlalchemy import func, desc, asc
 
 from common.limit_rules import is_limit_down, is_limit_up
@@ -41,7 +44,7 @@ _common_cache_lock = threading.Lock()
 def _period_bounds(report_type: str, period_end: Optional[date]) -> tuple:
     """(period_start, period_end, is_weekend) —— 报告期窗口的唯一推导处。"""
     if period_end is None:
-        period_end = date.today()
+        period_end = market_today(A_SHARE)
     days = {"daily": 1, "weekly": 7, "monthly": 30}.get(report_type, 7)
     period_start = period_end - timedelta(days=days)
     is_weekend = period_end.weekday() >= 5   # 周六=5，周日=6
@@ -233,7 +236,7 @@ class ReportDataCollector:
     def _collect_market_from_db(self, session, period_start: date, period_end: date) -> Dict:
         """从数据库收集市场数据 — 仅取今天最新快照，提取丰富统计"""
         try:
-            today = date.today()
+            today = market_today(A_SHARE)
             today_start = datetime.combine(today, datetime.min.time())
             today_end = datetime.combine(today, datetime.max.time())
 

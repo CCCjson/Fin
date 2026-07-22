@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 from agents.registry import tool
 from agents.tool_envelope import ToolEnvelope
 
+from common.market import A_SHARE
+from common.market_time import market_today
+
 _calc = None
 
 
@@ -350,13 +353,12 @@ class RecordManualTradeArgs(BaseModel):
 def record_manual_trade(symbol: str, side: str, price: float, quantity: int,
                         trade_date: str = "", commission: float = 0.0,
                         note: str = "") -> ToolEnvelope:
-    from datetime import date as _date
     from portfolio.trade_recorder import record_trade
 
     try:
         result = record_trade(
             symbol=symbol, side=side, price=float(price), quantity=int(quantity),
-            trade_date=trade_date or _date.today().isoformat(),
+            trade_date=trade_date or market_today(A_SHARE).isoformat(),
             commission=float(commission or 0.0),
             note=note or "[MoneyBill] 对话补录真实成交",
             source_type="moneybill_manual",

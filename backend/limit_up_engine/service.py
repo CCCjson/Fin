@@ -12,6 +12,9 @@ from typing import Dict, List, Optional
 
 from loguru import logger
 
+from common.market import A_SHARE
+from common.market_time import market_today
+
 from data_engine.storage.database import get_session
 from data_engine.storage.models import LimitUpPool, LimitUpPrediction
 from limit_up_engine import metrics, candidate_pool, scoring
@@ -29,7 +32,7 @@ def _next_trading_day(d: date_cls) -> date_cls:
 def run_daily_prediction(trade_date_str: Optional[str] = None) -> Dict:
     """盘后主流程：拉池子落库 → 算情绪指标 → 筛候选 → 打分 → 落 LimitUpPrediction。"""
     if trade_date_str is None:
-        trade_date_str = datetime.now().strftime("%Y%m%d")
+        trade_date_str = market_today(A_SHARE).strftime("%Y%m%d")
     trade_date = datetime.strptime(trade_date_str, "%Y%m%d").date()
     target_date = _next_trading_day(trade_date)
 
@@ -88,7 +91,7 @@ def get_pool_overview(trade_date_str: Optional[str] = None, include_zhaban: bool
     """
     is_today_query = trade_date_str is None
     if trade_date_str is None:
-        trade_date_str = datetime.now().strftime("%Y%m%d")
+        trade_date_str = market_today(A_SHARE).strftime("%Y%m%d")
     trade_date = datetime.strptime(trade_date_str, "%Y%m%d").date()
 
     session = get_session()

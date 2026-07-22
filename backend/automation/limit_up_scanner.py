@@ -18,6 +18,8 @@ from typing import Dict, Optional
 from loguru import logger
 
 from automation.trading_hours import _is_trading_hours
+from common.market import A_SHARE
+from common.market_time import market_today
 
 TRADING_INTERVAL = 120  # 盘中快照的缓存有效期（秒）：120s 内重复问不再出网
 
@@ -28,7 +30,7 @@ def _scan_once() -> Dict:
     """同步：拉 zt/zb 两池 + 本地聚合成情绪摘要。在线程池执行（避免阻塞事件循环）。"""
     from acquisition.markets.limit_up import fetch_limit_up_pool, fetch_zhaban_pool
 
-    trade_date_str = datetime.now().strftime("%Y%m%d")
+    trade_date_str = market_today(A_SHARE).strftime("%Y%m%d")
     zt_rows = fetch_limit_up_pool(trade_date_str)
     try:
         zb_rows = fetch_zhaban_pool(trade_date_str)

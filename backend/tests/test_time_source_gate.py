@@ -45,13 +45,27 @@ _BACKEND = pathlib.Path(__file__).resolve().parents[1]
 MANAGED_DIRS = (
     "crypto_strategy",
     "crypto_intel_engine",
+    "data_engine",
+    "agents/tools",
 )
 
 # 存量豁免基线：`相对路径 → 允许的裸时间调用数`。**只减不增**。
 #
-# 批 1 登记了 crypto 两个域的 25 处存量，批 2 全部清零 —— **表是空的，就该保持空的**。
-# 这两个域现在是「零裸时间」的干净域，任何一处回潮都会被咬。
-_ALLOWED: dict[str, int] = {}
+# crypto 两个域已在批 2 清零，**保持空的**；`agents/tools` 在批 4 清零。
+# 表里剩下的全是 `data_engine`，分两类，都排在后续批次：
+#   - B 类系统时刻（DataUpdateLog 的 started_at/end_time、任务耗时）—— 本就不归时区管，
+#     但等全库时间列翻成 UTC 后要一起改成 utc_now()
+#   - 「当日边界」类（history_repository 的 cutoff、repository 的 updated_at）—— 要跟
+#     存储口径翻转同批改，提前改会和还存着本地时间的列对不上
+_ALLOWED: dict[str, int] = {
+    "data_engine/daily_pipeline_scheduler.py": 3,
+    "data_engine/daily_updater.py": 3,
+    "data_engine/deep_history/a_share_job.py": 1,
+    "data_engine/engine.py": 2,
+    "data_engine/financial_updater.py": 2,
+    "data_engine/storage/history_repository.py": 9,
+    "data_engine/storage/repository.py": 3,
+}
 
 
 def _is_naive_time_call(node: ast.AST) -> bool:
@@ -63,6 +77,11 @@ def _is_naive_time_call(node: ast.AST) -> bool:
         # date.today() / datetime.today()
         return True
     if attr == "now":
+        # ⛔ `func.now()` 不归本门禁管：它是 SQLAlchemy 的 SQL 函数，在 SQLite 上落
+        # **UTC**，属于「隐式 UTC」这个**反向**问题（列默认值与 Python 侧写入混口径），
+        # 由后续批次统一处理。本门禁只咬「隐式本地时间」。
+        if isinstance(node.func.value, ast.Name) and node.func.value.id == "func":
+            return False
         # datetime.now() 无参才咬；datetime.now(tz)/now(timezone.utc) 是显式的，放行
         return not node.args and not node.keywords
     if attr == "combine":
@@ -141,6 +160,7 @@ def test_detector_bites(src):
 
 @pytest.mark.parametrize("src", [
     "datetime.now(tz=UTC)",                  # 显式时区，不是本门禁要防的
+    "Column(DateTime, server_default=func.now())",   # SQL 函数，是反向问题（隐式 UTC）
     "datetime.now(timezone.utc)",
     "market_today(CRYPTO)",                  # 真源接口
     "utc_now()",

@@ -8,6 +8,8 @@ from typing import Dict, List
 from loguru import logger
 from sqlalchemy import text
 
+from common.market_time import tz_of
+
 
 def bulk_upsert_quotes(session, records: List[Dict]) -> int:
     """用 INSERT OR REPLACE 批量写入日线数据。
@@ -91,14 +93,43 @@ def yf_df_to_records(symbol: str, market: str, df) -> List[Dict]:
         if None in (o, h, low_, c):
             # 停牌/无成交那天 —— 跳过这一行，不是跳过这只票，更不是让整批陪葬
             continue
+        day = _yf_index_to_market_date(idx, market, symbol)
+        if day is None:
+            continue
         records.append({
             "symbol": symbol, "market": market,
-            "date": idx.date().isoformat() if hasattr(idx, "date") else str(idx)[:10],
+            "date": day,
             "open": o, "high": h, "low": low_, "close": c,
             "volume": _num(row.get("Volume")) or 0,
             "amount": None, "turnover": None,
         })
     return records
+
+
+def _yf_index_to_market_date(idx, market: str, symbol: str) -> str | None:
+    """yfinance 的 DatetimeIndex → **该市场交易日**的 `YYYY-MM-DD`。
+
+    这是港美股 `daily_quotes.date` 的产生点，也是整条链上最脆的一环。
+
+    yfinance 的日线 index 是**交易所本地 tz-aware** 的（美股 America/New_York、
+    港股 Asia/Hong_Kong），所以原来的 `idx.date()` **碰巧是对的** —— 但那是运气：
+    代码里没有任何断言，完全靠 yfinance 的版本行为（`requirements.txt` 只写了
+    `yfinance>=0.2.35`）。而原来的 fallback `str(idx)[:10]` 更危险：index 一旦变成
+    naive 或 UTC，港美股的日期就成了**未定义时区**，静默偏一天，还没人会发现。
+
+    现在显式处理：
+      - tz-aware → 换算到 `tz_of(market)` 再取日期（哪怕 yfinance 哪天改成给 UTC 也对）
+      - naive    → 按交易所本地时间解读（yfinance 的历史行为），但**记 warning**
+      - 都不是   → 返回 None 跳过这一行，绝不再靠字符串截断硬凑一个日期出来
+    """
+    if hasattr(idx, "tzinfo") and idx.tzinfo is not None:
+        return idx.astimezone(tz_of(market)).date().isoformat()
+    if hasattr(idx, "date"):
+        logger.warning(f"{symbol}({market}) 的 yfinance 索引无时区，按交易所本地时间解读："
+                       f"{idx!r} —— 若 yfinance 改成返回 UTC，港美股日期会整体偏一天")
+        return idx.date().isoformat()
+    logger.warning(f"{symbol}({market}) 的 yfinance 索引不是时间类型，跳过：{idx!r}")
+    return None
 
 
 def klines_to_records(symbol: str, market: str, klines: List[Dict]) -> List[Dict]:

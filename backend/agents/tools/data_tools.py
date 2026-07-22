@@ -3,13 +3,15 @@
 引擎实例懒加载，结果裁剪成精简 summary 回灌 LLM。
 """
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from agents.registry import tool
 from agents.tool_envelope import ToolEnvelope
+from common.market import infer_market_from_symbol
+from common.market_time import market_today
 
 _engine = None
 
@@ -56,10 +58,10 @@ class GetDailyDataArgs(BaseModel):
 )
 def get_daily_data(symbol: str, window: int = 60) -> ToolEnvelope:
     from agents.widgets import sparkline_widget
-    end = datetime.now()
+    # 按这只票自己市场的今天取窗口：美股在美东，用北京日期会多要一天（那天还没开盘）
+    end = market_today(infer_market_from_symbol(symbol))
     start = end - timedelta(days=max(window, 5))
-    df = _get_engine().get_daily_data(
-        symbol, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+    df = _get_engine().get_daily_data(symbol, start.isoformat(), end.isoformat())
     if df is None or df.empty:
         return ToolEnvelope(business_result="negative",
                              message=f"未找到 {symbol} 在最近 {window} 天的日线数据")

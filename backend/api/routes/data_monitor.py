@@ -5,12 +5,15 @@
 POST /data/update-daily/stream，本模块不重复实现。
 """
 import asyncio
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from loguru import logger
+
+from common.market import A_SHARE
+from common.market_time import market_today
 from sqlalchemy import func
 
 from data_engine.health import get_coverage, get_freshness
@@ -34,7 +37,7 @@ def _asset_realtime(session) -> dict:
     return {
         "latest_snapshot": latest.isoformat() if latest else None,
         "count_at_latest": int(count),
-        "is_today": bool(latest and latest.date() == date.today()),
+        "is_today": bool(latest and latest.date() == market_today(A_SHARE)),
     }
 
 
@@ -51,7 +54,7 @@ def _asset_financial(session) -> dict:
 
     latest_report = session.query(func.max(FinancialData.report_date)).scalar()
 
-    recent_cutoff = date.today() - timedelta(days=180)
+    recent_cutoff = market_today(A_SHARE) - timedelta(days=180)
     symbols_recent = session.query(
         func.count(func.distinct(FinancialData.symbol))
     ).filter(FinancialData.report_date >= recent_cutoff).scalar() or 0
@@ -83,7 +86,7 @@ def _asset_valuation(session) -> dict:
             StockValuation.snapshot_date == latest
         ).scalar() or 0
         latest_d = latest.date() if isinstance(latest, datetime) else latest
-        days_old = (date.today() - latest_d).days
+        days_old = (market_today(A_SHARE) - latest_d).days
     return {
         "latest_date": latest.isoformat() if latest else None,
         "count_at_latest": int(count),
@@ -142,7 +145,7 @@ def _asset_limit_up(session) -> dict:
         "break_count": int(zb_count),
         "ladder_summary": ladder_summary,
         "break_rate": break_rate,
-        "is_today": latest_date == date.today(),
+        "is_today": latest_date == market_today(A_SHARE),
     }
 
 
@@ -180,7 +183,8 @@ def _catch_up(session, scheduler_status: dict) -> dict:
       4) 今天还没有一条日线更新记录（DataUpdateLog，落库、不受重启影响，
          且绕开 coverage_pct 被个别股票顶偏的失真问题）
     """
-    today = date.today()
+    # 这个面板是 A 股视角（涨停/估值/财报/日线更新全是 A 股口径）
+    today = market_today(A_SHARE)
     is_weekday = today.weekday() < 5
 
     # 今天是否已有日线更新记录（手动「立即更新」也会写 → 补跑后自动消失）

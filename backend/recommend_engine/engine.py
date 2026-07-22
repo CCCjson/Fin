@@ -13,10 +13,12 @@
 """
 from __future__ import annotations
 
-from datetime import date
 from typing import Optional
 
 from loguru import logger
+
+from common.market import A_SHARE
+from common.market_time import market_today
 
 from portfolio.calculator import PortfolioCalculator
 from trading_engine.risk.adapter import get_total_capital, get_max_position_pct, build_broker_info
@@ -168,7 +170,7 @@ def recommend(pool_id: Optional[str] = None, max_new_buys: int = 5,
         })
 
     # ---- 市场状态 & 说明 ----
-    is_today = signal_date == date.today()
+    is_today = signal_date == market_today(A_SHARE)
     if buys:
         market_state = "active"
     elif not candidates:

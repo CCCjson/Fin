@@ -7,7 +7,6 @@
 风控拒单 / 拿不到价格 属于「诚实的否」，用 ToolEnvelope(business_result="negative")
 表达，不是 ok=False —— 工具本身正常跑完了，只是结论是拒绝/无法执行。
 """
-from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from loguru import logger
@@ -15,6 +14,9 @@ from pydantic import BaseModel, Field
 
 from agents.registry import tool
 from agents.tool_envelope import ToolEnvelope
+
+from common.market import A_SHARE
+from common.market_time import market_today
 from agents.widgets import metric_cards_widget
 
 if TYPE_CHECKING:
@@ -184,7 +186,7 @@ def place_order(symbol: str, side: str, quantity: int, price=None) -> ToolEnvelo
             name = info.name if info else symbol_n
             trade = ManualTrade(
                 symbol=symbol_n, name=name, side=action, price=fill_price, quantity=fill_qty,
-                amount=fill_price * fill_qty, commission=commission, trade_date=date.today(),
+                amount=fill_price * fill_qty, commission=commission, trade_date=market_today(A_SHARE),
                 note="[MoneyBill] 对话下单", source_type="moneybill",
             )
             session.add(trade)

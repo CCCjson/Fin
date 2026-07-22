@@ -33,6 +33,9 @@ from typing import List, Dict, Optional
 
 from loguru import logger
 
+from common.market import A_SHARE
+from common.market_time import market_now, market_today
+
 
 def _env_bool(key: str, default: bool) -> bool:
     val = os.getenv(key)
@@ -436,11 +439,13 @@ class DailyPipelineScheduler:
         try:
             loop = asyncio.get_event_loop()
             frontier = await loop.run_in_executor(None, self._overseas_frontier)
-            today = date.today()
+            # 每个市场拿自己时区的今天去算落后天数：拿北京日期问美股会多算一天，
+            # 在 _OVERSEAS_CATCHUP_STALE_DAYS=3 的门槛下足以把「正常」误判成「要补跑」，
+            # 而港美股误判的代价是 10-15 分钟白打 Yahoo（见文件顶部常量处的说明）
             stale = {
-                mkt: _weekday_span(d, today)
+                mkt: _weekday_span(d, market_today(mkt))
                 for mkt, d in frontier.items()
-                if d and _weekday_span(d, today) >= _OVERSEAS_CATCHUP_STALE_DAYS
+                if d and _weekday_span(d, market_today(mkt)) >= _OVERSEAS_CATCHUP_STALE_DAYS
             }
             if not stale:
                 logger.info(f"[港美股增量] 启动检查：无需补跑（前沿 {frontier}）")
@@ -465,7 +470,7 @@ class DailyPipelineScheduler:
         if not self._enabled or self._is_updating:
             return
         try:
-            expected = _last_expected_trading_day(datetime.now())
+            expected = _last_expected_trading_day(market_now(A_SHARE).replace(tzinfo=None))
             loop = asyncio.get_event_loop()
             have, total = await loop.run_in_executor(None, self._coverage_on, expected)
             if total <= 0:
@@ -560,8 +565,9 @@ class DailyPipelineScheduler:
         if self._chain_signals:
             try:
                 from strategy.signal_generator import SignalGenerator
+                # 下游标杆（Signal 表）以 A 股为主，按上海口径问「今天」
                 lookback = self._signal_backfill_lookback(
-                    self._downstream_frontier(), date.today()
+                    self._downstream_frontier(), market_today(A_SHARE)
                 )
                 generator = SignalGenerator()
                 complete_event = None

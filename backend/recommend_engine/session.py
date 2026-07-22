@@ -9,17 +9,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from loguru import logger
+from common.market import A_SHARE
+from common.market_time import market_now
 
 
 def _now_sh() -> datetime:
-    """当前东八区时间（失败则退回本地时间，假设运行在东八区）。"""
-    try:
-        from zoneinfo import ZoneInfo
-        return datetime.now(ZoneInfo("Asia/Shanghai"))
-    except Exception as e:  # pragma: no cover
-        logger.warning(f"读取东八区时间失败，退回本地时间: {e}")
-        return datetime.now()
+    """当前 A 股市场时区（Asia/Shanghai）时间。
+
+    收口到 `common.market_time`（见 docs/CODING_STANDARDS.md §11）。原实现自己 import
+    ZoneInfo，except 分支还会**静默退回本地时间**并注释「假设运行在东八区」——
+    服务器一挪就悄悄错，而且错的是「现在算不算交易时段」这种没人会去核对的判断。
+    """
+    return market_now(A_SHARE)
 
 
 def _session_phase(now: Optional[datetime] = None) -> str:

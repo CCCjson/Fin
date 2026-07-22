@@ -5,19 +5,26 @@
 自动从 DataEngine 取 K 线并持久化到历史库）。C++ 服务没启动时它返回 status=failed，
 本工具据此给出可操作提示，让 LLM 自愈而不是崩。
 """
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from agents.registry import tool
 from agents.tool_envelope import ToolEnvelope
+
+from common.market import A_SHARE
+from common.market_time import market_today
 from agents.widgets import metric_cards_widget
 
 
 def _default_window() -> tuple[str, str]:
-    """默认回测区间：近 1 年（到今天）。"""
-    end = date.today()
+    """默认回测区间：近 1 年（到今天）。
+
+    「今天」按 A 股口径 —— 回测标的可能混市场，但默认窗口末端差一天不影响结论，
+    显式声明比裸 `date.today()` 好（调用方可传 start/end 精确控制）。
+    """
+    end = market_today(A_SHARE)
     start = end - timedelta(days=365)
     return start.isoformat(), end.isoformat()
 
@@ -66,7 +73,7 @@ def run_backtest(symbol: str, strategy: str = "MA_CROSS", start_date: str = "",
         end_date=end_date,
         initial_capital=float(initial_capital),
         market=market,
-        batch_id=f"agent_{date.today().isoformat()}",
+        batch_id=f"agent_{market_today(A_SHARE).isoformat()}",
         task_label="MoneyBill",
     )
 

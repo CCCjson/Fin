@@ -16,6 +16,9 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional
 from loguru import logger
 
+from common.market import A_SHARE
+from common.market_time import market_today
+
 from sqlalchemy.exc import SQLAlchemyError
 
 from data_engine.storage.database import get_session
@@ -46,7 +49,8 @@ class PortfolioRiskAnalyzer:
             return {"error": "无持仓", "risk_level": "N/A"}
 
         if as_of_date is None:
-            as_of_date = date.today()
+            # 组合可能混市场，基准日按 A 股口径（主力持仓）；调用方可显式传
+            as_of_date = market_today(A_SHARE)
 
         start_date = as_of_date - timedelta(days=lookback_days * 2)  # 多取一些以确保有足够交易日
 

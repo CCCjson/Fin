@@ -49,6 +49,7 @@ from datetime import date, datetime, timedelta
 from loguru import logger
 
 from common.market import to_yf_symbol
+from common.market_time import market_today
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, yf_df_to_records
 from data_engine.storage.database import get_session
 from data_engine.storage.models import DailyQuote, StockInfo
@@ -272,7 +273,9 @@ class OverseasDailyUpdater:
         if market not in MARKETS:
             yield _evt("error", market=market, message=f"不支持的市场: {market}")
             return
-        today = today or date.today()
+        # 港股按上海、美股按纽约各算各的「今天」——此前两个市场共用一个 UTC+8 日期，
+        # 北京上午跑时纽约还是前一晚，美股的 today 系统性超前一天
+        today = today or market_today(market)
 
         # 先探前沿：兼连通性预检 + 给 skip 判断正确的基准（见 _probe_frontier）
         frontier = self._probe_frontier(market, today)

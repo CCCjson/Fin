@@ -9,6 +9,9 @@ from datetime import datetime, date as date_cls
 from typing import Dict
 from loguru import logger
 
+from common.market import A_SHARE
+from common.market_time import market_today
+
 from data_engine.storage.database import get_session
 from data_engine.storage.models import LimitUpPool
 from acquisition.markets.limit_up import (
@@ -87,5 +90,5 @@ def ingest_trade_date(trade_date: str) -> Dict:
 def run_daily_ingest(trade_date: str = None) -> Dict:
     """调度器/手动刷新入口，不传日期默认拉今天。"""
     if trade_date is None:
-        trade_date = datetime.now().strftime("%Y%m%d")
+        trade_date = market_today(A_SHARE).strftime("%Y%m%d")
     return ingest_trade_date(trade_date)

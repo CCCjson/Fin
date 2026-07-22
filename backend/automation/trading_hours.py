@@ -5,10 +5,17 @@
 """
 from datetime import datetime
 
+from common.market import A_SHARE
+from common.market_time import market_now
+
 
 def _is_trading_hours() -> bool:
-    """判断当前是否在 A 股交易时间。"""
-    now = datetime.now()
+    """判断当前是否在 A 股交易时间。
+
+    时刻按 **A 股市场时区**取（`market_now(A_SHARE)`），不用服务器本地时间 ——
+    「现在是不是盘中」这种判断错了不会报错，只会静默地在错误时段扫描/不扫描。
+    """
+    now = market_now(A_SHARE)
     # 周末不交易
     if now.weekday() >= 5:
         return False

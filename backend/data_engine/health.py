@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy import func
 
-from common.market import CANONICAL_MARKETS, CRYPTO, STOCK_MARKETS
+from common.market import A_SHARE, CANONICAL_MARKETS, CRYPTO, STOCK_MARKETS
 from common.market_freshness import (
     BASELINE_DAYS,
     FRESHNESS_VERSION,
@@ -20,6 +20,7 @@ from common.market_freshness import (
     is_stale,
     reference_trading_date,
 )
+from common.market_time import market_today
 from data_engine.storage.models import DailyQuote
 
 # 查最近多少个自然日的 (日期, 覆盖数) 喂给中位数基线。
@@ -65,8 +66,18 @@ def _day_counts(session, market: str, today: date) -> list[tuple[date, int]]:
 
 
 def get_market_freshness(session, market: str, today: "date | None" = None) -> dict:
-    """单个市场的新鲜度。`today` 可注入，便于测试。"""
-    today = today or date.today()
+    """单个市场的新鲜度。`today` 可注入，便于测试。
+
+    ⛔ **「今天」必须按这个市场自己的时区算**，不能用服务器本地日期（此前四个市场
+    共用一个 UTC+8 today）：
+
+    - **美股**在美东。北京上午 10 点纽约还是前一晚，本地 today 比美股真实交易日超前
+      一天。此前靠 `STALE_AFTER_WEEKDAYS ≥ 2` 的宽容掩盖，那是运气不是正确性。
+    - **crypto** 的 `daily_quotes.date` 是 UTC 日（币安 klines openTime），未收盘那根
+      还会被刻意丢弃。本地 00:00–08:00 时 UTC 还在昨天，最新 bar 只可能是「前天」→
+      算出落后 2 天 → **每天凌晨误报 crypto stale**。
+    """
+    today = today or market_today(market)
     day_counts = _day_counts(session, market, today)
     ref, ratio = reference_trading_date(day_counts)
     # crypto 7×24 用自然日口径（周末也该有 bar）；股票用工作日口径（周末不算落后）。
@@ -102,7 +113,9 @@ def get_freshness(session, today: "date | None" = None) -> dict:
         全表 max 那个会撒谎的最长板）；`is_stale` 任一市场陈旧即 True。
         新增 `by_market` 给需要分市场看的调用方。
     """
-    today = today or date.today()
+    # ⚠️ 注意这里**不给 today 兜底**：显式 None 时让每个市场各算各的（美东/上海/UTC），
+    # 传了值则四个市场共用（测试注入用）。此前是先兜成本地 today 再发下去，
+    # 于是美股和 crypto 都被按 UTC+8 的日期问「你今天的数据到了没」。
     by_market = {m: get_market_freshness(session, m, today) for m in CANONICAL_MARKETS}
 
     # 全局 is_stale / latest_date 只在**股票三市场**上聚合：crypto 是 7×24 独立链，
@@ -115,11 +128,14 @@ def get_freshness(session, today: "date | None" = None) -> dict:
     # 这就是「一只领跑票盖住全市场陈旧」的机理。
     worst = min(refs) if refs else None
 
+    # 顶层 today / is_weekday 是给老调用方（看板卡片）的兼容键，按 **A 股**口径给 ——
+    # 这个面板本来就是 A 股视角。分市场的准确判定在 by_market 里，各自用各自的 today。
+    top_today = today or market_today(A_SHARE)
     return {
         "latest_date": worst.isoformat() if worst else None,
-        "today": today.isoformat(),
+        "today": top_today.isoformat(),
         "is_stale": any(v["is_stale"] for v in stock.values()),
-        "is_weekday": today.weekday() < 5,
+        "is_weekday": top_today.weekday() < 5,
         "by_market": by_market,
         "version": FRESHNESS_VERSION,
     }
@@ -133,7 +149,7 @@ def get_symbol_staleness(session, symbol: str, market: str,
         `{reference_date, symbol_latest, bars_behind}`。`bars_behind=None` 表示
         **无从判断**（没参考日 / 这只票一根 bar 都没有）——不是 0。
     """
-    today = today or date.today()
+    today = today or market_today(market)
     ref, _ = reference_trading_date(_day_counts(session, market, today))
     row = (session.query(func.max(DailyQuote.date))
            .filter(DailyQuote.symbol == symbol).first())

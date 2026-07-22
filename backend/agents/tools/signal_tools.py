@@ -16,6 +16,8 @@ from agents.registry import tool
 from agents.tool_envelope import ToolEnvelope
 from agents.turn_monitor import verdict_hook
 from agents.widgets import metric_cards_widget
+from common.market import A_SHARE, infer_market_from_symbol
+from common.market_time import market_today
 from data_engine.storage.database import get_session
 from data_engine.storage.models import Signal, SignalTracking
 from data_engine.storage.repository import get_stock_names as _stock_names
@@ -92,7 +94,8 @@ def get_today_signals(signal_date: Optional[str] = None,
     finally:
         session.close()
 
-    is_today = target == date.today()
+    # 信号表以 A 股为主体，这个「今天」按上海口径
+    is_today = target == market_today(A_SHARE)
     note = None
     if not rows:
         note = (f"{target} 无{signal_type or ''}信号" if signal_date
@@ -135,7 +138,8 @@ class GetStockSignalsArgs(BaseModel):
 )
 def get_stock_signals(symbol: str, window: int = 60) -> ToolEnvelope:
     window = max(1, min(int(window or 60), 365))
-    cutoff = date.today() - timedelta(days=window)
+    # 有 symbol 就按它自己的市场算今天：美股在美东，用北京日期会把窗口整体推后一天
+    cutoff = market_today(infer_market_from_symbol(symbol)) - timedelta(days=window)
     session = get_session()
     try:
         rows = (session.query(Signal)
@@ -261,7 +265,8 @@ def generate_signals(symbols: list, start_date: str = "", end_date: str = "") ->
                              message=f"一次最多生成 50 只（收到 {len(symbols)}），请分批。")
 
     if not start_date or not end_date:
-        end = date.today()
+        # 批量生成信号，混市场 → 用 A 股口径当默认窗口末端（调用方可显式传日期）
+        end = market_today(A_SHARE)
         start = end - timedelta(days=7)
         start_date = start_date or start.isoformat()
         end_date = end_date or end.isoformat()

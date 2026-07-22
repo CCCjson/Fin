@@ -10,6 +10,9 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 from loguru import logger
+
+from common.market import A_SHARE
+from common.market_time import market_today
 from dotenv import load_dotenv
 
 from data_engine.storage.database import get_session
@@ -192,7 +195,7 @@ class ReviewService:
 
                 # 获取指数快照
                 indices = self._fetch_indices_from_history(review_date)
-                if not indices and review_date == date.today():
+                if not indices and review_date == market_today(A_SHARE):
                     indices = self._fetch_indices_realtime()
                 index_snapshot_str = None
                 if indices and any(r.get("price") is not None for r in indices):
@@ -439,7 +442,7 @@ class ReviewService:
         items = self._fetch_indices_from_history(review_date)
 
         # 4) 当天且历史无数据 → 降级到实时
-        if not items and review_date == date.today():
+        if not items and review_date == market_today(A_SHARE):
             items = self._fetch_indices_realtime()
 
         if items:

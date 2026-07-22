@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
+from common.market import A_SHARE
+from common.market_time import market_today
 from data_engine.storage.database import get_session
 from data_engine.storage.models import ManualTrade, PositionReconciliation, StockInfo
 from portfolio.calculator import PortfolioCalculator
@@ -209,7 +211,7 @@ class ReconciliationService:
             note: 备注
         """
         diff = self._diff(actual_holdings)
-        reconcile_date = reconcile_date or date.today()
+        reconcile_date = reconcile_date or market_today(A_SHARE)
         fix_set = {_norm_symbol(s) for s in symbols_to_fix} if symbols_to_fix else None
 
         adjustments: List[Dict[str, Any]] = []
