@@ -109,8 +109,9 @@ class CryptoScheduler:
             import asyncio
 
             from crypto_intel_engine import cost_basis as cb
-            loop = asyncio.get_event_loop()
-            synced = await loop.run_in_executor(None, cb.sync_held_fills)
+            # `to_thread` 而不是 `get_event_loop().run_in_executor`：域 7 统一过的写法
+            # （同步阻塞调用一律 to_thread 包裹），且 get_event_loop 在 3.12 起要弃用
+            synced = await asyncio.to_thread(cb.sync_held_fills)
             if synced.get("inserted") or synced.get("errors"):
                 logger.info(f"[crypto] 成交明细同步: {synced}")
         except Exception as e:  # noqa: BLE001

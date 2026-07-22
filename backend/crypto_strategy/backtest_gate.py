@@ -209,8 +209,10 @@ def run_backtest_gate(
     #    开始攒（几十天），而 bars 拉 400 天：没有指标帧的那些日子里 evaluate 对缺值一律
     #    判 False → 结构上不可能开仓，却照样按全窗口平均算进 net_return。
     #    同一个数字在原语成熟前后含义完全不同，必须把「几天真有指标」摆出来。
-    coverage = _replay_coverage(per_symbol, bars_by_symbol)
-    if coverage is not None and coverage < _MIN_REPLAY_COVERAGE and evaluated:
+    #    ⚠️ 只有当规则**真的依赖指标帧**时这个数才有意义，见 `_replay_coverage`。
+    metric_fields = used_fields & matured
+    coverage = _replay_coverage(per_symbol, bars_by_symbol, metric_fields)
+    if coverage is not None and coverage < _MIN_REPLAY_COVERAGE:
         caveats.append(
             f"只有 {coverage:.0%} 的回测日有真实指标帧，其余日子进场条件结构上恒为 False"
             f"（指标历史还没攒够）——net_return 被大量「不可能开仓」的日子稀释，仅供参考")
@@ -221,6 +223,9 @@ def run_backtest_gate(
         "metrics": {"avg_net_return": net_return, "symbols_tested": len(returns),
                     "round_trip_cost": round(round_trip_cost(cm), 6),
                     "matured_fields": sorted(matured),
+                    # 本次真正需要查 crypto_metrics 的字段。空 = replay_coverage 无意义
+                    # （规则全靠 bar 派生原语，每根 bar 都算得出来），故 coverage 为 None
+                    "metric_fields": sorted(metric_fields),
                     "fee_basis": fee_basis, "replay_coverage": coverage},
         "degraded": bool(degraded_fields),
         "degraded_reasons": _degraded_reasons(mode, degraded_fields, evaluated),
@@ -230,8 +235,26 @@ def run_backtest_gate(
     }
 
 
-def _replay_coverage(per_symbol: list[dict], bars_by_symbol: dict) -> float | None:
-    """「有真实指标帧的天数 / 回测总天数」。没有可比对的币返回 None。"""
+def _replay_coverage(per_symbol: list[dict], bars_by_symbol: dict,
+                     metric_fields: set[str]) -> float | None:
+    """「有真实指标帧的天数 / 回测总天数」。没有可比对的返回 None（≠ 0%）。
+
+    ⛔ **规则不依赖指标帧时必须返回 None，不能返回 0%**。`replay_days` 数的是
+    `crypto_metrics` 来的 frames，但 `replay.py` 的 on_bar 是
+    `frame = {**frames.get(date, {}), **_price_frame(history)}` —— `price.change_*`
+    这类原语**每根 bar 都直接从 df 算得出来，压根不走 frames**。
+
+    于是一条只用 `price.change_5d_pct` 的策略：`mode="dsl"`、`degraded=False`
+    （100% 忠实回放），旧实现却算出 coverage=0，弹出「其余日子进场条件结构上恒为
+    False（指标历史还没攒够）」—— 把最干净的那种回放说成最不可信，正好和本模块
+    「别让数字看起来比实际更有分量」的初衷反了。
+
+    Args:
+        metric_fields: 本次规则里**真正需要查 `crypto_metrics`** 的字段
+            （= `used_fields & matured`，也正是 `_frames_for` 的入参）。空集 = 无可比对。
+    """
+    if not metric_fields:
+        return None
     have = total = 0
     for r in per_symbol:
         bars = bars_by_symbol.get(r.get("symbol")) or []

@@ -771,3 +771,82 @@ class TestNoKeySafety:
         assert td.requires_confirmation is True
         assert td.preview_fn is not None
         assert td.group == "core"   # 确认续跑依赖它常驻可见
+
+
+class TestPriceMapAvoidsDuplicateTickerCalls:
+    """`get_account_info` 在风控链路上每单都跑，同一个币的价不许拉两遍。
+
+    此前 `_value_coins`（三处调用）与 `_unrealized` 各自逐币 `ticker_price`，
+    而该函数零缓存 —— 请求数直接翻倍。
+    """
+
+    def test_each_asset_priced_exactly_once(self):
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        calls: list[str] = []
+
+        class _BT:
+            @staticmethod
+            def ticker_price(pair):
+                calls.append(pair)
+                return 100.0
+
+        prices = BinanceBroker._price_map(_BT(), ["BTC", "ETH", "BTC", "ETH", "SOL"])
+        assert sorted(prices) == ["BTC", "ETH", "SOL"]
+        assert sorted(calls) == ["BTCUSDT", "ETHUSDT", "SOLUSDT"], "去重后每币恰好一次"
+
+    def test_unpriceable_asset_is_skipped_not_fatal(self):
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        class _BT:
+            @staticmethod
+            def ticker_price(pair):
+                if pair.startswith("WEIRD"):
+                    raise ValueError("no such pair")
+                return 7.0
+
+        prices = BinanceBroker._price_map(_BT(), ["BTC", "WEIRD"])
+        assert prices == {"BTC": 7.0}
+        # 价取不到的币在估值时被跳过，而不是让整个账户查询炸掉
+        assert BinanceBroker._value_coins({"BTC": 2.0, "WEIRD": 999.0}, prices) == 14.0
+
+
+class TestNotSentIsFailedNotUnknown:
+    """请求压根没发出去时判 UNKNOWN 是过度保守 —— 会逼人去币安查一笔不存在的单。"""
+
+    def test_preflight_failure_is_failed(self, monkeypatch):
+        from acquisition.markets import binance_trade as bt
+        from trading_engine.brokers.base import OrderStatus
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        probed: list = []
+        monkeypatch.setattr(bt, "symbol_filters",
+                            lambda s: (_ for _ in ()).throw(TimeoutError("交易规则拉取超时")))
+        monkeypatch.setattr(bt, "query_order_by_client_id",
+                            lambda s, c: probed.append(c))
+
+        b = BinanceBroker()
+        b._connected = True
+        order = b.submit_order("BTCUSDT.BN", "BUY", 0.01, None, client_order_id="CPO-x")
+        assert order.status == OrderStatus.FAILED, "没发出去就该能安全重下"
+        assert "尚未发出" in (order.error_msg or "")
+        assert probed == [], "都没下单，不该去回查"
+
+    def test_failure_after_send_still_probes(self, monkeypatch):
+        """反向：真发出去了还是要回查，别把幂等保护一起改没了。"""
+        from acquisition.markets import binance_trade as bt
+        from trading_engine.brokers.base import OrderStatus
+        from trading_engine.brokers.binance_broker import BinanceBroker
+
+        monkeypatch.setattr(bt, "symbol_filters", lambda s: {})
+        monkeypatch.setattr(bt, "round_step", lambda q, st: q)
+        monkeypatch.setattr(bt, "round_price", lambda p, t: p)
+        monkeypatch.setattr(bt, "place_order",
+                            lambda *a, **k: (_ for _ in ()).throw(TimeoutError("断连")))
+        monkeypatch.setattr(bt, "query_order_by_client_id",
+                            lambda s, c: (_ for _ in ()).throw(TimeoutError("回查也断")))
+
+        b = BinanceBroker()
+        b._connected = True
+        order = b.submit_order("BTCUSDT.BN", "BUY", 0.01, None, client_order_id="CPO-x")
+        assert order.status == OrderStatus.UNKNOWN, "发出去了且查不到 = 必须人工对账"

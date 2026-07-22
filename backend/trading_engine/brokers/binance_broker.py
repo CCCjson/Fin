@@ -23,6 +23,7 @@
 （`agents/tools/crypto_tools.place_crypto_order` 的 confirm_gate + RiskManager）。
 永不在此做自动下单。
 """
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
@@ -104,20 +105,32 @@ class BinanceBroker(BaseBroker):
 
     # ── 账户 / 持仓 ─────────────────────────────────────────────────────
     @staticmethod
-    def _value_coins(bt, holdings: dict[str, float]) -> float:
-        """把 {非稳定币: 数量} 按现价折成 USDT 市值。无 USDT 对的小币跳过。"""
-        mv = 0.0
-        for asset, qty in holdings.items():
-            if qty <= 0:
-                continue
+    def _price_map(bt, assets: Iterable[str]) -> dict[str, float]:
+        """各币现价（USDT 计价），**一次 `get_account_info` 内取一遍、全程复用**。
+
+        ⛔ `bt.ticker_price` 零缓存，而 `get_account_info` 在风控链路上**每单都要跑**。
+        此前 `_value_coins`（三处调用）和 `_unrealized` 各自逐币拉一遍，同一个币的价被
+        拉两次 —— 请求数直接翻倍。收成一张表往下传：无隐藏状态、可测、调用方一目了然。
+
+        取不到价的（没有 USDT 对的小币）**不进表**，调用方按「跳过计价」处理，与原行为一致。
+        """
+        prices: dict[str, float] = {}
+        for asset in sorted(set(assets)):
             try:
-                mv += qty * bt.ticker_price(f"{asset}USDT")
+                prices[asset] = bt.ticker_price(f"{asset}{_QUOTE}")
             except Exception:  # noqa: BLE001 — 没有 USDT 对的小币跳过计价
                 continue
-        return mv
+        return prices
 
     @staticmethod
-    def _unrealized(bt, held: dict[str, float]) -> tuple[float, dict[str, str]]:
+    def _value_coins(holdings: dict[str, float], prices: dict[str, float]) -> float:
+        """把 {非稳定币: 数量} 按现价折成 USDT 市值。价取不到的小币跳过。"""
+        return sum(qty * prices[asset] for asset, qty in holdings.items()
+                   if qty > 0 and asset in prices)
+
+    @staticmethod
+    def _unrealized(held: dict[str, float],
+                    prices: dict[str, float]) -> tuple[float, dict[str, str]]:
         """按回放出的成本算各币浮盈亏之和 + 收集成本不完整的币。
 
         只对**有成本**（quality != unknown）的部分算盈亏；来源不明的币（充值/空投/理财利息）
@@ -138,14 +151,10 @@ class BinanceBroker(BaseBroker):
             cost = cb.cost_for(symbol, qty, replayed=replayed)
             if cost["quality"] != "full":
                 issues[symbol] = cost["quality"]
-            if cost["avg_cost"] <= 0:
-                continue
-            try:
-                price = bt.ticker_price(f"{asset}{_QUOTE}")
-            except Exception:  # noqa: BLE001 — 无 USDT 对的小币跳过计价
+            if cost["avg_cost"] <= 0 or asset not in prices:
                 continue
             covered = min(cost["covered_quantity"], qty)
-            total += (price - cost["avg_cost"]) * covered
+            total += (prices[asset] - cost["avg_cost"]) * covered
         return round(total, 2), issues
 
     def get_account_info(self) -> dict:
@@ -229,13 +238,16 @@ class BinanceBroker(BaseBroker):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"币安理财定期读取失败: {e}")
 
-        spot_coins_value = self._value_coins(bt, spot_coins)
-        funding_coins_value = self._value_coins(bt, funding_coins)
+        # 三个钱包的币价一次取齐，下面的市值/明细/浮盈亏全部复用这张表（见 _price_map）
+        prices = self._price_map(bt, (*spot_coins, *funding_coins, *earn_flex_coins))
+
+        spot_coins_value = self._value_coins(spot_coins, prices)
+        funding_coins_value = self._value_coins(funding_coins, prices)
         # 理财里的币逐个估值 + 明细（单列，不混进可交易持仓）
         earn_coins: list[dict] = []
         earn_flex_coins_value = 0.0
         for a, q in earn_flex_coins.items():
-            v = self._value_coins(bt, {a: q})
+            v = self._value_coins({a: q}, prices)
             earn_coins.append({"asset": a, "quantity": q, "value": round(v, 2), "redeemable": True})
             earn_flex_coins_value += v
         # market_value = 币持仓市值 = 现货 + 资金 + 活期理财里的币（币安把自动申购活期币
@@ -256,13 +268,13 @@ class BinanceBroker(BaseBroker):
         # 未实现盈亏 = 各币持仓浮盈亏之和（成本由成交明细回放重建，见 cost_basis）。
         # ⛔ 这个数**必须是真的**：它是「单日最大亏损 3%」硬风控与策略引擎当日回撤熔断的
         # 唯一输入，此前硬编码 0 让这两条风控结构性失效（浮亏 -30% 也照常放行下单）。
-        # ⚠️ 直接用上面已经读到的三钱包币量算，**不调 get_positions()**——那会把本方法的
-        # 网络请求数翻倍，而它在风控链路上每单都要跑。
+        # ⚠️ 直接用上面已经读到的三钱包币量 + 已取好的 `prices` 算，**不再打一次网**：
+        # 本方法在风控链路上每单都要跑，既不调 get_positions()，也不重复拉 ticker。
         held: dict[str, float] = {}
         for src in (spot_coins, funding_coins, earn_flex_coins):
             for a, q in src.items():
                 held[a] = held.get(a, 0.0) + q
-        unrealized, cost_quality = self._unrealized(bt, held)
+        unrealized, cost_quality = self._unrealized(held, prices)
 
         return {
             "cash": round(cash, 2),
@@ -470,6 +482,7 @@ class BinanceBroker(BaseBroker):
         order = BrokerOrder(order_id="", symbol=symbol, action=action.upper(),
                             quantity=quantity, price=price, status=OrderStatus.PENDING,
                             submit_time=datetime.now())
+        sent = False        # 下单请求是否已经发出去（决定异常时能不能安全判 FAILED）
         try:
             filt = bt.symbol_filters(symbol)
             qty = bt.round_step(float(quantity), filt.get("step_size"))
@@ -487,12 +500,14 @@ class BinanceBroker(BaseBroker):
             # 限价单 price 必须对齐 PRICE_FILTER 的 tickSize，否则币安 -1013 拒单
             send_price = bt.round_price(price, filt.get("tick_size")) if price else None
             order.price = send_price
+            # ⚠️ 必须在**调用之前**置位：place_order 内部抛异常时，请求可能已经落到币安了
+            sent = True
             result = bt.place_order(symbol, action, qty, send_price, client_order_id=cid)
             self._apply_receipt(order, result, price)
             logger.info(f"币安下单: {action} {symbol} {qty} @ {price or 'MARKET'} "
                         f"→ order {order.order_id} status={order.status.value}")
         except Exception as e:  # noqa: BLE001
-            self._recover_or_fail(order, e, symbol, cid, price)
+            self._recover_or_fail(order, e, symbol, cid, price, sent=sent)
         return order
 
     @staticmethod
@@ -516,16 +531,28 @@ class BinanceBroker(BaseBroker):
                 order.filled_price = price
 
     def _recover_or_fail(self, order: BrokerOrder, exc: Exception, symbol: str,
-                         cid: str | None, price: float | None) -> None:
+                         cid: str | None, price: float | None, *, sent: bool = True) -> None:
         """下单抛异常后的幂等恢复：请求可能已被币安受理，先回查再定性。
 
-        三种落点：
+        四种落点：
+          - **请求压根没发出去**（`sent=False`）→ 直接 FAILED，上层可安全重排。
           - 回查**查到订单** → 币安其实受理了，按真实回执填充（可能已成交）。绝不重下。
           - 回查明确**不存在**（-2013）→ 真没受理，判 FAILED，上层可安全重排。
           - **没有幂等键 或 回查本身也失败** → 状态不明，判 `UNKNOWN` 交人工对账。
             ⛔ 这里绝不能乐观判 FAILED —— 那正是「同一笔成交两次」的来源。
+
+        Args:
+            sent: 是否已经调用过 `bt.place_order`。异常若发生在**之前**（拉 exchangeInfo
+                失败、取现价失败等），一个字节都没发出去，判 UNKNOWN 是**过度保守**——
+                会让待确认单落 STALE、逼 Jason 去币安查一笔根本不存在的单。
+                比「要求调用方必传 cid」更本质：管的是「发没发」而不是「查不查得到」。
         """
         from acquisition.markets import binance_trade as bt
+        if not sent:
+            order.status = OrderStatus.FAILED
+            order.error_msg = f"{exc}（下单请求尚未发出，可安全重试）"
+            logger.error(f"币安下单前置步骤失败（未发出请求）: {exc}")
+            return
         if cid:
             try:
                 found = bt.query_order_by_client_id(symbol, cid)

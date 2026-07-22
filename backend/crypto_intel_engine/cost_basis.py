@@ -150,7 +150,6 @@ class _FeePricer:
 
     def __init__(self) -> None:
         self._cache: dict[tuple[str, date], float | None] = {}
-        self.unpriced: dict[str, float] = {}    # 实在折算不了的，如实报出来而不是当 0
 
     def close_price(self, asset: str, day: date) -> float | None:
         """取 `{asset}USDT` 在 `day` 的日线收盘（本地库）。查不到返回 None。"""
@@ -177,16 +176,20 @@ class _FeePricer:
         return val
 
     def to_quote(self, amount: float, asset: str, day: date) -> float | None:
-        """折算成 USDT。返回 None = 折算不了（调用方须记进 `unpriced`，不可当 0）。"""
+        """折算成 USDT。返回 `None` = 折算不了。
+
+        ⛔ **折算不了的额度由调用方记进「那个 symbol 自己的」`unpriced_fees`，不可当 0，
+        也不可攒在本对象上**。此前 `_FeePricer` 自己有一个全局 `unpriced` 累加字典，
+        `replay()` 末尾又把它整份赋给**每一个** symbol —— 只要任意一个币有折算不了的
+        BNB 手续费，所有币的 `cost_for` note 都会挂上它。数值不受影响，但给 Jason 看的
+        那句话是错的。
+        """
         if amount <= 0:
             return 0.0
         if asset == STABLE_QUOTE:
             return amount
         px = self.close_price(asset, day)
-        if px is None:
-            self.unpriced[asset] = self.unpriced.get(asset, 0.0) + amount
-            return None
-        return amount * px
+        return None if px is None else amount * px
 
 
 # ──────────────── 回放（单一真源）────────────────
@@ -200,7 +203,7 @@ def replay(symbol: str | None = None) -> dict[str, dict[str, Any]]:
       - `avg_cost`     加权平均成本；无持仓时为 0
       - `closed`       平仓明细 `[{"pnl", "date"}]`，**最新在前**
       - `fills`        参与回放的成交笔数
-      - `unpriced_fees` 折算不了的手续费 `{asset: amount}`（不静默当 0）
+      - `unpriced_fees` **该 symbol 自己**折算不了的手续费 `{asset: amount}`（不静默当 0）
 
     ⚠️ 卖出量可能超过回放出的持仓量（币是充值/空投进来的，我们没有它的买入记录）。
     这种情况下把超出部分的成本记为 **未知**（不按 0 成本算成暴利，那会把当日已实现盈亏
@@ -255,6 +258,8 @@ def replay(symbol: str | None = None) -> dict[str, dict[str, Any]]:
                     v = pricer.to_quote(fee, fee_asset, day)
                     if v is not None:
                         cost += v                       # 扣 USDT/BNB = 实际花得更多
+                    else:
+                        _note_unpriced(st, fee_asset, fee)
             st["total_cost"] += cost
             st["quantity"] += net_qty
         else:
@@ -266,6 +271,8 @@ def replay(symbol: str | None = None) -> dict[str, dict[str, Any]]:
                     v = pricer.to_quote(fee, fee_asset, day)
                     if v is not None:
                         proceeds -= v
+                    else:
+                        _note_unpriced(st, fee_asset, fee)
             costed = min(sold, st["quantity"])          # 只有回放得出的那部分才有成本
             if costed < sold:
                 # 卖的比我们知道的多 → 超出部分成本未知，不按 0 成本算成暴利
@@ -278,11 +285,14 @@ def replay(symbol: str | None = None) -> dict[str, dict[str, Any]]:
 
         st["avg_cost"] = (st["total_cost"] / st["quantity"]) if st["quantity"] > 0 else 0.0
 
-    for sym, st in out.items():
+    for st in out.values():
         st["closed"].reverse()                          # 最新在前
-        st["unpriced_fees"] = dict(pricer.unpriced)
-        _ = sym
     return out
+
+
+def _note_unpriced(st: dict[str, Any], asset: str, amount: float) -> None:
+    """折算不了的手续费记进**这个 symbol 自己的**账上（绝不当 0，也绝不串到别的币）。"""
+    st["unpriced_fees"][asset] = st["unpriced_fees"].get(asset, 0.0) + amount
 
 
 # ──────────────── 对外：带覆盖度的成本 ────────────────
@@ -323,11 +333,17 @@ def cost_for(symbol: str, actual_quantity: float,
         gap = actual - known
         note = (f"持有 {actual:g}，其中 {gap:g} 来源不明（充值/空投/理财利息/闪兑），"
                 f"成本仅覆盖 {coverage:.0%}")
+    notes = [note] if note else []
     if st.get("unpriced_fees"):
-        note = ((note + "；") if note else "") + \
-               f"部分手续费无法折算成 USDT：{st['unpriced_fees']}"
+        # 只报**这个 symbol 自己**折算不了的（此前是全表共用一份，谁有问题所有币都跟着挂）
+        notes.append(f"部分手续费无法折算成 USDT：{st['unpriced_fees']}")
+    if st.get("has_uncosted_sell"):
+        # 设了却没人读等于白设 —— 这条直接影响「这个成本能信几分」，必须让 Jason 看见
+        notes.append("历史上卖出量超过可回放的买入量（有币来自充值/空投），"
+                     "那部分平仓盈亏按成本未知处理，均价只代表有记录的部分")
     return {"avg_cost": st["avg_cost"], "quality": quality, "coverage": round(coverage, 4),
-            "covered_quantity": known, "fills": st["fills"], "note": note}
+            "covered_quantity": known, "fills": st["fills"],
+            "note": "；".join(notes) if notes else None}
 
 
 # ──────────────── 对外：平仓盈亏（收口两份重复实现）────────────────
@@ -349,7 +365,7 @@ def fees_on(day: date) -> float:
     喂引擎的「单日手续费上限」护栏。⛔ 不能拿 `sum(commission)` 直接加：币安现货买入
     默认扣**基础币**（买 BTC 扣 BTC），把 0.00001 BTC 当成 0.00001 美元累加会让费用
     恒等于约 0，护栏结构上不可能触发。折算不了的（如本地没有 BNB 日线）计入返回值时
-    按 0 处理，但 `_FeePricer.unpriced` 已在回放侧留痕。
+    按 0 处理，但同一笔在回放侧会记进该 symbol 的 `unpriced_fees`，由 `cost_for` 的 note 报出。
 
     ⛔ **必须用 `market_day_bounds` 切区间，不能写 `DATE(trade_time) = :day`**。
     `trade_time` 存的是 naive UTC，而调用方给的 `day` 曾经是服务器本地的 `date.today()`

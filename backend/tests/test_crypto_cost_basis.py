@@ -279,3 +279,70 @@ class TestStopLossReactivated:
         from trading_engine.risk.rules import StopLossRule
         r = StopLossRule(0.05).check(symbol="BTCUSDT.BN", avg_cost=90.0, current_price=90.0)
         assert r.passed is True
+
+
+class TestUnpricedFeesDoNotBleedAcrossSymbols:
+    """⛔ 折算不了的手续费只属于**它自己那个币**。
+
+    `_FeePricer` 是整轮 `replay()` 共享的，旧实现在循环末尾把它那份全局累加的
+    `unpriced` 整份赋给每一个 symbol —— 只要任意一个币有折算不了的 BNB 手续费，
+    所有币的 `cost_for` note 都会挂上它。数值不受影响，但给 Jason 看的那句话是错的。
+    （旧测试只回放单币，照不到这个。）
+    """
+
+    def test_only_the_offending_symbol_reports_it(self, mem_db):
+        from crypto_intel_engine import cost_basis as cb
+        from data_engine.storage.models import CryptoFill
+        s = mem_db()
+        try:
+            # ETH 用 BNB 付手续费，而库里没有 BNBUSDT 日线 → 折算不了
+            s.add(CryptoFill(source="spot", symbol="ETHUSDT.BN", trade_id="1",
+                             price=3000.0, quantity=1.0, quote_qty=3000.0,
+                             commission=0.05, commission_asset="BNB", is_buyer=1,
+                             trade_time=datetime(2026, 7, 20, 1, 0)))
+            # BTC 全程 USDT 付费，干干净净
+            s.add(CryptoFill(source="spot", symbol="BTCUSDT.BN", trade_id="2",
+                             price=65000.0, quantity=1.0, quote_qty=65000.0,
+                             commission=6.5, commission_asset="USDT", is_buyer=1,
+                             trade_time=datetime(2026, 7, 20, 2, 0)))
+            s.commit()
+        finally:
+            s.close()
+
+        table = cb.replay()
+        assert table["ETHUSDT.BN"]["unpriced_fees"] == {"BNB": pytest.approx(0.05)}
+        assert table["BTCUSDT.BN"]["unpriced_fees"] == {}, "BTC 不该背 ETH 的锅"
+
+        btc_note = cb.cost_for("BTCUSDT.BN", 1.0, replayed=table)["note"]
+        assert btc_note is None or "手续费" not in btc_note
+        eth_note = cb.cost_for("ETHUSDT.BN", 1.0, replayed=table)["note"]
+        assert "手续费" in eth_note and "BNB" in eth_note
+
+
+class TestUncostedSellSurfacesToJason:
+    """`has_uncosted_sell` 设了却没人读 = 白设。它直接影响「这个成本能信几分」。"""
+
+    def test_note_mentions_the_gap(self, mem_db):
+        from crypto_intel_engine import cost_basis as cb
+        from data_engine.storage.models import CryptoFill
+        s = mem_db()
+        try:
+            # 买 1 卖 2（多出来那 1 个是空投/充值进来的，我们没有它的买入记录）
+            s.add(CryptoFill(source="spot", symbol="BTCUSDT.BN", trade_id="1",
+                             price=100.0, quantity=1.0, quote_qty=100.0, commission=0.0,
+                             commission_asset="USDT", is_buyer=1,
+                             trade_time=datetime(2026, 7, 20, 1, 0)))
+            s.add(CryptoFill(source="spot", symbol="BTCUSDT.BN", trade_id="2",
+                             price=120.0, quantity=2.0, quote_qty=240.0, commission=0.0,
+                             commission_asset="USDT", is_buyer=0,
+                             trade_time=datetime(2026, 7, 20, 2, 0)))
+            s.add(CryptoFill(source="spot", symbol="BTCUSDT.BN", trade_id="3",
+                             price=110.0, quantity=1.0, quote_qty=110.0, commission=0.0,
+                             commission_asset="USDT", is_buyer=1,
+                             trade_time=datetime(2026, 7, 20, 3, 0)))
+            s.commit()
+        finally:
+            s.close()
+        assert cb.replay("BTCUSDT.BN")["BTCUSDT.BN"]["has_uncosted_sell"] is True
+        note = cb.cost_for("BTCUSDT.BN", 1.0)["note"]
+        assert note and "成本未知" in note

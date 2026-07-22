@@ -64,7 +64,10 @@ class TestBacktestHonesty:
     """回测口径与文档不符——不能改 C++，那就把差异如实摆出来。"""
 
     @staticmethod
-    def _run(taker_fee_pct):
+    def _run(taker_fee_pct, field="composite", bar_days=28, matured=frozenset()):
+        from datetime import date as _date
+        from datetime import timedelta as _td
+
         from crypto_intel_engine.dsl import (
             Condition,
             ConditionGroup,
@@ -80,18 +83,19 @@ class TestBacktestHonesty:
         spec = CryptoStrategySpec(
             strategy_id="CS-T", name="t", universe=Universe(symbols=["BTCUSDT.BN"]),
             entry_rules=EntryRules(when=ConditionGroup(
-                all_of=[Condition(field="composite", op="gte", value=60)])),
+                all_of=[Condition(field=field, op="gte", value=60)])),
             exit_rules=ExitRules(when=ConditionGroup(
-                all_of=[Condition(field="composite", op="lt", value=40)])),
+                all_of=[Condition(field=field, op="lt", value=40)])),
             position_policy=PositionPolicy(),
             cost_model=CostModel(taker_fee_pct=taker_fee_pct),
             guardrails=Guardrails(per_order_notional_usdt=100.0, max_orders_per_day=5))
-        bars = [{"date": f"2026-01-{d:02d}", "open": 10.0, "high": 11.0,
-                 "low": 9.0, "close": 10.0, "volume": 100.0} for d in range(1, 29)]
+        bars = [{"date": (_date(2026, 1, 1) + _td(days=i)).isoformat(),
+                 "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.0,
+                 "volume": 100.0} for i in range(bar_days)]
         return run_backtest_gate(
             spec, {"BTCUSDT.BN": bars},
             run_bt=lambda bars, signals, **kw: {"metrics": {"total_return": 0.05}},
-            collect=lambda on_bar, df: [], _matured=set())
+            collect=lambda on_bar, df: [], _matured=set(matured))
 
     def test_fee_mismatch_is_reported(self):
         """策略配 0.075%（BNB 抵扣）而引擎写死 0.1% → 必须说出来。"""
@@ -109,6 +113,33 @@ class TestBacktestHonesty:
         r = self._run(0.00075)
         assert "caveats" in r and "degraded_reasons" in r
         assert not any("taker" in x for x in r["degraded_reasons"])
+
+
+class TestReplayCoverageOnlyCountsMetricFields:
+    """⛔ 忠实回放不许被报成「0% 有指标帧」。
+
+    `replay_days` 数的是 `crypto_metrics` 来的 frames，但 `replay.py` 的 on_bar 是
+    `{**frames.get(date, {}), **_price_frame(history)}` —— `price.change_*` 每根 bar
+    都直接从 df 算，压根不走 frames。所以一条纯 `price.*` 的策略是 100% 忠实回放
+    （mode="dsl"、degraded=False），旧实现却给 coverage=0 并弹出「指标历史还没攒够」，
+    把最干净的那种回放说成最不可信 —— 和本模块「别让数字看起来比实际更有分量」正好反了。
+    """
+
+    def test_price_only_spec_gets_no_coverage_caveat(self):
+        r = TestBacktestHonesty._run(0.001, field="price.change_5d_pct", bar_days=120)
+        assert r["replay"]["mode"] == "dsl" and r["degraded"] is False, "前提：这是忠实回放"
+        assert r["metrics"]["replay_coverage"] is None, "无可比对应为 None，不是 0%"
+        assert r["metrics"]["metric_fields"] == []
+        assert not any("指标帧" in c for c in r["caveats"])
+
+    def test_metric_backed_spec_still_reports_coverage(self):
+        """反向：真依赖 crypto_metrics 的规则，覆盖度该报还得报（别把闸门修没了）。"""
+        r = TestBacktestHonesty._run(0.001, field="funding_rate", bar_days=120,
+                                     matured={"funding_rate"})
+        # funding_rate 被声明为已成熟 → 进 metric_fields，但测试没喂指标 → 帧全空
+        assert r["metrics"]["metric_fields"] == ["funding_rate"]
+        assert r["metrics"]["replay_coverage"] == 0.0
+        assert any("指标帧" in c for c in r["caveats"])
 
 
 class TestDriftThresholdNotHardcoded:
