@@ -118,8 +118,17 @@ def fear_greed_index(limit: int = 1) -> list[dict]:
     data = resp.json() or {}
     out = []
     for r in data.get("data", []):
+        # ⛔ 缺值必须是 None，绝不能兜底成 0。0 在这个量表上是「极度恐惧」这一端，
+        # 而打分器对极度恐惧给 **+8 的看多加分**（历史上常是波段买点）——
+        # 于是「字段没拿到」会被翻译成「市场恐慌到极点，加仓信号」。
+        # 缺数据往量表极值端映射、方向还偏多，是这类 bug 里最坏的一种。
+        raw = r.get("value")
+        try:
+            value = int(raw) if raw is not None and str(raw).strip() != "" else None
+        except (TypeError, ValueError):
+            value = None
         out.append({
-            "value": int(r.get("value", 0)),
+            "value": value,
             "classification": r.get("value_classification", ""),
             "timestamp": r.get("timestamp"),
         })

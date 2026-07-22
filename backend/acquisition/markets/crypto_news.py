@@ -62,11 +62,18 @@ def _ms_to_dt(ms: Any) -> datetime | None:
 
 
 def fetch_binance_announcements(page_size: int = 20,
-                                catalog_id: int | None = None) -> list[dict]:
+                                catalog_id: int | None = None) -> list[dict] | None:
     """币安公告。不给 catalog_id 则**一次拿回全部栏目**（最省请求）。
 
     Returns:
-        [{catalog_id, catalog_name, title, code, url, published_at}]，新→旧未排序保持源序。
+        成功：`[{catalog_id, catalog_name, title, code, url, published_at}]`，新→旧未排序保持源序。
+        ⚠️ **取数失败返 `None`，不是 `[]`**。
+
+    ⛔ 这个区别是安全边界，不是风格问题。`[]` 的意思是「查过了，近期没有公告」；取数失败
+    却返回 `[]` 会让上层的 `check_hard_events` 判定 `checked=True, veto=False` —— 一个昨天
+    刚被宣布下架的币会拿到「查过了，没问题」的结论，卡片上一个警告都不显示，而且这个假
+    「干净」结论还会被缓存 600 秒覆盖整轮扫描。源超时、被 WAF 挡、地域 451、返回非 JSON，
+    任一都会走到这里。宁可让上层显示「这道闸没跑成」，也不能谎报安全。
     """
     params: dict[str, Any] = {"type": 1, "pageNo": 1, "pageSize": page_size}
     if catalog_id is not None:
@@ -74,8 +81,8 @@ def fetch_binance_announcements(page_size: int = 20,
 
     data = _crawler().get_json(_ANN_URL, params=params)
     if not isinstance(data, dict) or data.get("code") != "000000":
-        logger.warning(f"币安公告取数异常: code={(data or {}).get('code') if data else 'None'}")
-        return []
+        logger.warning(f"币安公告取数失败: code={(data or {}).get('code') if data else 'None'}")
+        return None      # 失败 ≠ 没有公告
 
     out: list[dict] = []
     for cat in ((data.get("data") or {}).get("catalogs") or []):

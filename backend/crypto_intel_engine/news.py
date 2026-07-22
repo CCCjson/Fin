@@ -90,6 +90,48 @@ def mentions_asset(text: str, base_asset: str, *, aliases: list[str] | None = No
     return bool(re.search(rf"\b{re.escape(t)}\b", text))
 
 
+# 主流计价币：某个币「对 USDT 的交易对被摘掉」才等于它真的被下架；
+# 只摘掉它对 BIDR/AEUR/TUSD 这类小众计价币的交易对，是**币安退役那个计价币**，与该币无关。
+_MAIN_QUOTES = frozenset({"USDT", "USDC", "FDUSD", "BUSD", "BTC", "ETH", "BNB"})
+_PAIR_RE = re.compile(r"\b([A-Z0-9]{2,15})/([A-Z0-9]{2,15})\b")
+
+
+def is_asset_delisted(title: str, base_asset: str) -> bool:
+    """下架公告里，**这个币本身**是不是真的要被下架（而不是某个交易对被退役）。
+
+    ⛔ 修的是一条会天天误伤主力币的判断。币安每隔一阵就发一次
+    `Binance Will Remove BTC/BIDR, ETH/BIDR and USDT/BIDR Spot Trading Pairs`
+    —— 这是**退役 BIDR 这个计价币**，BTC/ETH 屁事没有。但按「基础腿算提及」的规则，
+    BTC 和 ETH 双双命中 delisting → `screen.verdict='avoid'` → composite 被压到 44 →
+    出 SELL、目标仓位 0，而且 `lookback_days=14` 让这个误判**粘 14 天**。
+    Jason 最常交易的两个币直接被打成回避。
+
+    判据：币安要下架一个币时，**它对主流计价币的交易对一定在名单里**（尤其 /USDT）。
+    所以：
+      - 该币出现在 `XXX/主流计价币` 里 → 真下架；
+      - 该币**只**出现在 `XXX/小众计价币` 里 → 只是那个计价币被退役，不否决；
+      - 该币以非交易对形式被点名（`Will Delist XXX` / `(XXX)`）→ 真下架。
+
+    >>> is_asset_delisted("Binance Will Remove BTC/BIDR, ETH/BIDR Spot Trading Pairs", "BTC")
+    False
+    >>> is_asset_delisted("Binance Will Delist XVG/USDT, XVG/BTC Spot Trading Pairs", "XVG")
+    True
+    >>> is_asset_delisted("Binance Will Delist ALPACA", "ALPACA")
+    True
+    """
+    if not title or not base_asset:
+        return False
+    t = base_asset.upper()
+    pairs = [(b.upper(), q.upper()) for b, q in _PAIR_RE.findall(title.upper())]
+    as_base = [q for b, q in pairs if b == t]
+    if as_base:
+        # 出现在交易对里：只有搭主流计价币才算这个币真要被下架
+        return any(q in _MAIN_QUOTES for q in as_base)
+    # 没以交易对形式出现 → 看是不是被直接点名（此时 mentions_asset 已确认提到了它）
+    #（作为计价腿出现不算：`ALPACA/BTC` 说的是 ALPACA 不是 BTC）
+    return not any(q == t for _, q in pairs)
+
+
 def asset_aliases(symbol: str) -> list[str]:
     """币的常见书面名（供情绪匹配）。取自策展的 CoinGecko id：`bitcoin` → "Bitcoin"。
 
@@ -154,6 +196,11 @@ def check_hard_events(symbol: str, announcements: list[dict] | None = None,
             continue
         ev = classify_event(title)
         if not ev:
+            continue
+        # 下架类要再过一道「这个币本身是不是真被下架」的闸：币安退役小众计价币
+        # （BTC/BIDR、ETH/AEUR…）是例行操作，不该把 BTC/ETH 自己否决掉 14 天
+        if ev["event"] == "delisting" and not is_asset_delisted(title, base):
+            logger.debug(f"{base} 出现在下架公告但只是交易对退役，不否决：{title[:80]}")
             continue
         result["veto"] = True
         result["reasons"].append(f"{ev['label']}：{title[:80]}")
@@ -240,7 +287,8 @@ def ingest(*, announcement_pages: int = 20, analyze: bool = True) -> dict:
 
     items: list[dict] = []
     try:
-        for ann in fetch_binance_announcements(page_size=announcement_pages):
+        # 取数失败返 None（≠ 没有公告），入库侧按空处理即可——漏抓一轮下轮会补
+        for ann in (fetch_binance_announcements(page_size=announcement_pages) or []):
             if not ann.get("url"):
                 continue
             items.append({

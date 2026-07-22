@@ -35,6 +35,13 @@ def _rp(price: float | None) -> float | None:
     return round(float(price), _price_decimals(price))
 
 
+# 止损价下限 = 入场价的 15%（即最多容忍 -85%）。纯粹是「别算出负数/零」的防线，
+# 不是策略参数——真触发说明这个币的 ATR 已经大到常规倍数失效了。
+_MIN_SL_FLOOR_PCT = 0.15
+# 做空止盈价下限 = 入场价的 5%（价格不可能跌破 0）
+_MIN_TP_FLOOR_PCT = 0.05
+
+
 def crypto_dynamic_levels(entry_price: float | None, quotes: list[dict],
                           atr: float | None = None, signal_type: str = "BUY",
                           sl_atr_mult: float = 3.0,
@@ -50,17 +57,30 @@ def crypto_dynamic_levels(entry_price: float | None, quotes: list[dict],
     if atr is None or atr <= 0:
         atr = latest_close * 0.04   # 加密波动大，缺 ATR 时默认按 4% 估（股票是 2%）
 
+    # ⛔ 止损必须留在正价区间内。新币/meme 币日 ATR 到价格的 20-35% 是常态，
+    # `entry - 3×ATR` 会算出**负价**（实测 entry=1.0, ATR=0.35 → 止损 -0.05）：
+    # 负价止损等于没有止损（DSL 的 use_atr_stop 退出规则永不触发），而确认卡上还照样
+    # 印着一个漂亮的盈亏比。最需要止损的那批币恰好拿不到止损。
+    # 兜底：夹到入场价的 `_MIN_SL_FLOOR_PCT`，并在 `stop_clamped` 里如实标出来。
+    clamped = False
     if signal_type == "BUY":
-        sl = entry_price - sl_atr_mult * atr
-        trailing = latest_close - 1.5 * atr
+        raw_sl = entry_price - sl_atr_mult * atr
+        floor = entry_price * _MIN_SL_FLOOR_PCT
+        sl = max(raw_sl, floor)
+        clamped = sl > raw_sl
+        trailing = max(latest_close - 1.5 * atr, floor)
         tps = [entry_price + m * atr for m in tp_atr_mults]
         risk, reward = entry_price - sl, tps[1] - entry_price
     else:
         sl = entry_price + sl_atr_mult * atr
         trailing = latest_close + 1.5 * atr
-        tps = [entry_price - m * atr for m in tp_atr_mults]
+        # 做空侧止盈同样不能穿到 0 以下（价格跌不穿 0）
+        tps = [max(entry_price - m * atr, entry_price * _MIN_TP_FLOOR_PCT)
+               for m in tp_atr_mults]
+        clamped = any(entry_price - m * atr < entry_price * _MIN_TP_FLOOR_PCT
+                      for m in tp_atr_mults)
         risk, reward = sl - entry_price, entry_price - tps[1]
-    rr = round(reward / risk, 2) if risk > 0 else 0
+    rr = round(reward / risk, 2) if risk > 0 and reward > 0 else 0
 
     actions = ["减仓1/3", "减仓1/3", "清仓"]
     return {
@@ -71,6 +91,9 @@ def crypto_dynamic_levels(entry_price: float | None, quotes: list[dict],
                                for i in range(3)],
         "risk_reward_ratio": rr,
         "sl_atr_mult": sl_atr_mult,
+        # True = ATR 相对价格太大，止损/止盈被夹到了下限。这不是正常状态：说明这个币
+        # 波动到了「按常规倍数根本没法设止损」的程度，仓位该更小或干脆别碰。
+        "stop_clamped": clamped,
     }
 
 
@@ -427,8 +450,12 @@ def analyze_crypto_symbol(symbol: str, *, broker_info: dict | None = None,
         price_change_pct=(_pct_change(df, oi_days) if oi_days >= 2 else None))
 
     # ③ 大势闸门（BTC 主导率趋势 + 宏观风险偏好）
-    reg = btc_regime()
-    mctx = market_context()
+    # ⚠️ btc_regime/market_context 都必须过 _safe_ctx：库里 BTC 日线不足 200 根时
+    # btc_regime 会回退到实时拉币安，而 CryptoFetcher.fetch_daily 的异常是 raise 出来的 ——
+    # 裸调用会让「大势取不到」升级成「整张分析卡直接没了」。降级成「大势未知」即可，
+    # score_regime 对 None 有中性兜底。
+    reg = _safe_ctx("BTC大势", btc_regime)
+    mctx = _safe_ctx("市场上下文", market_context)
     dom_chg = _safe_ctx("主导率趋势", ctx.dominance_change_pct)
     macro = _safe_ctx("宏观", ctx.macro_context)
     rg_score, rg_detail = score_regime(reg, mctx, dominance_change_pct=dom_chg,

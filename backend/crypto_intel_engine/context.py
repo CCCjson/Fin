@@ -25,7 +25,12 @@ _cache: dict[str, tuple[float, Any]] = {}
 
 
 def _cached(key: str, producer):
-    """带 TTL 的进程内缓存。producer 抛异常时返回 None 并记 warning（不缓存失败结果）。"""
+    """带 TTL 的进程内缓存。**失败结果一律不缓存**（抛异常或返回 None 都算失败）。
+
+    本层统一以 `None` 表示「取不到」。不缓存 None 是必须的：否则一次网络抖动会把
+    「取数失败」钉死 600 秒，覆盖整轮扫描——事件否决闸就是这么被一次超时静音掉的。
+    失败不缓存 = 下一个调用者立刻重试。
+    """
     hit = _cache.get(key)
     now = time.monotonic()
     if hit and now - hit[0] < _TTL:
@@ -34,6 +39,8 @@ def _cached(key: str, producer):
         value = producer()
     except Exception as e:  # noqa: BLE001 — 上下文取不到只降级，不阻断分析
         logger.warning(f"市场上下文 {key} 取数失败: {e}")
+        return None
+    if value is None:
         return None
     _cache[key] = (now, value)
     return value

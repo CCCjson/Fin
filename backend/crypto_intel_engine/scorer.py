@@ -51,7 +51,11 @@ def market_context() -> dict[str, Any]:
         ctx["fear_greed"] = None
     try:
         g = coingecko_global()
-        ctx["btc_dominance"] = round((g.get("market_cap_percentage") or {}).get("btc", 0), 2)
+        # ⛔ 缺 btc 键必须是 None 不是 0：0 是**真值**，会被 upsert_market_metrics 落进
+        # crypto_metrics（它只跳过 None）。次日算 dominance_change_pct 就成了 0-54=-54
+        # 个百分点 → clamp(-54×2, ±8) 打满 → 山寨 +8 / BTC -8 的假摆动，数据恢复后再反向摆一次。
+        dom = (g.get("market_cap_percentage") or {}).get("btc")
+        ctx["btc_dominance"] = round(dom, 2) if isinstance(dom, (int, float)) else None
         ctx["total_market_cap_usd"] = (g.get("total_market_cap") or {}).get("usd")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"CoinGecko global 抓取失败: {e}")
@@ -82,8 +86,13 @@ def screen_coin(symbol: str, *, extras: dict | None = None,
         "ambiguous": ambiguous, "score": None, "verdict": "unknown",
         "flags": [], "dimensions": {},
     }
+    # ⚠️ 下面两条提前返回是「排雷压根没做成」的路径，**必须显式带上
+    # `hard_events_checked=False`**：cockpit 侧读的是 `screen.get("hard_events_checked", True)`，
+    # 键缺失会默认 True，于是「没查」和「查过了没问题」在卡片上长得一模一样。
+    # 而最容易解析失败 / 取数失败的，恰恰是最该被排雷的冷门山寨币。
     if not coin_id:
         result["flags"].append(f"无法解析 {base} 到 CoinGecko（排雷数据缺失）")
+        result["hard_events_checked"] = False
         return result
 
     try:
@@ -91,6 +100,7 @@ def screen_coin(symbol: str, *, extras: dict | None = None,
     except Exception as e:  # noqa: BLE001
         logger.warning(f"排雷取数失败 {symbol}({coin_id}): {e}")
         result["flags"].append("排雷取数失败（网络/限速）")
+        result["hard_events_checked"] = False
         return result
 
     md = coin.get("market_data", {}) or {}
@@ -194,14 +204,26 @@ def pctile_score(history: list[float] | None, current: float | None, *,
     """
     if current is None or not history or len(history) < min_samples:
         return None
+    # ⛔ 必须用 midrank（并列各算半个），不能只数「严格小于」。资金费率对主流币长期钉在
+    # 0.0001 这个利率基准档，历史里一大片值和当前值**恰好相等**：只数严格小于的话
+    # below=0 → pct=0 → invert 后直接给 100 分，把一个完全中性的费率打成
+    # 「最不拥挤、最看多」，而它占衍生品维 30% 权重。实测历史全是同一档时旧实现给 100.0。
     below = sum(1 for h in history if h < current)
-    pct = below / len(history)
+    ties = sum(1 for h in history if h == current)
+    pct = (below + 0.5 * ties) / len(history)
     return round((1.0 - pct) * 100 if invert else pct * 100, 1)
 
 # 排雷 avoid 时 composite 的封顶（44 < HOLD 线 45 → 落进 SELL/回避区，绝不给买入级结论）
 SCREEN_VETO_CAP = 44.0
 # 排雷 caution 时的温和扣分（不否决，但降级）
 SCREEN_CAUTION_PENALTY = 8.0
+# 排雷 unknown（**压根没查成**：解析不到 CoinGecko id / 取数失败）的扣分。
+# 比 caution 更重：caution 至少体检过了、知道问题在哪；unknown 是一片空白，
+# 而会落进 unknown 的多半是冷门山寨币——风险最高的那一类。
+SCREEN_UNKNOWN_PENALTY = 12.0
+# 排雷数据大面积缺失时的分数封顶。落在 caution 区（50-74）而不是 avoid：
+# 缺数据不等于有雷，但绝不能是 pass（≥75）。
+_SCREEN_DATA_STARVED_CAP = 60
 
 
 # 衍生品各子信号权重（和不必为 1，按可得项重归一）
@@ -572,6 +594,13 @@ def score_crypto_cockpit(dimensions: dict[str, float | None],
     elif verdict == "caution":
         composite = round(max(0.0, composite - SCREEN_CAUTION_PENALTY), 1)
         adjustments.append("screen_caution_penalty")
+    elif verdict == "unknown":
+        # ⛔ 「排雷压根没做成」不能和「体检满分」走同一条路。unknown 的成因是解析不到
+        # CoinGecko id 或取数失败，而最容易两头落空的恰恰是最该排雷的冷门山寨币——
+        # 供应稀释、解锁悬顶、团队跑路全都没查过。不否决（数据缺失不等于有雷），
+        # 但必须降级，别让「查不到」冒充「没问题」。
+        composite = round(max(0.0, composite - SCREEN_UNKNOWN_PENALTY), 1)
+        adjustments.append("screen_unknown_penalty")
 
     composite = round(clamp(composite, 0, 100), 1)
 
@@ -682,13 +711,17 @@ def score_dimensions(md: dict, dev: dict, extras: dict | None = None) -> tuple[d
         flags.append(f"开发冷清（近 4 周仅 {commits_4w} 次提交）")
 
     # ④ 市值（小市值 = 流动性差/易被操纵）
-    if mcap is not None:
-        if mcap < 100_000_000:
-            score -= 20
-            flags.append("小市值（<1亿美元，流动性/操纵风险）")
-        elif mcap < 1_000_000_000:
-            score -= 8
-            flags.append("中小市值（<10亿美元，波动更大）")
+    if mcap is None:
+        # 缺市值 ≠ 大市值。CoinGecko 429 降级响应、字段改名都会走到这里，
+        # 而这个体检的用途恰恰是「这个陌生币能不能碰」——不知道就不能算安全。
+        score -= 10
+        flags.append("市值未知（数据缺失，无法评估流动性/操纵风险）")
+    elif mcap < 100_000_000:
+        score -= 20
+        flags.append("小市值（<1亿美元，流动性/操纵风险）")
+    elif mcap < 1_000_000_000:
+        score -= 8
+        flags.append("中小市值（<10亿美元，波动更大）")
 
     # ⑤ 链上真实使用度：TVL 在缩 = 用的人在跑（只对有 TVL 的链/协议生效）
     tvl_chg = ex.get("tvl_change_pct")
@@ -705,5 +738,18 @@ def score_dimensions(md: dict, dev: dict, extras: dict | None = None) -> tuple[d
     if ex.get("thin_liquidity"):
         score -= 10
         flags.append("24h 成交额过低（盘口薄，滑点不可控）")
+
+    # ⑦ 整体数据完整性闸：扣分制天生只扣「已知的坏」，一份**全空**的响应会一路扣不到
+    #    几分然后拿着高分判 pass。实测 score_dimensions({}, {}, {}) 旧实现给 83 分 pass ——
+    #    一张漂亮的体检报告，其实一个指标都没查到。缺得越多，越不能说它安全。
+    core = {"circulating_supply": circ, "market_cap": mcap,
+            "fdv_or_unlock": fdv if fdv is not None else unlock_pct,
+            "developer": commits_4w}
+    missing = [k for k, v in core.items() if v is None]
+    dims["core_fields_missing"] = missing
+    if len(missing) >= 3:
+        score = min(score, _SCREEN_DATA_STARVED_CAP)
+        flags.append(f"排雷数据大面积缺失（{len(missing)}/{len(core)} 项核心指标拿不到），"
+                     f"体检结论不可信")
 
     return dims, max(0, min(100, score)), flags
