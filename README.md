@@ -1,8 +1,8 @@
 # Fin — 个人量化交易平台
 
-> 一个面向 **A股 / 港股 / 美股** 的全功能量化交易系统。以 **MoneyBill** 对话为唯一主入口，自然语言驱动数据获取、技术分析、策略回测、选股推荐、模拟交易、决策留痕，配 7 个可视化工作台页做深度查看，桌面端有原生 Tauri 壳。
+> 一个面向 **A股 / 港股 / 美股 / 加密货币（币安现货）** 的全功能量化交易系统。以 **MoneyBill** 对话为唯一主入口，自然语言驱动数据获取、技术分析、策略回测、选股推荐、模拟交易、决策留痕，配 7 个可视化工作台页做深度查看，桌面端有原生 Tauri 壳。加密侧是**真金白银实盘**（币安现货），逐笔人工审核永不放开。
 
-![Version](https://img.shields.io/badge/version-6.0.0-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-6.1.0-brightgreen.svg)
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
 ![React](https://img.shields.io/badge/react-19-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688.svg)
@@ -12,7 +12,7 @@
 
 ## 系统架构总览
 
-2026-07 完成的架构收敛（Phase 1-7）把系统从「23 个独立页面 + 30+ 路由」收拢成「MoneyBill 对话主入口 + 7 个可视化工作台 + 20 个瘦身路由」，绝大多数业务能力下沉为 agent 可调用的工具，不再单独开页面/接口。
+2026-07 完成的架构收敛（Phase 1-7）把系统从「23 个独立页面 + 30+ 路由」收拢成「MoneyBill 对话主入口 + 7 个可视化工作台 + 20 个瘦身路由」，绝大多数业务能力下沉为 agent 可调用的工具，不再单独开页面/接口。随后新增的**加密货币（币安现货）**第四市场也遵循这条铁律——只做引擎层 + MoneyBill 工具两层，不新开页面/路由。
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -98,6 +98,13 @@
 - **风控硬限（`trading_engine/risk/`，代码硬编码不可被策略覆盖）**：单股仓位 ≤20% · 单日亏损限额触发即停 · 强制止损 -5% · 连续亏损 3 次暂停交易 1 天
 - 常驻监控：价格预警 `price_alert_monitor` + 持仓止损守护 `position_guardian` + 涨停盘中扫描，均开机自启
 - 业务事件总线 `business_events.py` → WebSocket 实时推送到前端
+
+### 🪙 加密货币 · 币安现货实盘 `crypto_intel_engine` + `crypto_strategy`
+第四市场，接币安 API 既取行情又下单，与股票各走各的账本、互不污染。**真金白银实盘**，逐笔人工审核是永久红线。
+- **两层分析**（加密独有）：择时层（技术指标 + 币安衍生品：资金费率/OI/多空比）+ 排雷层（链上 TVL / 代币经济学解锁表 / 开发活跃 / 恐慌贪婪 / BTC 主导率）。融合五维（技术/衍生品/大势/资金流/情绪）出综合分，排雷层作否决闸。
+- **持仓成本重建 `cost_basis.py`**：币安不提供持仓成本端点，按 `myTrades` 成交明细加权回放重建成本价与浮动盈亏，并**如实标注覆盖度**（充值/空投/理财利息进来的币本就无成本，绝不拿现价冒充）。成本回来后，止损/止盈/单日亏损/当日熔断四条硬风控才真正生效。
+- **半自动策略引擎 `crypto_strategy`**：MoneyBill 把人话编译成确定性 DSL 规则，引擎自动产决策 + 排一张**待确认单**，Jason 逐笔点确认才成交（引擎永不自动成交）。成本感知贯穿全程（手续费 + 实测盘口滑点 + 净边际闸），另有一整套护栏（kill 开关 / 当日回撤熔断 / 频次费用 / 单笔单币上限）与下单幂等（网络失联不误判、绝不重复下单）。
+- 三张钱包（现货 + 活期理财 + 资金）聚合成真实买力/持仓，买入自动补足、卖出自动扫归理财。
 
 ### 🧠 外置金融大脑 `knowledge_engine`（RAG）
 - 本地 **bge-m3** 向量化 + LLM 当大脑，独立 `knowledge.db`（sqlite-vec）
@@ -272,6 +279,8 @@ Fin/
 │   ├── automation/                 # 价格预警 / 持仓守护 / 涨停扫描（开机常驻）
 │   ├── alpha_lab/                  # AI 策略生成：沙盒 / 评分 / 迭代
 │   ├── knowledge_engine/           # 🧠 RAG 金融大脑 + 逆向爬虫工具 + 摄入源
+│   ├── crypto_intel_engine/        # 🪙 加密情报/打分/成本重建（cost_basis）/执行原语
+│   ├── crypto_strategy/            # 🪙 半自动策略引擎：DSL 编译/护栏/回测闸/待确认单
 │   ├── cockpit_engine/             # 决策驾驶舱聚合打分（经工具调用，无独立页）
 │   ├── screener_engine/            # 基本面选股器
 │   ├── limit_up_engine/            # 涨停候选池/打分/扫描
@@ -353,6 +362,9 @@ POST /auth/login               # 换取 JWT
 | `backtest_batches` / `backtest_results` | 回测批次与结果（C++ 内核产出） |
 | `orders` / `trades` | 订单与成交记录 |
 | `decision_log` | AI 建议决策留痕（可复现归因） |
+| `crypto_fills` / `crypto_trades` | 币安原始成交明细（成本回放真源）/ 本系统成交台账 |
+| `crypto_strategies` / `crypto_strategy_runs` / `crypto_pending_orders` | 半自动策略规则 / 运行日志 / 待确认单 |
+| `crypto_bars` / `crypto_metrics` / `crypto_assets` / `token_unlocks` | 日内 K 线 / 情报时序 / 代币经济学 / 解锁日程 |
 | `knowledge.db`（独立） | RAG 文档块 + bge-m3 向量（sqlite-vec） |
 
 `market.db`（约 14GB）与 `logs/` 软链到外置存储；`data/agent_sessions/` 存 MoneyBill 会话落盘。
@@ -368,7 +380,9 @@ POST /auth/login               # 换取 JWT
 - 每笔交易必须设置止损（默认 **-5%**）
 - 连续亏损 **3 次**后建议暂停交易 1 天
 
-MoneyBill 下单类工具（`place_order`、修改自选/预警/设置等）强制走**二次确认门**，风控预检结果会在确认弹窗中一并展示。
+MoneyBill 下单类工具（`place_order` / `place_crypto_order`、修改自选/预警/设置等）强制走**二次确认门**，风控预检结果会在确认弹窗中一并展示。
+
+**加密货币（币安现货实盘）**共用同一套五条硬风控（按币安真实 USDT 口径计算，不与 A 股人民币口径串味），且**每一笔交易都必须逐笔人工审核**——无论交互式对话下单还是半自动策略引擎排出的待确认单，`confirm_gate` + `requires_confirmation=True` 是永久硬约束，接通自动下单也不放开。
 
 ---
 
@@ -376,6 +390,7 @@ MoneyBill 下单类工具（`place_order`、修改自选/预警/设置等）强�
 
 | 版本 | 主要变化 |
 |------|---------|
+| **V6.1.0** | **加密货币（币安现货）第四市场**：接币安 API 取行情 + 实盘下单，两层分析（择时：技术+衍生品 / 排雷：链上+代币经济学），五维决策融合；**半自动策略引擎**（人话编译成 DSL → 引擎产决策排待确认单 → 逐笔人工确认才成交，成本感知贯穿全程）；**持仓成本按 myTrades 回放重建**（激活止损/止盈/日亏/熔断四条此前因缺成本价而失效的硬风控，覆盖度三态如实标注）；下单链路加幂等键与原子确认（网络失联不误判、绝不重复下单）；全链路时区统一（`common/market_time`，消除每天 8 小时的护栏黑洞）。逐笔人工审核红线原样保留 |
 | **V6.0.0** | **架构收敛（Phase 1-7）**：MoneyBill 成为唯一主入口，前端 23→7 工作台页，12 个 HTTP 路由退役下沉为 agent 工具；JWT 全局鉴权强制；ToolEnvelope 全量迁移；工具分组按需加载（token 地板降 55%）；确认门悬空自动作废 + 分型渲染；Tauri 桌面壳落地；net/ 代理池独立、C++ 订单簿模拟器上线 |
 | V5.0.0 | MoneyBill 多智能体投研助手、RAG 金融大脑（knowledge_engine）、决策驾驶舱、基本面选股器、自选股预警 |
 | V4.x | Alpha Lab AI 策略生成、模型微调、数据管道可视化、本地 MLX 支持、C++ 高速回测 |
