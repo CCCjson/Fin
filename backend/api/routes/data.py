@@ -22,6 +22,7 @@ from api.models.schemas import (
 from data_engine import DataEngine
 from data_engine.storage.database import get_session
 from data_engine.storage.models import StockInfo, UserSettings
+from common.market_time import utc_iso
 
 router = APIRouter(prefix="/data", tags=["数据"])
 
@@ -378,7 +379,7 @@ async def get_settings():
             row.key: {
                 "value": row.value,
                 "description": row.description,
-                "updated_at": str(row.updated_at) if row.updated_at else None,
+                "updated_at": utc_iso(row.updated_at),
             }
             for row in rows
         }

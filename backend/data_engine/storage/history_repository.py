@@ -6,9 +6,10 @@ from datetime import datetime, date
 import json
 from sqlalchemy.orm import Session
 from loguru import logger
+from common.market_time import utc_now
 
 from common.market import A_SHARE
-from common.market_time import from_market_naive, market_today, utc_now
+from common.market_time import from_market_naive, market_today
 
 from .models import Signal, BacktestTask, BacktestResult, Order, Trade
 from .database import get_session
@@ -200,9 +201,9 @@ class HistoryRepository:
         if task:
             task.status = status
             if status == "running" and not task.started_at:
-                task.started_at = datetime.now()
+                task.started_at = utc_now()
             elif status in ["completed", "failed"]:
-                task.completed_at = datetime.now()
+                task.completed_at = utc_now()
             if error_message:
                 task.error_message = error_message
 
@@ -458,11 +459,11 @@ class HistoryRepository:
                 order.commission = commission
 
             if status == "SUBMITTED" and not order.submitted_at:
-                order.submitted_at = datetime.now()
+                order.submitted_at = utc_now()
             elif status == "FILLED" and not order.filled_at:
-                order.filled_at = datetime.now()
+                order.filled_at = utc_now()
             elif status == "CANCELLED" and not order.cancelled_at:
-                order.cancelled_at = datetime.now()
+                order.cancelled_at = utc_now()
 
             self.session.commit()
             logger.debug(f"订单状态更新: {order_id} -> {status}")

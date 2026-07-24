@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from loguru import logger
 
 from common.market import A_SHARE
-from common.market_time import market_day_bounds, market_now, market_today
+from common.market_time import market_day_bounds, market_now, market_today, utc_iso, utc_now
 from sqlalchemy import func
 
 from data_engine.health import get_coverage, get_freshness
@@ -35,7 +35,7 @@ def _asset_realtime(session) -> dict:
             RealtimeSnapshot.snapshot_time == latest
         ).scalar() or 0
     return {
-        "latest_snapshot": latest.isoformat() if latest else None,
+        "latest_snapshot": utc_iso(latest),
         "count_at_latest": int(count),
         "is_today": bool(latest and latest.date() == market_today(A_SHARE)),
     }
@@ -71,7 +71,7 @@ def _asset_financial(session) -> dict:
         "symbols_recent_report": int(symbols_recent),
         "last_backfill": {
             "status": last_log.status,
-            "completed_at": last_log.completed_at.isoformat() if last_log.completed_at else None,
+            "completed_at": utc_iso(last_log.completed_at),
         } if last_log else None,
     }
 
@@ -105,7 +105,7 @@ def _asset_news(session) -> dict:
     return {
         "total": int(total),
         "last_7d": int(last_7d),
-        "latest_published_at": latest.isoformat() if latest else None,
+        "latest_published_at": utc_iso(latest),
     }
 
 
@@ -165,8 +165,8 @@ def _recent_update_logs(session, limit: int = 10) -> list:
             "records_count": lg.records_count,
             "status": lg.status,
             "error_message": lg.error_message,
-            "started_at": lg.started_at.isoformat() if lg.started_at else None,
-            "completed_at": lg.completed_at.isoformat() if lg.completed_at else None,
+            "started_at": utc_iso(lg.started_at),
+            "completed_at": utc_iso(lg.completed_at),
             "duration_seconds": lg.duration_seconds,
         }
         for lg in logs
@@ -189,10 +189,9 @@ def _catch_up(session, scheduler_status: dict) -> dict:
 
     # 今天是否已有日线更新记录（手动「立即更新」也会写 → 补跑后自动消失）
     #
-    # ⚠️ `DataUpdateLog.started_at` 是 **Python 侧 `datetime.now()` 写的本地时间**
-    # （不是 server_default，库里那些值带微秒就是证据），所以边界用 `storage="naive_local"`。
-    # 等全库时间列翻成 UTC 之后，这里连同写入侧一起改成默认的 `storage="utc"`。
-    today_start, today_end = market_day_bounds(A_SHARE, today, storage="naive_local")
+    # `DataUpdateLog.started_at` 现已随写入侧翻成 naive UTC（scripts/migrate_to_utc 迁了历史，
+    # daily_updater/financial_updater 写入侧改成 utc_now），边界走默认 utc 口径即可。
+    today_start, today_end = market_day_bounds(A_SHARE, today)
     updated_today = session.query(DataUpdateLog.id).filter(
         DataUpdateLog.update_type.in_(["daily", "daily_incremental"]),
         DataUpdateLog.started_at >= today_start,
@@ -255,7 +254,7 @@ async def get_overview():
                 "recent_update_logs": _recent_update_logs(session),
                 "scheduler": scheduler_status,
                 "catch_up": _catch_up(session, scheduler_status),
-                "server_time": datetime.now().isoformat(),
+                "server_time": utc_iso(utc_now()),
             }
         except Exception as e:  # noqa: BLE001
             logger.error(f"数据监控总览查询失败: {e}")

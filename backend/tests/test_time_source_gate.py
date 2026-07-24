@@ -52,19 +52,16 @@ MANAGED_DIRS = (
 
 # 存量豁免基线：`相对路径 → 允许的裸时间调用数`。**只减不增**。
 #
-# crypto 两个域已在批 2 清零，**保持空的**；`agents/tools` 在批 4 清零。
-# 表里剩下的全是 `data_engine`，分两类，都排在后续批次：
-#   - B 类系统时刻（DataUpdateLog 的 started_at/end_time、任务耗时）—— 本就不归时区管，
-#     但等全库时间列翻成 UTC 后要一起改成 utc_now()
-#   - 「当日边界」类（history_repository 的 cutoff、repository 的 updated_at）—— 要跟
-#     存储口径翻转同批改，提前改会和还存着本地时间的列对不上
+# crypto 两域在批 2 清零、agents/tools 在批 4 清零、trading_engine/risk 在批 6-a 清零。
+# 批 6 全库 UTC 翻转把写入侧 datetime.now() 都改成了 utc_now，这里剩的全是
+# **B 类系统时刻**（任务耗时/DataUpdateLog 起止的 start_time 局部变量）或 fetch 窗口的
+# datetime.combine，与时区无关，留作基线。
 _ALLOWED: dict[str, int] = {
     "data_engine/daily_pipeline_scheduler.py": 3,
-    "data_engine/daily_updater.py": 3,
+    "data_engine/daily_updater.py": 1,
     "data_engine/engine.py": 2,
-    "data_engine/financial_updater.py": 2,
-    "data_engine/storage/history_repository.py": 6,
-    "data_engine/storage/repository.py": 3,
+    "data_engine/storage/history_repository.py": 1,
+    "data_engine/storage/repository.py": 1,
 }
 
 

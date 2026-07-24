@@ -90,7 +90,7 @@ class NewsFetcher:
                 try:
                     published_at = datetime.strptime(str(pub_time), "%Y-%m-%d %H:%M:%S")
                 except (ValueError, TypeError):
-                    published_at = datetime.now()
+                    published_at = utc_now()
 
             article_id = _make_article_id(source, url or title)
             articles.append({
@@ -104,7 +104,7 @@ class NewsFetcher:
                 "url": url,
                 "image_url": None,
                 "language": "zh",
-                "published_at": published_at or datetime.now(),
+                "published_at": published_at or utc_now(),
             })
 
         logger.info(f"{log_label}新闻抓取完成: {len(articles)} 条")
@@ -150,7 +150,7 @@ class NewsFetcher:
                 try:
                     published_at = datetime.fromtimestamp(ts)
                 except (ValueError, OSError):
-                    published_at = datetime.now()
+                    published_at = utc_now()
 
             articles.append({
                 "article_id": article_id,
@@ -163,7 +163,7 @@ class NewsFetcher:
                 "url": url,
                 "image_url": item.get("image", None),
                 "language": "en",
-                "published_at": published_at or datetime.now(),
+                "published_at": published_at or utc_now(),
             })
 
         logger.info(f"美股个股新闻抓取完成 {raw_symbol}: {len(articles)} 条")
@@ -197,7 +197,7 @@ class NewsFetcher:
                 try:
                     published_at = datetime.fromtimestamp(ts)
                 except (ValueError, OSError):
-                    published_at = datetime.now()
+                    published_at = utc_now()
 
             articles.append({
                 "article_id": article_id,
@@ -210,7 +210,7 @@ class NewsFetcher:
                 "url": url,
                 "image_url": item.get("image", None),
                 "language": "en",
-                "published_at": published_at or datetime.now(),
+                "published_at": published_at or utc_now(),
             })
 
         logger.info(f"全球新闻抓取完成: {len(articles)} 条")

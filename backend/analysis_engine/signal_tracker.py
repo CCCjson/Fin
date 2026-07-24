@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, date, timedelta
 from sqlalchemy import func, and_, text
 from loguru import logger
+from common.market_time import utc_now
 
 from common.market import A_SHARE
 from common.market_time import market_today
@@ -235,7 +236,7 @@ class SignalTracker:
         else:
             tracking.tracking_status = 'pending'
 
-        tracking.updated_at = datetime.now()
+        tracking.updated_at = utc_now()
         return True
 
     def get_strategy_stats(self, strategy: Optional[str] = None, days: Optional[int] = None) -> Dict:

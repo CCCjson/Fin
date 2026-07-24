@@ -12,6 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 from loguru import logger
+from common.market_time import utc_now
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -110,7 +111,7 @@ def _save_quotes(quotes: list) -> int:
     """保存行情到数据库（bulk_insert_mappings，5000+ 行一次性写入），返回保存条数"""
     saved_count = 0
     try:
-        snapshot_time = datetime.now()
+        snapshot_time = utc_now()
         rows = [
             {
                 "snapshot_time": snapshot_time,

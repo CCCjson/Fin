@@ -23,6 +23,7 @@ from net.proxy_pool import ProxyPool, is_proxy_connect_error
 from common.market import A_SHARE
 from common.market_time import market_now, market_today
 from data_engine.storage.database import get_session
+from common.market_time import utc_now
 from data_engine.storage.models import StockInfo, DailyQuote, DataUpdateLog
 from data_engine.deep_history.bulk_upsert import bulk_upsert_quotes, klines_to_records
 from data_engine.liveness import LivenessTracker
@@ -348,7 +349,7 @@ class DailyUpdater:
             - {"event": "progress", "current": i, "total": N, "symbol": "...", ...}
             - {"event": "complete", "success": N, "skipped": N, "failed": N, ...}
         """
-        start_time = datetime.now()
+        start_time = utc_now()
         session = get_session()
 
         # 获取所有活跃 A 股。ETF 不再获取（2026-07-09 Jason 拍板：不交易 ETF，
@@ -988,7 +989,7 @@ class DailyUpdater:
         # =============================================
         # 记录日志 & 完成
         # =============================================
-        end_time = datetime.now()
+        end_time = utc_now()
         duration = (end_time - start_time).total_seconds()
 
         try:

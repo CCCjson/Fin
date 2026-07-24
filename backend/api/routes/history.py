@@ -8,6 +8,7 @@ from typing import List, Optional
 from datetime import datetime, date
 
 from data_engine.storage.history_repository import HistoryRepository
+from common.market_time import utc_iso
 
 router = APIRouter(prefix="/history", tags=["历史记录"])
 
@@ -73,7 +74,7 @@ async def get_signals(
                     "position_size": signal.position_size,
                     "strategy": signal.strategy,
                     "signal_id": signal.signal_id,
-                    "created_at": signal.created_at.isoformat() if signal.created_at else None
+                    "created_at": utc_iso(signal.created_at)
                 })
 
             repo.close()
@@ -157,8 +158,8 @@ async def get_backtest_tasks(
                     "start_date": str(task.start_date),
                     "end_date": str(task.end_date),
                     "initial_capital": task.initial_capital,
-                    "created_at": task.created_at.isoformat() if task.created_at else None,
-                    "completed_at": task.completed_at.isoformat() if task.completed_at else None
+                    "created_at": utc_iso(task.created_at),
+                    "completed_at": utc_iso(task.completed_at)
                 })
 
             repo.close()
@@ -409,8 +410,8 @@ async def get_orders(
                     "avg_fill_price": order.avg_fill_price,
                     "commission": order.commission,
                     "strategy": order.strategy,
-                    "created_at": order.created_at.isoformat() if order.created_at else None,
-                    "filled_at": order.filled_at.isoformat() if order.filled_at else None
+                    "created_at": utc_iso(order.created_at),
+                    "filled_at": utc_iso(order.filled_at)
                 })
 
             repo.close()
@@ -494,7 +495,7 @@ async def get_trades(
                     "commission": trade.commission,
                     "slippage": trade.slippage,
                     "amount": trade.amount,
-                    "executed_at": trade.executed_at.isoformat() if trade.executed_at else None
+                    "executed_at": utc_iso(trade.executed_at)
                 })
 
             repo.close()

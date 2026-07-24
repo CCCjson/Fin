@@ -1,4 +1,5 @@
 import React from 'react';
+import { localDate } from '../../utils/datetime';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
   AreaChart, Area, ResponsiveContainer, YAxis, Tooltip,
@@ -371,7 +372,7 @@ const KnowledgeSourcesWidget: React.FC<{ data: any; title?: string }> = ({ data,
                 </span>
               </div>
               <div className="flex flex-wrap gap-x-3 text-[10px] text-gray-500 mt-0.5">
-                {s.published_at && <span>{s.published_at}</span>}
+                {s.published_at && <span>{localDate(s.published_at)}</span>}
                 {typeof s.distance === 'number' && <span>相关度距离 {s.distance.toFixed(3)}</span>}
               </div>
             </div>

@@ -1,4 +1,5 @@
 import React from 'react';
+import { localDateTime } from '../../utils/datetime';
 import { Card } from '../common/Card';
 
 interface HistoryItem {
@@ -87,7 +88,7 @@ export const CppHistoryList: React.FC<CppHistoryListProps> = ({
                       <span>{item.strategy_type?.replace('CPP_', '') || '-'}</span>
                       <span>{item.symbols?.join(', ') || '-'}</span>
                     </div>
-                    <div className="text-[10px]">{item.created_at?.slice(0, 16) || '-'}</div>
+                    <div className="text-[10px]">{localDateTime(item.created_at, '-')}</div>
                   </div>
                 </div>
               </div>

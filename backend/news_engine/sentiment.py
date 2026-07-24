@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
 
+from common.market_time import utc_now
 from data_engine.storage.database import get_session
 from data_engine.storage.models import NewsArticle, NewsSentiment
 
@@ -191,7 +192,7 @@ class SentimentAnalyzer:
                     prob_negative=result["prob_negative"],
                     prob_neutral=result["prob_neutral"],
                     model_used=result["model_used"],
-                    analyzed_at=datetime.now(),
+                    analyzed_at=utc_now(),
                 )
                 session.add(sentiment_record)
 

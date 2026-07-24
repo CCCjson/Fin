@@ -1,4 +1,5 @@
 import React from 'react';
+import { localFullDateTime } from '../../utils/datetime';
 
 interface Props {
   /** 触发确认的工具名，如 place_order / add_to_watchlist，决定弹窗样式。*/
@@ -34,6 +35,8 @@ const FIELD_LABELS: Record<string, string> = {
 
 function formatValue(key: string, value: any): string {
   if (value === null || value === undefined || value === '') return '—';
+  // 时间类字段（后端带 UTC offset）转本地显示，别原样吐 UTC 串
+  if (key === 'triggered_at') return localFullDateTime(value);
   if (typeof value === 'boolean') return value ? '是' : '否';
   if (Array.isArray(value)) {
     if (key === 'items') {

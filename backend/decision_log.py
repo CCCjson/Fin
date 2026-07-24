@@ -22,7 +22,7 @@ from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy import case as sql_case
 
 from common.market import A_SHARE, infer_market_from_symbol
-from common.market_time import market_day_of, market_range_bounds, market_today
+from common.market_time import market_day_of, market_range_bounds, market_today, utc_now
 from common.outcome_eval import (
     ENGINE_VERSION,
     MAX_WINDOW,
@@ -332,7 +332,7 @@ def _apply_outcome(row: DecisionLog, r: OutcomeResult) -> None:
         if f == "evaluated_at":
             continue
         setattr(row, f, getattr(r, f, None))
-    row.evaluated_at = datetime.now()
+    row.evaluated_at = utc_now()
 
 
 def backfill_outcomes() -> Dict[str, int]:

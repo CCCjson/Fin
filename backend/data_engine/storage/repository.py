@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, or_
 import pandas as pd
 
+from common.market_time import utc_now
 from data_engine.storage.models import (
     StockInfo, DailyQuote, RealtimeQuote, DataUpdateLog, FinancialData,
     Watchlist, PriceAlert, StockValuation,
@@ -104,7 +105,7 @@ class QuoteRepository:
                 existing.volume = quote.volume
                 existing.amount = quote.amount
                 existing.turnover = quote.turnover
-                existing.updated_at = datetime.now()
+                existing.updated_at = utc_now()
             else:
                 # 插入新记录
                 self.session.add(quote)
@@ -478,7 +479,7 @@ class ValuationRepository:
             for col in self._VAL_FIELDS:
                 if values.get(col) is not None:
                     setattr(existing, col, values[col])
-            existing.updated_at = datetime.now()
+            existing.updated_at = utc_now()
             self.session.commit()
             return False
         record = StockValuation(symbol=symbol, snapshot_date=snapshot_date, data_source=data_source)

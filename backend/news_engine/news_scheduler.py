@@ -22,6 +22,8 @@ from typing import Dict, List, Optional
 from common.market import to_bare_code
 from loguru import logger
 
+from common.market_time import utc_now
+
 from news_engine.keywords import load_high_impact_keywords, match_keyword
 
 JOB_FETCH_ID = "news_fetch_job"
@@ -350,7 +352,7 @@ class NewsScheduler:
                 "language": n.get("lang") or "zh",
                 # 三路来源的 time 字段各自格式不一（showTime/date/空字符串），不逐一解析，
                 # 用抓取时刻做 published_at——对"最近有什么新闻"这个用途够用。
-                "published_at": datetime.now(),
+                "published_at": utc_now(),
             })
         return articles
 

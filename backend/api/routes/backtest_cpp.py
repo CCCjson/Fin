@@ -21,8 +21,8 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
 from loguru import logger
 
+from common.market_time import utc_iso, utc_now
 from data_engine.storage.history_repository import HistoryRepository
-
 from services.backtest_cpp_client import (
     BATCH_TIMEOUT,
     CPP_SERVICE_URL,
@@ -511,7 +511,7 @@ async def batch_backtest(req: BatchBacktestRequest):
                 market=req.market,
                 config=json.dumps(req.model_dump(), ensure_ascii=False),
                 total_tasks=total,
-                started_at=datetime.now(),
+                started_at=utc_now(),
             )
             db.add(batch)
             db.commit()
@@ -629,7 +629,7 @@ async def batch_backtest(req: BatchBacktestRequest):
                     b.status = "cancelled"
                     b.completed_tasks = completed_count
                     b.failed_tasks = failed_count
-                    b.completed_at = datetime.now()
+                    b.completed_at = utc_now()
                     b.error_message = "用户取消"
                     child_ids = [r.get("task_id") for r in results if r.get("task_id")]
                     b.child_task_ids = json.dumps(child_ids)
@@ -654,7 +654,7 @@ async def batch_backtest(req: BatchBacktestRequest):
                     b.completed_tasks = completed_count
                     b.failed_tasks = failed_count
                     b.child_task_ids = json.dumps(child_ids)
-                    b.completed_at = datetime.now()
+                    b.completed_at = utc_now()
                     db2.commit()
             except Exception as e:
                 logger.warning(f"更新 BatchBacktest 失败: {e}")
@@ -727,8 +727,8 @@ async def get_batch_result(batch_id: str):
                 "total_tasks": batch.total_tasks,
                 "completed_tasks": batch.completed_tasks,
                 "failed_tasks": batch.failed_tasks,
-                "created_at": batch.created_at.isoformat() if batch.created_at else None,
-                "completed_at": batch.completed_at.isoformat() if batch.completed_at else None,
+                "created_at": utc_iso(batch.created_at),
+                "completed_at": utc_iso(batch.completed_at),
                 "ranking": ranking,
                 "results": results,
             }
@@ -763,8 +763,8 @@ async def list_batches(limit: int = Query(default=20, le=100)):
                         "completed_tasks": b.completed_tasks,
                         "failed_tasks": b.failed_tasks,
                         "market": b.market,
-                        "created_at": b.created_at.isoformat() if b.created_at else None,
-                        "completed_at": b.completed_at.isoformat() if b.completed_at else None,
+                        "created_at": utc_iso(b.created_at),
+                        "completed_at": utc_iso(b.completed_at),
                     }
                     for b in batches
                 ]

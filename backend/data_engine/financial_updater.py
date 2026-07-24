@@ -7,7 +7,7 @@ POST /data/financial/backfill/stream 桥接输出。
 """
 import json
 import threading
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Generator, List
 
 from loguru import logger
@@ -15,7 +15,7 @@ from sqlalchemy import func
 
 from acquisition.markets.financial import FinancialFetcher
 from common.market import A_SHARE
-from common.market_time import market_today
+from common.market_time import market_today, utc_now
 from data_engine.storage.database import get_session
 from data_engine.storage.models import DataUpdateLog, FinancialData, StockInfo
 from data_engine.storage.repository import FinancialRepository
@@ -70,7 +70,7 @@ class FinancialUpdater:
         start_year: str,
         workers: int,
     ) -> Generator[str, None, None]:
-        start_time = datetime.now()
+        start_time = utc_now()
         session = get_session()
         try:
             # 目标股票：只取个股（ETF/指数无财报）
@@ -166,7 +166,7 @@ class FinancialUpdater:
                             "new_records": new_records,
                         }, ensure_ascii=False) + "\n"
 
-            end_time = datetime.now()
+            end_time = utc_now()
             duration = (end_time - start_time).total_seconds()
 
             try:

@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 from loguru import logger
 
 from common.market import A_SHARE
-from common.market_time import market_today
+from common.market_time import market_day_bounds, market_today
 from sqlalchemy import func, desc, asc
 
 from common.limit_rules import is_limit_down, is_limit_up
@@ -236,14 +236,14 @@ class ReportDataCollector:
     def _collect_market_from_db(self, session, period_start: date, period_end: date) -> Dict:
         """从数据库收集市场数据 — 仅取今天最新快照，提取丰富统计"""
         try:
+            # snapshot_time 现已是 naive UTC，「今天」按 A 股市场日切成 UTC 半开区间
             today = market_today(A_SHARE)
-            today_start = datetime.combine(today, datetime.min.time())
-            today_end = datetime.combine(today, datetime.max.time())
+            today_start, today_end = market_day_bounds(A_SHARE, today)
 
             # 取今天最新的快照时间
             latest_time = session.query(func.max(RealtimeSnapshot.snapshot_time)).filter(
                 RealtimeSnapshot.snapshot_time >= today_start,
-                RealtimeSnapshot.snapshot_time <= today_end,
+                RealtimeSnapshot.snapshot_time < today_end,
             ).scalar()
 
             snapshot_stats: Dict = {

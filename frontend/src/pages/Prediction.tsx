@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { localFullDateTime } from '../utils/datetime';
 import { StockSymbolInput } from '../components/common/StockSymbolInput';
 import { useStockNames } from '../hooks/useStockNames';
 import {
@@ -290,7 +291,7 @@ const TrainTab: React.FC = () => {
                       <td className="py-2 px-3 text-right text-gray-300">{m.data_points}</td>
                       <td className="py-2 px-3 text-right text-gray-300 font-mono">{lstmMse}</td>
                       <td className="py-2 px-3 text-right text-gray-300 font-mono">{xgbAcc}</td>
-                      <td className="py-2 px-3 text-gray-500">{m.created_at?.slice(0, 16).replace('T', ' ')}</td>
+                      <td className="py-2 px-3 text-gray-500">{localFullDateTime(m.created_at)}</td>
                     </tr>
                   );
                 })}
