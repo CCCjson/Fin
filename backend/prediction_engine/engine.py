@@ -10,6 +10,8 @@ from typing import Any, Callable, Dict, Optional
 import pandas as pd
 from loguru import logger
 
+from common.market import infer_market_from_symbol
+from common.market_time import market_today
 from data_engine import DataEngine
 from prediction_engine.features import FeatureBuilder
 from prediction_engine.models.lstm_model import LSTMPredictor
@@ -52,9 +54,12 @@ class PredictionEngine:
         _cb("data", 0.05, f"获取 {symbol} 历史数据中...")
 
         # 1. 获取数据
-        end_date = date.today().isoformat()
+        # 数据窗口按这只票自己市场的今天：美股在美东，用北京日期会多要一天空数据
+        mkt = infer_market_from_symbol(symbol)
+        today = market_today(mkt)
+        end_date = today.isoformat()
         years = int(period.replace("y", ""))
-        start_date = (date.today() - timedelta(days=years * 365)).isoformat()
+        start_date = (today - timedelta(days=years * 365)).isoformat()
 
         df = self.data_engine.get_daily_data(symbol, start_date, end_date)
         if df is None or len(df) < 120:
@@ -146,8 +151,12 @@ class PredictionEngine:
         xgb_model.load(model_dir)
 
         # 获取最近数据
-        end_date = date.today().isoformat()
-        start_date = (date.today() - timedelta(days=180)).isoformat()  # 半年数据足够算特征
+        # 窗口 + 落库的 prediction_date 都按这只票市场的今天算 ——
+        # prediction_date 是 validator 判「预测到期没到期」的基准，错时区会偏一天
+        mkt = infer_market_from_symbol(symbol)
+        today = market_today(mkt)
+        end_date = today.isoformat()
+        start_date = (today - timedelta(days=180)).isoformat()  # 半年数据足够算特征
         df = self.data_engine.get_daily_data(symbol, start_date, end_date)
         if df is None or len(df) < 80:
             raise ValueError(f"近期数据不足: {symbol}")
@@ -164,7 +173,7 @@ class PredictionEngine:
         combined = EnsemblePredictor.combine(lstm_result, xgb_result)
 
         # 补充元数据
-        prediction_date = date.today()
+        prediction_date = today
         combined["symbol"] = symbol
         combined["prediction_date"] = prediction_date.isoformat()
         combined["forward_days"] = forward_days

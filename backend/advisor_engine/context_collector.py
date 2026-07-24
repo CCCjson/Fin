@@ -3,7 +3,7 @@ AI 投资顾问 — 数据收集器
 收集单只股票的全维度本地数据，供 prompt 使用。
 """
 import traceback
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Dict, Optional
 
 import pandas as pd
@@ -15,6 +15,8 @@ from data_engine.storage.repository import StockRepository
 from data_engine.storage.history_repository import HistoryRepository
 from strategy.signal_generator import SignalGenerator
 from analysis_engine.engine import AnalysisEngine
+from common.market import infer_market_from_symbol
+from common.market_time import market_today, utc_now
 
 
 class AdvisorContextCollector:
@@ -41,14 +43,15 @@ class AdvisorContextCollector:
         Returns:
             结构化数据字典
         """
-        now = datetime.now()
-        end_date = now.strftime("%Y-%m-%d")
-        start_date = (now - timedelta(days=120)).strftime("%Y-%m-%d")
+        # 上下文窗口按这只票市场的今天（美股在美东，用北京日期会多要一天）
+        _today = market_today(infer_market_from_symbol(symbol))
+        end_date = _today.strftime("%Y-%m-%d")
+        start_date = (_today - timedelta(days=120)).strftime("%Y-%m-%d")
 
         result: Dict = {
             "symbol": symbol,
             "name": "",
-            "collected_at": now.isoformat(),
+            "collected_at": utc_now().isoformat(),   # 采集时刻（系统时刻，UTC）
             "price_data": None,
             "indicators": None,
             "signals": None,

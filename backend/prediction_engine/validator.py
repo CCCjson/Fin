@@ -2,12 +2,14 @@
 预测验证器 — 回填实际结果 + 评估指标计算
 """
 import json
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 from loguru import logger
 
+from common.market import A_SHARE
+from common.market_time import market_today
 from data_engine import DataEngine
 from data_engine.storage.database import get_session
 from data_engine.storage.models import PredictionRecord
@@ -29,7 +31,10 @@ class PredictionValidator:
             回填结果统计
         """
         session = get_session()
-        today = date.today()
+        # 批量回填调度：用 A 股口径当截止日（主力市场）。跨市场的 target_date
+        # 本就是各票训练时按自己市场算好的；这里只是筛「哪些到期了」，美股/crypto
+        # 预测最多晚一天被回填，可接受（不是精确判定）。
+        today = market_today(A_SHARE)
         filled = 0
         errors = 0
 

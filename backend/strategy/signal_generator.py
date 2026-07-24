@@ -17,6 +17,8 @@ from .strategies import (
     RSIStrategy
 )
 from .base_strategy import Signal
+from common.market import A_SHARE
+from common.market_time import market_today
 
 # 并行扫描的默认线程数
 _DEFAULT_WORKERS = 8
@@ -229,8 +231,10 @@ class SignalGenerator:
             start_date = (end_dt - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
             logger.info(f"使用数据库最新日期: {end_date}")
         else:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+            # 信号扫描窗口按 A 股口径（本模块是 A 股技术信号检测；服务器在上海时行为不变）
+            _today = market_today(A_SHARE)
+            end_date = _today.strftime('%Y-%m-%d')
+            start_date = (_today - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
 
         return symbols, start_date, end_date
 
@@ -405,7 +409,8 @@ class SignalGenerator:
 
         session = get_session()
         try:
-            cutoff = (datetime.now() - timedelta(days=lookback_days)).date()
+            # 与 Signal.date / daily_quotes.date（A 股交易日）比，按上海口径
+            cutoff = market_today(A_SHARE) - timedelta(days=lookback_days)
 
             # 数据库中有行情的交易日（去重）
             quote_dates = session.query(distinct(DailyQuote.date)).filter(

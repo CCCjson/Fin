@@ -5,7 +5,7 @@ GRAPH_ALPHA_LAB=on 时改走 LangGraph 子图（alpha_lab.graph.engine），带 
 """
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Generator
 
 from loguru import logger
@@ -14,6 +14,8 @@ from agents.events import EV, emit
 from agents.subagents.base import SubagentRunner, emit_subagent_done
 from agents.tool_envelope import ErrorCode, ToolEnvelope
 from agents.widgets import metric_cards_widget
+from common.market import A_SHARE
+from common.market_time import market_today
 
 
 class AlphaLabSubagent(SubagentRunner):
@@ -41,9 +43,11 @@ class AlphaLabSubagent(SubagentRunner):
                     message="缺少 symbols，无法研发策略"))
                 return
             goal = args.get("goal") or args.get("optimization_goal") or "sharpe"
-            end = datetime.now()
-            data_end = args.get("data_end") or end.strftime("%Y-%m-%d")
-            data_start = args.get("data_start") or (end - timedelta(days=3 * 365)).strftime("%Y-%m-%d")
+            # 数据窗口默认按 A 股口径（alpha_lab 以 A 股研究为主；symbols 可混市场，
+            # 3 年窗口差一天无意义，调用方也可显式传 data_start/data_end）
+            _today = market_today(A_SHARE)
+            data_end = args.get("data_end") or _today.strftime("%Y-%m-%d")
+            data_start = args.get("data_start") or (_today - timedelta(days=3 * 365)).strftime("%Y-%m-%d")
             # 钳到 [1,20]：max_iterations 来自模型可控的 tool args，无上限的话
             # 模型传个大数会让引擎连转几十轮（每轮 LLM 生成 + 最长 90s 沙箱回测），
             # 长时间烧钱。20 轮足够覆盖 explore(5)+refine，超出无实际收益。
