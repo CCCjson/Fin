@@ -344,6 +344,10 @@ class OverseasDailyUpdater:
                     except Exception as e:  # noqa: BLE001 — 单批写库失败不中断整轮
                         session.rollback()
                         failed += len(batch)
+                        # 走到这儿的**不该再是撞锁**：`bulk_upsert_quotes` 内部已用
+                        # `commit_with_retry` 退避重试到 30s。此处丢弃的是真·坏数据
+                        # （NaN、越界值等），丢了也重试不好。若日志里还看到 locked，
+                        # 说明对面那个长事务超过 30s，得回头调重试预算而不是加大丢弃。
                         logger.warning(
                             f"[港美股增量] {market} 批 {i // BATCH_SIZE} 写库失败"
                             f"（丢弃 {len(records)} 行）: {e}"

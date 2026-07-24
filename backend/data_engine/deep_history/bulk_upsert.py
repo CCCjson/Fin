@@ -8,6 +8,7 @@ from typing import Dict, List
 from loguru import logger
 from sqlalchemy import text
 
+from common.db import commit_with_retry
 from common.market_time import tz_of
 
 
@@ -42,7 +43,10 @@ def bulk_upsert_quotes(session, records: List[Dict]) -> int:
         batch = records[i:i + batch_size]
         conn.execute(sql, batch)
         total += len(batch)
-    session.commit()
+    # ⛔ 不能用裸 `session.commit()`：撞上别的长写事务会抛 `database is locked`，
+    # 而调用方（港美股增量 / 深历史回补）一律把异常当「这批数据有问题」整批丢弃
+    # ——实测每撞一次静默丢 ~189 行。撞锁是瞬时争用，退避重试就能成功。
+    commit_with_retry(session, label=f"bulk_upsert_quotes({len(records)}行)")
     return total
 
 

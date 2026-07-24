@@ -68,25 +68,14 @@ def _last_trade_id(session, symbol: str, source: str = "spot") -> int:
 def _commit_with_retry(session, *, tries: int = 5, base_delay: float = 0.5) -> None:
     """commit，撞 SQLite `database is locked` 时退避重试。
 
-    ⛔ 库是 WAL + `busy_timeout=30s`（`common/db.py`），照理短锁能自己等过去。但 A 股
-    日线更新有 5000+ 只票的**超长批量写事务**，写锁能持有超过 30s，此时 commit 会抛
-    `OperationalError('database is locked')`。crypto 成交明细同步撞上这个窗口本不该整轮
-    报废 —— 而它偏偏会：`sync_symbol_fills` 的 commit 抛异常会冒泡出 `sync_held_fills`
-    的循环，把**后面还没同步的币一起拖没**（实测就是这样让 ETH/SOL 的成本一直 unknown）。
-    应用层再兜一层重试治本。仍非 locked 类错误、或重试耗尽，照常抛。
+    实现已上收到 `common/db.commit_with_retry`（港美股日线批量写也踩了同一个坑，
+    见那边的 docstring）。这里保留薄封装只为**守住本地的退避参数**：crypto 成交明细
+    同步是交互链路上的短事务，5 次 × 0.5s 基数（合计 ~5s）比通用默认的 30s 更合适
+    ——等太久不如让这一轮快点失败，下一轮调度自然会补。
     """
-    import time
-
-    from sqlalchemy.exc import OperationalError
-    for i in range(tries):
-        try:
-            session.commit()
-            return
-        except OperationalError as e:
-            if "locked" not in str(e).lower() or i == tries - 1:
-                raise
-            session.rollback()
-            time.sleep(base_delay * (i + 1))
+    from common.db import commit_with_retry
+    commit_with_retry(session, tries=tries, base_delay=base_delay,
+                      label="crypto_fills")
 
 
 def _insert_fills(session, rows: list[dict]) -> int:

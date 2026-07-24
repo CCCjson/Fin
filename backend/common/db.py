@@ -12,8 +12,11 @@
 不抽：两库的 Base 必须隔离（`create_all` 只建本库的表），把差异硬塞进工厂是过度设计。
 """
 import os
+import time
 
+from loguru import logger
 from sqlalchemy import Engine, create_engine, event
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -77,6 +80,45 @@ def make_sqlite_engine(db_url: str, *, echo: bool = False) -> Engine:
             cur.close()
 
     return engine
+
+
+def commit_with_retry(
+    session: Session, *, tries: int = 6, base_delay: float = 2.0, label: str = "",
+) -> None:
+    """`session.commit()`，撞 SQLite `database is locked` 时退避重试。
+
+    ⛔ 库是 WAL + `busy_timeout=30000`，照理短锁能自己等过去。但本项目有**超长批量写
+    事务**（A 股日线 5000+ 只票一把梭），写锁能持有超过 30s，此时 commit 直接抛
+    `OperationalError('database is locked')`。这是**瞬时争用不是坏数据**，重试就能成功
+    ——调用方若把它当成「这批数据有问题」丢弃，就会静默丢行（港美股回补实测每撞一次
+    丢 ~189 行，且从不重试）。
+
+    默认退避 2+4+6+8+10 = 30s，刻意配得比 `busy_timeout` 长：等的就是对面那个长事务
+    结束。**仍非 locked 类错误、或重试耗尽，照常抛**——那才是真的坏数据，该让调用方处理。
+
+    Args:
+        session: 要提交的 SQLAlchemy session。
+        tries: 总尝试次数（含第一次）。
+        base_delay: 退避基数（秒），第 i 次失败后睡 `base_delay * (i + 1)`。
+        label: 日志里标明是谁在重试，便于排查。
+
+    Raises:
+        OperationalError: 非 locked 类错误，或重试次数耗尽。
+    """
+    for i in range(tries):
+        try:
+            session.commit()
+            return
+        except OperationalError as e:
+            if "locked" not in str(e).lower() or i == tries - 1:
+                raise
+            session.rollback()
+            delay = base_delay * (i + 1)
+            logger.warning(
+                f"[db] {label or 'commit'} 撞锁，{delay:.0f}s 后重试"
+                f"（第 {i + 1}/{tries - 1} 次）"
+            )
+            time.sleep(delay)
 
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:

@@ -97,3 +97,88 @@ def test_migration_logic_stayed_in_its_own_module():
     assert callable(market_mod.init_db)
     assert callable(market_mod.backfill_stock_info)
     assert callable(knowledge_mod.init_knowledge_db)
+
+
+# ── 撞锁重试（2026-07-24 补：港美股回补每撞一次静默丢 ~189 行）──────────────
+
+def _locked_error():
+    from sqlalchemy.exc import OperationalError
+    return OperationalError("INSERT ...", {}, Exception("database is locked"))
+
+
+class _FakeSession:
+    """按脚本决定第几次 commit 才成功。"""
+
+    def __init__(self, fail_times: int, exc_factory=_locked_error):
+        self.fail_times = fail_times
+        self.exc_factory = exc_factory
+        self.commits = 0
+        self.rollbacks = 0
+
+    def commit(self):
+        self.commits += 1
+        if self.commits <= self.fail_times:
+            raise self.exc_factory()
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+def test_commit_with_retry_survives_transient_lock(monkeypatch):
+    """撞锁是瞬时争用不是坏数据——重试就该成功，绝不能让调用方当成坏数据丢弃。"""
+    import common.db as db_mod
+    monkeypatch.setattr(db_mod.time, "sleep", lambda _s: None)   # 别真睡
+
+    s = _FakeSession(fail_times=2)
+    db_mod.commit_with_retry(s, tries=6, base_delay=0.01)
+    assert s.commits == 3        # 失败 2 次 + 成功 1 次
+    assert s.rollbacks == 2      # 每次失败都要 rollback 放掉读锁
+
+
+def test_commit_with_retry_reraises_non_lock_errors(monkeypatch):
+    """真·坏数据（NaN、越界）不该被重试掩盖，要原样抛给调用方处理。"""
+    from sqlalchemy.exc import OperationalError
+
+    import common.db as db_mod
+    monkeypatch.setattr(db_mod.time, "sleep", lambda _s: None)
+
+    def _bad_data():
+        return OperationalError("INSERT ...", {}, Exception("NOT NULL constraint failed"))
+
+    s = _FakeSession(fail_times=99, exc_factory=_bad_data)
+    with pytest.raises(OperationalError):
+        db_mod.commit_with_retry(s, tries=6, base_delay=0.01)
+    assert s.commits == 1, "非撞锁错误必须立刻抛，不许重试"
+
+
+def test_commit_with_retry_gives_up_after_budget(monkeypatch):
+    """一直撞锁也得有个头，别无限挂着。"""
+    from sqlalchemy.exc import OperationalError
+
+    import common.db as db_mod
+    monkeypatch.setattr(db_mod.time, "sleep", lambda _s: None)
+
+    s = _FakeSession(fail_times=99)
+    with pytest.raises(OperationalError):
+        db_mod.commit_with_retry(s, tries=4, base_delay=0.01)
+    assert s.commits == 4
+
+
+def test_bulk_upsert_quotes_commits_with_retry():
+    """真正的修复点：bulk_upsert_quotes 不许再用裸 session.commit()。
+
+    它是港美股增量 / 深历史回补共用的写入口，调用方一律把异常当「这批数据有问题」
+    整批丢弃——用裸 commit 就等于撞一次锁丢一批行。
+    """
+    import inspect
+
+    from data_engine.deep_history import bulk_upsert as mod
+
+    src = inspect.getsource(mod.bulk_upsert_quotes)
+    # 只看可执行行：注释里为了讲清楚「别用裸 session.commit()」会出现该字样
+    code = "\n".join(
+        ln.split("#", 1)[0] for ln in src.splitlines()
+        if not ln.lstrip().startswith("#")
+    )
+    assert "commit_with_retry" in code
+    assert "session.commit()" not in code, "裸 commit 会让撞锁被当成坏数据丢弃"
