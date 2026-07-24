@@ -112,7 +112,12 @@ class CryptoScheduler:
             # `to_thread` 而不是 `get_event_loop().run_in_executor`：域 7 统一过的写法
             # （同步阻塞调用一律 to_thread 包裹），且 get_event_loop 在 3.12 起要弃用
             synced = await asyncio.to_thread(cb.sync_held_fills)
-            if synced.get("inserted") or synced.get("errors"):
+            # ⛔ **总记一行**（哪怕 inserted=0）。此前只在「有新增或有错误」时才记，导致
+            # 同步默默失败时日志里一片空白 —— ETH/SOL 成本长期 unknown 却查不到线索，
+            # 只能靠「成本显示不出来」才发现。可观测性缺口，宁可多一行 info。
+            if synced.get("errors"):
+                logger.warning(f"[crypto] 成交明细同步（部分失败）: {synced}")
+            else:
                 logger.info(f"[crypto] 成交明细同步: {synced}")
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[crypto] 成交明细同步异常: {e}")

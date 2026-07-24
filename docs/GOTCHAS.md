@@ -158,3 +158,13 @@
 - **别让一只掉队的票拖累全体**：拉取起点若取全局 `min(latest)`，一只落后一年的票会把所有票的起点拖到 90 天前 → 只缺 9 天的票也拉 90 根 bar，16k 只上是 **10 倍流量**。已改成 todo 按落后程度排序 + **每批各算起点**。
 - **零数据的票跳过**（港股 ~817 只）：那是**深历史的活**，增量不该去拉十年数据把一次运行拖死。
 - **启动补跑门槛比 A 股钝得多**（`_OVERSEAS_CATCHUP_STALE_DAYS=3`）：A 股误判 = 几秒空转（`DailyUpdater` 探到真实交易日、全部 `already_fresh` 立即 complete）；港美股误判 = **10-15 分钟白打 Yahoo**。而港美股各有独立假期（美股还有夏令时），**没交易日历就分不清「今天是假期」和「job 没跑」** —— 项目里根本没有交易日历模块（`repository.py` / `recommend_engine/session.py` 两处注释都是「没有」的自白）。
+
+## crypto 成交明细同步（2026-07-24 修，动 cost_basis/持仓成本前必读）
+
+crypto 的**持仓成本价不是币安给的**（币安没有持仓成本端点），是靠成交明细表 `crypto_fills` 回放算出来的。表里没有某个币的明细 → 该币成本回放为 `unknown`（`avg_cost=0`），前端显示「成本未知」，且 `StopLossRule` 走「无成本，跳过」分支——**四条硬风控对这个币静默失效**。所以「成交明细同步」是成本/风控的命脉，不是可有可无的后台任务。
+
+- 🔴 **单币同步失败曾拖垮整轮**（ETH/SOL 成本长期 unknown 的真凶）：`sync_held_fills` 原来是列表推导 `[sync_symbol_fills(s) for s in ...]`，任一币的 `_insert_fills` commit 撞 `database is locked` 抛异常 → 冒泡出循环 → **后面还没同步的币全被拖没**。已改逐币 try 隔离，失败的记进 `errors` 下轮重试，不炸整轮。
+- 🔴 **`database is locked` 是这个库的常态**：15GB 单文件 SQLite，A 股日线更新有 5000+ 只票的**超长批量写事务**，写锁能持有超过 `busy_timeout=30s`，此时 crypto 同步的 commit 会抛 locked。已加 `cost_basis._commit_with_retry`（应用层退避重试兜底）。**任何 crypto 后台写库路径都该考虑这个锁竞争**。
+- ⚠️ **同步成功时以前不记日志**：`crypto_scheduler` 的 sync 段原来只在「有新增或有错误」时才打日志，成功静默 → 同步默默失败时日志一片空白，只能靠「成本显示 unknown」发现。已改**总记一行**（有 errors 记 warning）。排查 crypto 成本问题先 `grep '成交明细同步' /tmp/fin-backend.log`。
+- ✅ **已同步一次就永久 `full`**：明细落库是持久的，`INSERT OR IGNORE` 幂等，下一轮不会重复插。unknown 只发生在「这个币从没成功同步过」的窗口期。手动补齐：`conda run -n quant python -c "from crypto_intel_engine import cost_basis as cb; print(cb.sync_held_fills())"`。
+- **要同步哪些币** = 交易所当前持仓 ∪ 库里已有 fills 的 symbol（后者是为了已清仓历史仓位的连亏 streak 回放）。新买的币在下一轮调度（默认 30 分钟）才会被纳入——急用就手动跑上面那行。

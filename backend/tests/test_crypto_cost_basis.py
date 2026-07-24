@@ -346,3 +346,104 @@ class TestUncostedSellSurfacesToJason:
         assert cb.replay("BTCUSDT.BN")["BTCUSDT.BN"]["has_uncosted_sell"] is True
         note = cb.cost_for("BTCUSDT.BN", 1.0)["note"]
         assert note and "成本未知" in note
+
+
+class TestSyncRobustness:
+    """成交明细同步的健壮性 —— 一个币失败不许拖累其它币，写库撞锁要重试。
+
+    实测事故：ETH/SOL 成本长期 unknown。根因是首轮同步撞上 A 股日线大批量写的
+    `database is locked` 窗口，`sync_symbol_fills` 的 commit 抛异常冒泡出
+    `sync_held_fills` 的循环，把后面还没同步的币一起拖没。
+    """
+
+    def test_one_symbol_failure_does_not_abort_the_whole_round(self, mem_db, monkeypatch):
+        """BTC 同步抛异常，ETH 仍必须被同步到 —— 单币失败隔离进 errors。"""
+        from acquisition.markets import binance_trade as bt
+        from crypto_intel_engine import cost_basis as cb
+
+        monkeypatch.setattr(bt, "has_credentials", lambda: True)
+
+        class _Broker:
+            def connect(self):
+                return True
+
+            def get_positions(self):
+                class _P:
+                    def __init__(s, sym):
+                        s.symbol = sym
+                return [_P("BTCUSDT.BN"), _P("ETHUSDT.BN")]
+
+        monkeypatch.setattr("trading_engine.brokers.binance_broker.get_binance_broker",
+                            lambda: _Broker())
+
+        def _sync(sym, full=False):
+            if sym == "BTCUSDT.BN":
+                raise RuntimeError("database is locked")   # 模拟撞锁抛出
+            return {"symbol": sym, "inserted": 3}
+
+        monkeypatch.setattr(cb, "sync_symbol_fills", _sync)
+        r = cb.sync_held_fills()
+        assert r["symbols"] == 2
+        assert r["inserted"] == 3                    # ETH 的 3 笔照样进来了
+        assert r["errors"] == ["BTCUSDT.BN"]         # BTC 失败被隔离记录，不炸整轮
+
+    def test_commit_retries_on_locked_then_succeeds(self, monkeypatch):
+        """commit 头两次撞 locked、第三次成功 —— 应用层重试兜住短暂锁竞争。"""
+        from sqlalchemy.exc import OperationalError
+
+        from crypto_intel_engine import cost_basis as cb
+
+        calls = {"n": 0}
+
+        class _Session:
+            def commit(self):
+                calls["n"] += 1
+                if calls["n"] < 3:
+                    raise OperationalError("stmt", {}, Exception("database is locked"))
+
+            def rollback(self):
+                pass
+
+        # sleep 走真实但极短：base_delay 累计 <1.5s，测试可接受；也可 monkeypatch time.sleep
+        import time as _t
+        monkeypatch.setattr(_t, "sleep", lambda *_: None)
+        cb._commit_with_retry(_Session(), tries=5, base_delay=0.0)
+        assert calls["n"] == 3                       # 重试到第三次成功
+
+    def test_commit_gives_up_after_exhausting_retries(self, monkeypatch):
+        """一直 locked → 重试耗尽后照常抛（不会假装成功）。"""
+        from sqlalchemy.exc import OperationalError
+
+        from crypto_intel_engine import cost_basis as cb
+
+        class _Session:
+            def commit(self):
+                raise OperationalError("stmt", {}, Exception("database is locked"))
+
+            def rollback(self):
+                pass
+
+        import time as _t
+        monkeypatch.setattr(_t, "sleep", lambda *_: None)
+        with pytest.raises(OperationalError):
+            cb._commit_with_retry(_Session(), tries=3, base_delay=0.0)
+
+    def test_non_locked_error_is_not_retried(self, monkeypatch):
+        """非 locked 的 OperationalError 立即抛，不做无谓重试。"""
+        from sqlalchemy.exc import OperationalError
+
+        from crypto_intel_engine import cost_basis as cb
+
+        calls = {"n": 0}
+
+        class _Session:
+            def commit(self):
+                calls["n"] += 1
+                raise OperationalError("stmt", {}, Exception("no such table: crypto_fills"))
+
+            def rollback(self):
+                pass
+
+        with pytest.raises(OperationalError):
+            cb._commit_with_retry(_Session(), tries=5, base_delay=0.0)
+        assert calls["n"] == 1                       # 只试一次，不重试

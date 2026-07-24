@@ -65,6 +65,30 @@ def _last_trade_id(session, symbol: str, source: str = "spot") -> int:
     return int(row) if row is not None else -1
 
 
+def _commit_with_retry(session, *, tries: int = 5, base_delay: float = 0.5) -> None:
+    """commit，撞 SQLite `database is locked` 时退避重试。
+
+    ⛔ 库是 WAL + `busy_timeout=30s`（`common/db.py`），照理短锁能自己等过去。但 A 股
+    日线更新有 5000+ 只票的**超长批量写事务**，写锁能持有超过 30s，此时 commit 会抛
+    `OperationalError('database is locked')`。crypto 成交明细同步撞上这个窗口本不该整轮
+    报废 —— 而它偏偏会：`sync_symbol_fills` 的 commit 抛异常会冒泡出 `sync_held_fills`
+    的循环，把**后面还没同步的币一起拖没**（实测就是这样让 ETH/SOL 的成本一直 unknown）。
+    应用层再兜一层重试治本。仍非 locked 类错误、或重试耗尽，照常抛。
+    """
+    import time
+
+    from sqlalchemy.exc import OperationalError
+    for i in range(tries):
+        try:
+            session.commit()
+            return
+        except OperationalError as e:
+            if "locked" not in str(e).lower() or i == tries - 1:
+                raise
+            session.rollback()
+            time.sleep(base_delay * (i + 1))
+
+
 def _insert_fills(session, rows: list[dict]) -> int:
     """幂等写入（撞 (source,symbol,trade_id) 唯一键即忽略）。返回**新增**条数。"""
     from sqlalchemy import text
@@ -78,7 +102,7 @@ def _insert_fills(session, rows: list[dict]) -> int:
                     :commission, :commission_asset, :is_buyer, :trade_time)
         """), r)
         n += res.rowcount or 0
-    session.commit()
+    _commit_with_retry(session)
     return n
 
 
@@ -451,7 +475,16 @@ def sync_held_fills(full: bool = False) -> dict[str, Any]:
     finally:
         session.close()
 
-    results = [sync_symbol_fills(s, full=full) for s in sorted(symbols)]
+    # ⛔ 逐币 try：单个币同步失败（网络/限速/写库锁）**绝不能中断整轮**。此前是列表推导，
+    # 一个币抛异常就把后面还没同步的币全拖没 —— ETH/SOL 成本长期 unknown 就是这么来的
+    # （BTC 之外的币还没轮到就整轮挂了）。失败的币记进 errors，下一轮/下次仍会重试它。
+    results = []
+    for s in sorted(symbols):
+        try:
+            results.append(sync_symbol_fills(s, full=full))
+        except Exception as e:  # noqa: BLE001 — 单币失败隔离，不拖累其它币
+            logger.warning(f"同步 {s} 成交明细失败（不影响其它币）: {e}")
+            results.append({"symbol": s, "inserted": 0, "error": str(e)})
     return {
         "symbols": len(results),
         "inserted": sum(r.get("inserted", 0) for r in results),
