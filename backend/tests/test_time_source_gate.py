@@ -61,7 +61,6 @@ MANAGED_DIRS = (
 _ALLOWED: dict[str, int] = {
     "data_engine/daily_pipeline_scheduler.py": 3,
     "data_engine/daily_updater.py": 3,
-    "data_engine/deep_history/a_share_job.py": 1,
     "data_engine/engine.py": 2,
     "data_engine/financial_updater.py": 2,
     "data_engine/storage/history_repository.py": 6,

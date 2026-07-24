@@ -39,6 +39,8 @@ from acquisition.markets.eastmoney_crawler import (
     ProxyTimeoutError,
     parse_kline_data,
 )
+from common.market import A_SHARE
+from common.market_time import market_today
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 PROGRESS_FILE = _BACKEND_DIR / "scripts" / "deep_history_a_share_progress.json"
@@ -180,7 +182,8 @@ class AShareDeepHistoryJob(BaseSingletonJob):
             if confirmed.get(symbol) == floor_str:
                 already_done += 1
                 continue
-            fetch_end = (floor - timedelta(days=1)).strftime("%Y%m%d") if floor else date.today().strftime("%Y%m%d")
+            fetch_end = ((floor - timedelta(days=1)) if floor
+                         else market_today(A_SHARE)).strftime("%Y%m%d")
             meta = stock_meta[symbol]
             candidates.append({
                 "symbol": symbol, "code": symbol.split(".")[0],
