@@ -39,6 +39,26 @@ def test_sqlite_engine_sets_wal_and_busy_timeout():
         assert conn.execute(text("PRAGMA busy_timeout")).scalar() == 30000
 
 
+def test_fullfsync_is_on_by_default():
+    """macOS 普通 fsync 只推到硬盘缓存；库在外置盘上，拔盘/断电会丢已提交事务。
+
+    两个 PRAGMA 都得开：`fullfsync` 管 WAL 的同步，`checkpoint_fullfsync` 管
+    checkpoint 回写主库那一次，只开一个仍留缺口。
+    """
+    engine = make_sqlite_engine("sqlite:///:memory:")
+    with engine.connect() as conn:
+        assert conn.execute(text("PRAGMA fullfsync")).scalar() == 1
+        assert conn.execute(text("PRAGMA checkpoint_fullfsync")).scalar() == 1
+
+
+def test_fullfsync_can_be_turned_off_by_env(monkeypatch):
+    """写入吞吐扛不住时要能一键退回，不用改代码（NullPool 下新连接即刻生效）。"""
+    monkeypatch.setenv("FIN_SQLITE_FULLFSYNC", "false")
+    engine = make_sqlite_engine("sqlite:///:memory:")
+    with engine.connect() as conn:
+        assert conn.execute(text("PRAGMA fullfsync")).scalar() == 0
+
+
 def test_session_factory_never_autocommits_or_autoflushes():
     """autoflush=True 会在读查询时偷偷 flush 半成品对象，交易系统里这是灾难。"""
     engine = make_sqlite_engine("sqlite:///:memory:")
@@ -62,6 +82,8 @@ def test_both_real_engines_share_the_same_settings():
         with engine.connect() as conn:
             assert conn.execute(text("PRAGMA journal_mode")).scalar() == "wal"
             assert conn.execute(text("PRAGMA busy_timeout")).scalar() == 30000
+            assert conn.execute(text("PRAGMA fullfsync")).scalar() == 1
+            assert conn.execute(text("PRAGMA checkpoint_fullfsync")).scalar() == 1
 
 
 def test_migration_logic_stayed_in_its_own_module():
