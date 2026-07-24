@@ -126,3 +126,72 @@ def test_real_configs_contain_no_cookies():
         if isinstance(eps, dict) and "cookies" in eps:   # gbapi 的嵌套结构 bug
             leaked.append(f"{f.name}(nested)")
     assert not leaked, f"这些站点配置仍含 cookie，不能进版本库: {leaked}"
+
+
+# ── 端点内部的令牌（2026-07-24 补：只剥顶层 cookies 漏了这条路）──────────────
+
+# 实锤原型：侦查 finance.yahoo.com 抓到的端点，URL 查询串带着会话令牌
+# `?.crumb=FBRGbvClsEA`，`default_params` 里又存了一份，一路进了版本库。
+TOKEN_SAMPLE = {
+    "domain": "tokensite.com",
+    "page_url": "https://tokensite.com/quote",
+    "endpoints": [
+        {
+            "name": "chart",
+            "url": "https://tokensite.com/api/chart?symbol=GC%3DF&.crumb=CRUMB_LEAK_1",
+            "url_base": "https://tokensite.com/api/chart",
+            "default_params": {"symbol": "GC=F", ".crumb": "CRUMB_LEAK_1"},
+            "gate_headers": {"referer": "https://tokensite.com/",
+                             "authorization": "Bearer BEARER_LEAK_2"},
+            "method": "GET", "is_json": True, "status": 200,
+        },
+    ],
+}
+
+
+def test_endpoint_tokens_never_written_to_main_config(cfg_dir):
+    """URL 查询参数 / default_params / gate_headers 三处的令牌都不许进主配置。"""
+    registry.save_site_config(dict(TOKEN_SAMPLE))
+
+    main = (cfg_dir / "tokensite.com.json").read_text()
+    assert "CRUMB_LEAK_1" not in main, "URL/参数里的会话令牌漏进主配置了"
+    assert "BEARER_LEAK_2" not in main, "gate_headers 里的鉴权头漏进主配置了"
+
+
+def test_endpoint_tokens_go_to_secrets_sidecar(cfg_dir):
+    registry.save_site_config(dict(TOKEN_SAMPLE))
+
+    secrets = json.loads((cfg_dir / "tokensite.com.secrets.json").read_text())
+    assert "endpoint_secrets" in secrets
+    stash = secrets["endpoint_secrets"]["chart"]
+    assert stash["default_params"][".crumb"] == "CRUMB_LEAK_1"
+    assert stash["gate_headers"]["authorization"] == "Bearer BEARER_LEAK_2"
+
+
+def test_endpoint_tokens_restored_on_load(cfg_dir):
+    """剥离必须对上游无感：load 回来的 cfg 要跟存进去的一模一样。"""
+    registry.save_site_config(dict(TOKEN_SAMPLE))
+
+    ep = registry.load_site_config("tokensite.com")["endpoints"][0]
+    src = TOKEN_SAMPLE["endpoints"][0]
+    assert ep["url"] == src["url"]
+    assert ep["default_params"] == src["default_params"]
+    assert ep["gate_headers"] == src["gate_headers"]
+
+
+def test_non_credential_params_stay_in_main_config(cfg_dir):
+    """别误伤：普通业务参数（symbol / range 之类）必须留在主配置里，那是逆向成果。"""
+    registry.save_site_config(dict(TOKEN_SAMPLE))
+
+    main = json.loads((cfg_dir / "tokensite.com.json").read_text())
+    ep = main["endpoints"][0]
+    assert ep["default_params"]["symbol"] == "GC=F"
+    assert "symbol=GC" in ep["url"]
+    assert ep["gate_headers"]["referer"] == "https://tokensite.com/"
+
+
+def test_endpoints_without_tokens_produce_no_sidecar(cfg_dir):
+    """没令牌的站点不该凭空多出一个 secrets 文件（东财那些就是这种）。"""
+    clean = {k: v for k, v in SAMPLE.items() if k not in ("cookies", "cookies_updated_at")}
+    registry.save_site_config(clean)
+    assert not (cfg_dir / "example.com.secrets.json").exists()

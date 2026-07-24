@@ -18,8 +18,9 @@ fetch_api 读它直接 curl_cffi 复用；Jason 也能看/手改 .md。
 """
 import json
 import os
+import re
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 from typing import Optional
 
 from loguru import logger
@@ -40,6 +41,90 @@ def domain_of(url: str) -> str:
 # cookie 是登录态（如 CapitalIQ 付费订阅会话、雪球 xq_a_token），
 # 而端点/gate 头/字段样例是逆向工作的成果，应该跟着代码走。
 _SECRET_KEYS = ("cookies", "cookies_updated_at")
+
+# ⛔ 顶层 cookies 不是唯一的凭据出口：**令牌还会藏在端点内部**。
+# 实锤（2026-07-24）：侦查 finance.yahoo.com 抓到的端点，URL 查询串里带着
+# `?.crumb=FBRGbvClsEA`、`default_params` 里也存了一份 —— 那是 Yahoo 的会话
+# 令牌，跟着主配置一路进了版本库。只剥顶层 key 挡不住这种。
+# 这三处按名字命中就摘走存进 secrets，加载时再贴回来（`_merge_secrets`），
+# 上游读到的 cfg 跟以前一模一样，无感。
+_CRED_NAME_RE = re.compile(
+    r"(crumb|token|auth|secret|passwd|password|session|sid|sign|signature"
+    r"|nonce|csrf|xsrf|api[_-]?key|access[_-]?key|cookie)", re.I)
+_ENDPOINT_SECRET_FIELDS = ("default_params", "gate_headers")
+
+
+def _is_cred_name(name: str) -> bool:
+    return bool(_CRED_NAME_RE.search(name or ""))
+
+
+def _redact_endpoints(endpoints: list) -> tuple[list, dict]:
+    """摘掉端点里的凭据类参数。
+
+    Args:
+        endpoints: 原始端点列表（含真实令牌）。
+
+    Returns:
+        `(脱敏后的端点列表, {端点键: 被摘掉的原值})`。第二个给 secrets 文件，
+        `_merge_secrets` 负责贴回去。没摘到东西时第二个是空 dict。
+    """
+    public: list = []
+    stash: dict = {}
+    for idx, ep in enumerate(endpoints or []):
+        if not isinstance(ep, dict):
+            public.append(ep)
+            continue
+        key = str(ep.get("name") or idx)
+        ep2 = dict(ep)
+        removed: dict = {}
+
+        # 1) URL 查询串里的凭据参数
+        for url_field in ("url", "url_base"):
+            raw = ep2.get(url_field)
+            if not isinstance(raw, str) or "?" not in raw:
+                continue
+            parts = urlsplit(raw)
+            pairs = parse_qsl(parts.query, keep_blank_values=True)
+            kept = [(k, v) for k, v in pairs if not _is_cred_name(k)]
+            if len(kept) != len(pairs):
+                removed[url_field] = raw          # 存整条原始 URL，贴回最省事
+                ep2[url_field] = urlunsplit(
+                    (parts.scheme, parts.netloc, parts.path,
+                     urlencode(kept), parts.fragment))
+
+        # 2) default_params / gate_headers 里的凭据键
+        for field in _ENDPOINT_SECRET_FIELDS:
+            d = ep2.get(field)
+            if not isinstance(d, dict):
+                continue
+            hit = {k: v for k, v in d.items() if _is_cred_name(k)}
+            if hit:
+                removed[field] = hit
+                ep2[field] = {k: v for k, v in d.items() if k not in hit}
+
+        if removed:
+            stash[key] = removed
+        public.append(ep2)
+    return public, stash
+
+
+def _restore_endpoints(cfg: dict, stash: dict) -> None:
+    """`_redact_endpoints` 的逆操作，就地把令牌贴回 cfg（加载路径用）。"""
+    if not stash:
+        return
+    for idx, ep in enumerate(cfg.get("endpoints") or []):
+        if not isinstance(ep, dict):
+            continue
+        removed = stash.get(str(ep.get("name") or idx))
+        if not removed:
+            continue
+        for field, val in removed.items():
+            if field in ("url", "url_base"):
+                ep[field] = val
+            elif isinstance(ep.get(field), dict) and isinstance(val, dict):
+                ep[field].update(val)
+            else:
+                ep[field] = val
 
 
 def _json_path(domain: str) -> str:
@@ -69,6 +154,8 @@ def _merge_secrets(cfg: Optional[dict], domain: str) -> Optional[dict]:
         return None
     secrets = _read_json(_secrets_path(domain)) if os.path.exists(_secrets_path(domain)) else None
     if secrets:
+        # endpoint_secrets 不是顶层字段，要贴回各端点内部，别 update 进 cfg
+        _restore_endpoints(cfg, secrets.pop("endpoint_secrets", None) or {})
         cfg.update(secrets)
     return cfg
 
@@ -122,6 +209,12 @@ def save_site_config(cfg: dict) -> str:
     # 凭据剥离到 <domain>.secrets.json；主配置进版本库
     secrets = {k: cfg[k] for k in _SECRET_KEYS if k in cfg}
     public = {k: v for k, v in cfg.items() if k not in _SECRET_KEYS}
+    # 端点内部的令牌（URL 查询参数 / default_params / gate_headers）也得摘走，
+    # 否则只剥顶层 cookies 会漏（见 _CRED_NAME_RE 上面那段实锤）
+    if public.get("endpoints"):
+        public["endpoints"], ep_stash = _redact_endpoints(public["endpoints"])
+        if ep_stash:
+            secrets["endpoint_secrets"] = ep_stash
     _write_secrets(domain, secrets)
 
     jpath = _json_path(domain)
