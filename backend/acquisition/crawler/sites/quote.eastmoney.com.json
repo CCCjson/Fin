@@ -1,0 +1,158 @@
+{
+  "domain": "quote.eastmoney.com",
+  "page_url": "https://quote.eastmoney.com/unify/r/118.AU9999",
+  "endpoints": [
+    {
+      "name": "get",
+      "url": "https://push2.eastmoney.com/api/qt/ulist/get?fltt=1&invt=2&fields=f14%2Cf12%2Cf13%2Cf1%2Cf2%2Cf4%2Cf3%2Cf152&secids=1.000001%2C0.399001%2C100.N225%2C100.HSI%2C100.DJIA%2C100.NDX%2C100.SPX%2C100.FTSE%2C100.GDAXI%2C100.FCHI%2C100.SSMI&ut=fa5fd1943c7b386f172d6893dbfba10b&pn=1&np=1&pz=20&dect=1&wbp2u=%7C0%7C0%7C0%7Cweb",
+      "url_base": "https://push2.eastmoney.com/api/qt/ulist/get",
+      "default_params": {
+        "fltt": "1",
+        "invt": "2",
+        "fields": "f14,f12,f13,f1,f2,f4,f3,f152",
+        "secids": "1.000001,0.399001,100.N225,100.HSI,100.DJIA,100.NDX,100.SPX,100.FTSE,100.GDAXI,100.FCHI,100.SSMI",
+        "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+        "pn": "1",
+        "np": "1",
+        "pz": "20",
+        "dect": "1",
+        "wbp2u": "|0|0|0|web"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "origin": "https://quote.eastmoney.com",
+        "referer": "https://quote.eastmoney.com/q/118.AU9999.html",
+        "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Google Chrome\";v=\"150\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"macOS\""
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    },
+    {
+      "name": "get_2",
+      "url": "https://push2.eastmoney.com/api/qt/ulist/get?fltt=1&invt=2&fields=f14%2Cf12%2Cf13%2Cf1%2Cf2%2Cf4%2Cf3%2Cf152&secids=100.UDI%2C120.USDCNYC%2C133.USDCNH%2C119.EURUSD%2C119.USDJPY%2C119.GBPUSD%2C119.AUDUSD%2C119.USDHKD%2C119.USDCHF%2C119.NZDUSD&ut=fa5fd1943c7b386f172d6893dbfba10b&pn=1&np=1&pz=20&dect=1&wbp2u=%7C0%7C0%7C0%7Cweb",
+      "url_base": "https://push2.eastmoney.com/api/qt/ulist/get",
+      "default_params": {
+        "fltt": "1",
+        "invt": "2",
+        "fields": "f14,f12,f13,f1,f2,f4,f3,f152",
+        "secids": "100.UDI,120.USDCNYC,133.USDCNH,119.EURUSD,119.USDJPY,119.GBPUSD,119.AUDUSD,119.USDHKD,119.USDCHF,119.NZDUSD",
+        "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+        "pn": "1",
+        "np": "1",
+        "pz": "20",
+        "dect": "1",
+        "wbp2u": "|0|0|0|web"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "origin": "https://quote.eastmoney.com",
+        "referer": "https://quote.eastmoney.com/q/118.AU9999.html",
+        "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Google Chrome\";v=\"150\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"macOS\""
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    },
+    {
+      "name": "gethotgubalist",
+      "url": "https://quote.eastmoney.com/newapi/gethotgubalist",
+      "url_base": "https://quote.eastmoney.com/newapi/gethotgubalist",
+      "default_params": {},
+      "method": "GET",
+      "gate_headers": {
+        "referer": "https://quote.eastmoney.com/q/118.AU9999.html",
+        "x-requested-with": "XMLHttpRequest",
+        "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Google Chrome\";v=\"150\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"macOS\""
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [
+        "name",
+        "guba_code",
+        "quote_code"
+      ],
+      "sample": "[{\"name\": \"通富微电\", \"guba_code\": \"002156\", \"quote_code\": \"0.002156\"}, {\"name\": \"立新能源\", \"guba_code\": \"001258\", \"quote_code\": \"0.001258\"}, {\"name\": \"华天科技\", \"guba_code\": \"002185\", \"quote_code\": \"0.002185\"}, {\"name\": \"长城军工\", \"guba_code\": \"601606\", \"quote_code\": \"1.601606\"}, {\"name\": \"紫光股份\", \"guba_code\": \"000938\", \"quote_code\": \"0.000938\"}, {\"name\": \"中国西电\", \"guba_code\": \"601179\", \"quote_code\": \"1.601179\"}, {\"name\": \"长电科技\", \"guba_code\": \"600584\", \"quote_code\": \"1.600584\"}, {\"name\": \"深科技\", \"guba_code\": \"000021\", \"quote_code\": \"0.000021\"}, {\"name\": \"华电辽能\", \"guba_code\": \"600396\", \"quote_code\": \"1.600396\""
+    },
+    {
+      "name": "get_3",
+      "url": "https://push2.eastmoney.com/api/qt/ulist/get?fltt=1&invt=2&fields=f14%2Cf12%2Cf13%2Cf1%2Cf2%2Cf4%2Cf3%2Cf152&secids=0.002156%2C0.001258%2C0.002185%2C1.601606%2C0.000938%2C1.601179%2C1.600584%2C0.000021%2C1.600396%2C0.001309%2C1.600664%2C1.601678%2C0.002498%2C0.000815%2C0.301583&ut=fa5fd1943c7b386f172d6893dbfba10b&pn=1&np=1&pz=20&dect=1&wbp2u=%7C0%7C0%7C0%7Cweb",
+      "url_base": "https://push2.eastmoney.com/api/qt/ulist/get",
+      "default_params": {
+        "fltt": "1",
+        "invt": "2",
+        "fields": "f14,f12,f13,f1,f2,f4,f3,f152",
+        "secids": "0.002156,0.001258,0.002185,1.601606,0.000938,1.601179,1.600584,0.000021,1.600396,0.001309,1.600664,1.601678,0.002498,0.000815,0.301583",
+        "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+        "pn": "1",
+        "np": "1",
+        "pz": "20",
+        "dect": "1",
+        "wbp2u": "|0|0|0|web"
+      },
+      "method": "GET",
+      "gate_headers": {
+        "origin": "https://quote.eastmoney.com",
+        "referer": "https://quote.eastmoney.com/q/118.AU9999.html",
+        "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Google Chrome\";v=\"150\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"macOS\""
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    },
+    {
+      "name": "webreport",
+      "url": "https://anonflow2.eastmoney.com/backend/api/webreport",
+      "url_base": "https://anonflow2.eastmoney.com/backend/api/webreport",
+      "default_params": {},
+      "method": "POST",
+      "gate_headers": {
+        "origin": "https://quote.eastmoney.com",
+        "referer": "https://quote.eastmoney.com/q/118.AU9999.html",
+        "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Google Chrome\";v=\"150\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"macOS\""
+      },
+      "is_json": true,
+      "status": 405,
+      "sample_fields": [
+        "timestamp",
+        "status",
+        "error",
+        "path"
+      ],
+      "sample": "{\"timestamp\": \"2026-07-24 14:57:25\", \"status\": 405, \"error\": \"Method Not Allowed\", \"path\": \"/api/webreport\"}"
+    },
+    {
+      "name": "getcontextid",
+      "url": "https://i.eastmoney.com/websitecaptcha/api/getcontextid",
+      "url_base": "https://i.eastmoney.com/websitecaptcha/api/getcontextid",
+      "default_params": {},
+      "method": "POST",
+      "gate_headers": {
+        "origin": "https://i.eastmoney.com",
+        "referer": "https://i.eastmoney.com/websitecaptcha/slidervalid",
+        "x-requested-with": "XMLHttpRequest",
+        "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Google Chrome\";v=\"150\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"macOS\""
+      },
+      "is_json": true,
+      "status": 200,
+      "sample_fields": [],
+      "sample": ""
+    }
+  ],
+  "discovered_at": "2026-07-24T14:57:26"
+}
