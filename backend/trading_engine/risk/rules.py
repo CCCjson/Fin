@@ -4,7 +4,21 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
-from datetime import datetime, time
+from datetime import time
+
+from common.market import A_SHARE, infer_market_from_symbol
+from common.market_time import market_now, market_today
+
+
+def _market_of(kwargs: dict) -> str:
+    """从 check() 收到的订单参数推市场（`check_order` 每次都把 symbol 塞进 kwargs）。
+
+    风控是跨市场共用同一套 rule 的：A 股走上海日历、crypto 走 UTC。用错时区会让
+    「今天亏损」重置在错误的时刻、「距上次亏损几天」偏 1 天。symbol 缺失时默认 A 股
+    （服务器就在上海，与旧的 `datetime.now()` 行为完全一致）。
+    """
+    symbol = kwargs.get("symbol")
+    return infer_market_from_symbol(symbol) if symbol else A_SHARE
 
 
 @dataclass
@@ -175,14 +189,16 @@ class MaxDailyLossRule(RiskRule):
         super().__init__("单日最大亏损限制", enabled)
         self.max_daily_loss = max_daily_loss
         self.daily_pnl = 0.0
-        self.last_reset_date = datetime.now().date()
+        # 首次 check 时按当单市场的今天初始化 —— 构造时还不知道 symbol，故不在这里取时间
+        self.last_reset_date = None
 
     def check(self, current_pnl: float = 0.0, **kwargs) -> RiskCheckResult:
         if not self.enabled:
             return RiskCheckResult(True, self.name, "规则已禁用", "INFO")
 
-        # 检查是否需要重置（新的一天）
-        today = datetime.now().date()
+        # 检查是否需要重置（新的一天）—— 「今天」按当单市场算：crypto 在 UTC 午夜重置，
+        # A 股在上海午夜。用服务器本地日会让 crypto 在错误的时刻清零当日亏损计数。
+        today = market_today(_market_of(kwargs))
         if today != self.last_reset_date:
             self.daily_pnl = 0.0
             self.last_reset_date = today
@@ -214,12 +230,16 @@ class TradingHoursRule(RiskRule):
     def __init__(self, allowed_hours: list, enabled: bool = True):
         super().__init__("交易时间限制", enabled)
         self.allowed_hours = allowed_hours  # [("09:00", "11:30"), ("13:00", "15:00")]
+        # ⚠️ 这条 rule 目前**两条路径都不激活**（RISK_CONFIG 里没有 allow_trading_hours）。
+        # 若将来给 crypto 配它，注意 crypto 是 7×24——按下面市场化的 now 判仍会拿 A 股
+        # 时段字符串去比，那是配置语义问题，得单独处理，不在时区这一层。
 
     def check(self, **kwargs) -> RiskCheckResult:
         if not self.enabled:
             return RiskCheckResult(True, self.name, "规则已禁用", "INFO")
 
-        now = datetime.now().time()
+        # 「现在几点」按当单市场时区，不用服务器本地时钟
+        now = market_now(_market_of(kwargs)).time()
 
         for start_str, end_str in self.allowed_hours:
             start = time.fromisoformat(start_str)
@@ -414,7 +434,9 @@ class ConsecutiveLossRule(RiskRule):
                 from datetime import date as date_type
                 try:
                     loss_date = date_type.fromisoformat(last_loss_date) if isinstance(last_loss_date, str) else last_loss_date
-                    days_since = (date_type.today() - loss_date).days
+                    # 「距上次亏损几天」的今天按当单市场算：crypto 用 UTC 日，A 股用上海日。
+                    # 用错时区会让暂停期在 crypto 上偏 1 天（凌晨那段尤甚）。
+                    days_since = (market_today(_market_of(kwargs)) - loss_date).days
                     if days_since < self.pause_days:
                         return RiskCheckResult(
                             False,

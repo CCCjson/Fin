@@ -47,6 +47,7 @@ MANAGED_DIRS = (
     "crypto_intel_engine",
     "data_engine",
     "agents/tools",
+    "trading_engine/risk",
 )
 
 # 存量豁免基线：`相对路径 → 允许的裸时间调用数`。**只减不增**。
