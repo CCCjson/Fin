@@ -48,6 +48,9 @@ def _get_manager():
     """取进程内 ProxyManager 单例（未配快代理时返回 None）。
 
     以前这里 `ProxyManager()` 自建一份，和 `net` 那个各持一份 IP 缓存，谁也复用不了谁。
+
+    ⛔ **本函数自己会拿 `_manager_lock`（非重入 Lock）**，调用方不许再在外面
+    `with _manager_lock` 包一层——同线程双抢必然永久自锁。
     """
     global _manager
     if _manager is None:
@@ -76,16 +79,25 @@ def _domestic_proxy_info():
         return None   # 明示选择直连，不是降级
     import concurrent.futures
 
-    def _fetch():
-        with _manager_lock:
-            mgr = _get_manager()
-            # 单例为 None = 没配快代理。返回 None 走下面的 ProxyExhaustedError
-            # （与旧行为一致：旧版自建的空 ProxyManager 也是 get_proxy() -> None）。
-            return mgr.get_proxy() if mgr else None
+    from acquisition.browser.offthread import run_in_daemon_thread
 
+    def _fetch():
+        # ⛔ 这里**绝不能**再包一层 `with _manager_lock`：`_get_manager()` 内部已经拿
+        # 同一把非重入 Lock，同线程双抢 = 永久自锁。而 `_manager` 只可能在那个被锁死
+        # 的块里赋值，所以它永远是 None，每次调用都必然重演——不是偶发竞态，是必现。
+        # （2026-07-24 实锤：MoneyBill 一次 scrape 国内域名就把整个会话卡死，
+        #  见 docs/GOTCHAS.md「proxy_route 自锁」。门禁 test_proxy_route_no_deadlock.py）
+        mgr = _get_manager()
+        # 单例为 None = 没配快代理。返回 None 走下面的 ProxyExhaustedError
+        # （与旧行为一致：旧版自建的空 ProxyManager 也是 get_proxy() -> None）。
+        return mgr.get_proxy() if mgr else None
+
+    # ⛔ 这里**不许**用 ThreadPoolExecutor（无论 with 还是手动 shutdown）：它的
+    # __exit__ / atexit 都会 join worker，卡死的 worker 既能吃掉超时保护、又能让整个
+    # 后端进程关不掉。走 daemon 线程，超时即撒手。详见 offthread.py 文首。
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            pi = ex.submit(_fetch).result(timeout=get_proxy_fetch_timeout())
+        pi = run_in_daemon_thread(
+            _fetch, timeout_s=get_proxy_fetch_timeout(), label="proxy-fetch")
     except concurrent.futures.TimeoutError as e:
         raise ProxyQuotaExhaustedError(
             f"取快代理 IP 超时（>{get_proxy_fetch_timeout()}s），拒绝降级直连") from e

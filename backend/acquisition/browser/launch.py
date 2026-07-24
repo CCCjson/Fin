@@ -10,7 +10,6 @@
   "sync API inside asyncio loop"）。所有浏览器操作必须经 run_off_loop() 派发到
   独立 worker 线程执行——工具层（tools.py）在边界处包一次即可。
 """
-import concurrent.futures
 import os
 import time
 from typing import Any, Callable, Optional
@@ -18,11 +17,13 @@ from typing import Any, Callable, Optional
 from loguru import logger
 
 from acquisition.config import (
+    get_browser_job_timeout,
     get_playwright_channel,
     get_playwright_headed_on_challenge,
     get_playwright_timeout,
 )
 from acquisition.browser import sessions
+from acquisition.browser.offthread import run_in_daemon_thread
 
 # 反检测启动参数（各项目通用，藏 navigator.webdriver 等自动化特征）
 LAUNCH_ARGS = [
@@ -49,14 +50,41 @@ CHALLENGE_TITLE_MARKERS = (
 CHALLENGE_IFRAME_SEL = "iframe[src*='challenges.cloudflare.com'], iframe[src*='turnstile']"
 
 
-def run_off_loop(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """在无 asyncio 事件循环的独立线程里执行 fn，阻塞取结果。
+def run_off_loop(
+    fn: Callable[..., Any],
+    *args: Any,
+    job_timeout_s: Optional[float] = None,
+    **kwargs: Any,
+) -> Any:
+    """在无 asyncio 事件循环的独立线程里执行 fn，阻塞取结果（带硬超时）。
 
     sync Playwright 在有运行中事件循环的线程会直接抛错；工具被 agent executor
     以 sync 调用、但可能处于 async 上下文，故统一派发到干净线程执行。
+
+    ⛔ 两处刻意写法，别「优化」回去（2026-07-24，见 docs/GOTCHAS.md）：
+      1. 必须有超时。以前是裸 `.result()`，fn 里任何一处卡死都会把调用线程无限吊住；
+         这条链上游就是 MoneyBill 的 turn 线程，它一挂整个会话就 409 到天荒地老。
+      2. 不许换回 ThreadPoolExecutor：它的 `__exit__`/atexit 都会 join worker，
+         卡死的 worker 既吃掉超时保护、又让后端进程关不掉。详见 offthread.py。
+
+    Args:
+        fn: 要在干净线程里跑的可调用对象。
+        *args: 透传给 fn 的位置参数。
+        job_timeout_s: 整趟任务的硬超时（秒）。None = 用 `get_browser_job_timeout()`。
+            取名带 `job_` 前缀是为了不跟 fn 自己的 `timeout_s` 参数撞名。
+        **kwargs: 透传给 fn 的关键字参数。
+
+    Returns:
+        fn 的返回值。
+
+    Raises:
+        concurrent.futures.TimeoutError: 超过 job_timeout_s 仍未跑完。
+        Exception: fn 内部抛出的任何异常原样透传。
     """
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        return ex.submit(lambda: fn(*args, **kwargs)).result()
+    timeout = get_browser_job_timeout() if job_timeout_s is None else job_timeout_s
+    return run_in_daemon_thread(
+        fn, *args, timeout_s=timeout,
+        label=f"browser-{getattr(fn, '__name__', 'job')}", **kwargs)
 
 
 def looks_like_challenge(page) -> bool:

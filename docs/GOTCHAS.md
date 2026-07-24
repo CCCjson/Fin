@@ -99,6 +99,24 @@
 
 **已修**：`cninfo_job.py`、`research_report_job.py`。**如果 deep_history 的 a-share/overseas job 或 alpha_lab session_manager 复现同症状，直接照抄这套「finally兜底 + snapshot自愈 + stop复位」模式**，不用重新分析——这几处都是"常驻单例+threading.Thread+status字符串状态机"同构模式。
 
+### 非重入 Lock 双抢 → 整个会话卡死（proxy_route 自锁，2026-07-24 实锤）
+**症状**：MoneyBill 对话彻底没反应，但后端「看着很健康」——`/health` 毫秒级 200，23 个线程里 22 个空闲，CPU 0%，日志停在某轮 `[tokens] round=N` 之后再无一行。
+
+**根因**：两个单独看都没错的写法叠在一起。`proxy_route._domestic_proxy_info._fetch()` 外面包了 `with _manager_lock`，里面调的 `_get_manager()` **又拿同一把非重入 `threading.Lock`** → 同线程双抢 = 永久自锁。而 `_manager` 只可能在那个被锁死的块里赋值，所以它永远是 None，**每次调用都必然重演，不是偶发竞态**。引入点是 `62c9495f`（ProxyPool 单例化那次）把自建 `ProxyManager()` 换成了 `_get_manager()`，而后者自带同一把锁。
+
+**为什么超时没救回来**：那圈本来有 `.result(timeout=8)`，但写成了 `with ThreadPoolExecutor(...) as ex:` —— `__exit__` 走 `shutdown(wait=True)` 去 join 已经死掉的 worker，**join 上无限阻塞，TimeoutError 连抛出来的机会都没有**。超时保护被 `with` 语句本身吃掉了。
+
+**连带放大**：死锁线程握着该 session 的 `run_lock` 不放 → 用户再发消息一律 409 → 表现成整个桌面 App 卡死。
+
+**三条可复用的教训**：
+1. **`with lock:` 里面不许调「自己也会拿同一把锁」的函数**。要么去掉外层锁（首选），要么换 `RLock`（次选，只是掩盖嵌套）。函数如果自带锁，docstring 必须写明，禁止调用方再包一层。
+2. **`with ThreadPoolExecutor(...)` 是超时保护的天敌**：`__exit__` 的 `shutdown(wait=True)` 会 join 卡死的 worker，让任何 `.result(timeout=)` 形同虚设。
+3. **改手动 `shutdown(wait=False)` 也不够**：`concurrent.futures` 注册了 atexit 钩子 `_python_exit`，退出时照样 join 所有存活 worker——一个卡死的浏览器任务能让**整个后端进程关不掉**，`restart.sh` 卡在停机那步。正解是 daemon 线程：`acquisition/browser/offthread.run_in_daemon_thread`。
+
+**门禁**：`tests/acquisition/test_browser_no_deadlock.py`（行为 + 结构双保险，含「卡死 worker 不许挡进程退出」的子进程测试）。
+
+**诊断手法（下次遇到「进程活着但不干活」直接照抄）**：`sample <pid> 3 -f out.txt` 抓栈 → 按线程看叶子帧。全员 `uv_cond_wait`/`kevent` = 真空闲；某条卡在 `lock_PyThread_acquire_lock` → `acquire_timed` = 等锁。`py-spy dump` 能直接给 Python 行号但 macOS 上**必须 sudo**。另外 `lsof -nP -a -p <pid> -iTCP` 看有没有在等网络——一条 ESTABLISHED 的对外连接都没有，就说明卡在本地而非网络。
+
 ### market 过滤不统一导致的统计失真
 **实锤案例**：`DailyUpdater.get_update_status()` 算 `fresh_count` 时两处查询漏了 `market=="a_share"` 过滤，把三市场股票数混进A股分母，导致覆盖率显示301%。
 

@@ -36,6 +36,16 @@ def get_playwright_timeout() -> int:
     return int(os.getenv("KNOWLEDGE_PLAYWRIGHT_TIMEOUT", "30000"))
 
 
+def get_browser_job_timeout() -> float:
+    """一整趟浏览器任务的兜底硬超时（秒），`run_off_loop` 用。
+
+    粒度是「整个 fn 跑一趟」而非单次页面操作（后者是 `get_playwright_timeout`）。
+    默认 900s：要盖住 `login_site` 默认 300s 的人工登录等待还留足余量，同时保证
+    任何卡死的浏览器任务最终一定会把调用方放回来，而不是无限吊着 MoneyBill 的会话。
+    """
+    return float(os.getenv("KNOWLEDGE_BROWSER_JOB_TIMEOUT", "900"))
+
+
 def get_playwright_user_data_dir() -> str:
     """持久化浏览器数据目录（cookie/会话落盘，过一次挑战后复用）。"""
     default = str(_BACKEND_DIR / "data" / "browser_profile")
