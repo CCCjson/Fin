@@ -60,6 +60,7 @@ MoneyBill 给建议
 | ~~**P0-2**~~ | ✅ **已完工 07-17**：字段级八态 + 质量分 + 硬传导（cockpit composite 钳制 + MoneyBill 收尾更正）。含 P2-2 的 B+C。**开工 P0-3 前先读它卡片顶部的「实施偏离」框**（尤其第 6 条：confirm_gate 记的是数据质量不是 confidence） | 中 | 无 | ✅ 07-17 | `P0-2-data-quality.md` |
 | ~~**P0-3**~~ | ✅ **已完工 07-20**：历史命中率 → calibration_factor 反调 cockpit composite（只下调、校准在硬钳前、≥30 样本才生效）。**校准点在 scorer 不在 orchestrator**，见卡「实施偏离」第 1 条 | 小 | **P0-1** | ✅ 07-17 | `P0-3-calibration.md` |
 | **P1-5** | NewsNow 资讯源接入（方案已勘察定稿，可立即开工） | 小 | 无 | ✅ 07-17 | `P1-5-newsnow.md` |
+| **P1-6** | **ML 打分维度重建**。🔴 实测：cockpit ML 25% 权重**从没产出过一个数**（模型目录空/两表 0 行/每日链无 ML 步），被静默摊给其他四维。**A 段=让缺席显式披露（立刻做，半天）**；**B 段=横截面模型重做 + 前端 8页→7页（Prediction+FineTune 合并成「模型实验室」）**，绑投资组合模块、等其阶段 1 规则跑通后再替换排序源（远程 GPU 已废 → 砍 LSTM 只做 GBDT，CPU 跑得动） | A 小<br/>B 大 | A 无<br/>B 绑组合模块 | ✅ 07-27 | `P1-6-ml-scoring.md` |
 | **P1-1** | 反方 subagent `run_devils_advocate` + 主结论/反方并排 | 中 | 无 | ⚠️ 待核实 | `P1-1-devils-advocate.md` |
 | **P1-2** | 港美股财务 + 宏观表 + 舆情摄入 | 中 | 无 | ⚠️ 待核实 | `P1-2-data-expansion.md` |
 | **P1-3** | 不可信内容隔离标记 + 外部内容轮次高危工具提示 | 小 | 无 | ⚠️ 待核实 | `P1-3-injection.md` |
@@ -82,13 +83,13 @@ MoneyBill 给建议
 
 ## 6. Backlog（未成卡，想做时再展开）
 
-- **验 cockpit 五维权重**：技术30/ML25/基本面20/情感15/持仓10 **从没回测验证过**。项目有 C++ 回测，能验就去验。
+- **验 cockpit 五维权重**：技术30/ML25/基本面20/情感15/持仓10 **从没回测验证过**。项目有 C++ 回测，能验就去验。⚠️ **2026-07-27 补**：验之前先看 P1-6 —— **ML 那 25% 目前恒为 0 被摊掉**，真实生效权重是 技术40/基本面26.7/情感20/持仓13.3。拿纸面权重去验等于验了个不存在的东西。
 - **`decision_scale.py` 单一真源模式**：同一文件同时导出给 LLM 的 prompt 文字和给代码的判定函数，**让 prompt 与代码口径漂移不可能发生**（golden 测试只能事后发现漂移）。cockpit 打分、recommend_engine 三重闸门都该这么收口。
 - **CircuitBreaker（源 × 市场粒度）**：本项目多源链每次都从头试一遍，完全没有熔断。
 - **`fallback_to` 埋点**：每次 fetch 记 `record_provider_run(provider, success, latency_ms, error_type, fallback_to=)`，一个字段还原完整降级链路。现在靠读日志猜。
 - **显式能力矩阵**：「谁支持哪些市场」现在隐式散落在 factory + 各 router。
 - **预算守卫**：TurnMonitor 有熔断，但没有「开跑前先算够不够」的前置检查。
-- **`prediction_engine` 实际准确率**：PredictionValidator 有数据，没人看。它在 cockpit 占 25% 权重。
+- ~~**`prediction_engine` 实际准确率**：PredictionValidator 有数据，没人看。~~ **→ 2026-07-27 已升级为 P1-6 卡，且这条描述本身是错的**：不是「有数据没人看」，是 **`prediction_records` 表 0 行、模型目录空、压根没有数据**。见 `P1-6-ml-scoring.md`。
 - **`orderbook/`、`finetune/`、`server_finetune/`、`remote/`**：从未评估过是「超纲」还是「半成品」。
 
 ## 7. 外部蓝本 ①：**已做过源码级对照 = 可信，可直接进落点表**
