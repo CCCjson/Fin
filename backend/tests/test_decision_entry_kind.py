@@ -116,7 +116,14 @@ def test_the_entry_100_btc_bomb_is_defused(db):
     """P0-4 的原始现场：`BTCUSDT.BN BUY entry=100`，后续 BTC 在 6.5 万。
 
     标成 execution 后**一根 bar 都不该被拿去算**。同时用一条对照行证明：
-    若当成 advice，它就是一条 +64900% 的 win —— 也就是这张卡要防的那件事。
+    若当成 advice，它就是一条天文数字的 win —— 也就是这张卡要防的那件事。
+
+    ⚠️ **对照组用的是 entry=6500 而不是原始的 entry=100**（P0-4 批次2 起）：
+    批次2 给 `outcome_eval` 加了离谱入场价守卫，entry=100 撞 65000 的 bar（650 倍）
+    现在会被第二道防线判成 `unable/entry_price_outlier` —— 对照组会「因为被防住了」
+    而失效，看起来像分类层没问题，其实什么都没证明。所以对照组降到 100 倍以内
+    （6500 vs 65000 = 10 倍整，严格 `>` 不触发），**只考分类层这一道**。
+    最后那段单独验第二道防线：即使 entry_kind 被误标成 advice，守卫也咬得住。
     """
     s = db()
     _seed(s, kind=EXECUTION, symbol="BTCUSDT.BN", entry=100.0, source="crypto")
@@ -132,18 +139,45 @@ def test_the_entry_100_btc_bomb_is_defused(db):
     assert row.return_20d is None, "回执行不该有收益率"
     s.close()
 
-    # 对照：同样的数据当成 advice 会被判成天文数字的 win
+    # 对照：同样的数据当成 advice 会被判成天文数字的 win（entry 抬到守卫阈值内，
+    # 单考分类层 —— 见上方 docstring 的说明）
     s = db()
     row = s.query(DecisionLog).one()
     row.entry_kind = ADVICE
+    row.entry_price = 6500.0
     s.commit()
     s.close()
     decision_log.backfill_outcomes()
     s = db()
     row = s.query(DecisionLog).one()
-    assert row.outcome_20d == "win" and row.return_20d > 60000, (
+    assert row.outcome_20d == "win" and row.return_20d > 800, (
         "对照组没复现出炸弹，说明这条测试已经测不到它要防的东西了"
     )
+    s.close()
+
+
+def test_the_bomb_has_a_second_line_of_defense(db):
+    """**纵深防御**：分类层被绕过了，守卫还在（P0-4 批次2）。
+
+    上一条测的是第一道防线（entry_kind 分类）。但分类是**写入点自觉**传的 ——
+    将来某个新写入点忘了传、或者裸 SQL 灌进来一行，第一道就漏了。这一条把行**直接
+    标成 advice**（模拟第一道失守），验第二道：`outcome_eval` 的离谱入场价守卫。
+
+    两道防线的分工：分类层管「这行该不该被评」，守卫管「这个价能不能评」。
+    """
+    s = db()
+    _seed(s, kind=ADVICE, symbol="BTCUSDT.BN", entry=100.0, source="crypto")
+    _seed_quotes(s, "BTCUSDT.BN", close=65000.0)
+    s.commit()
+    s.close()
+
+    stats = decision_log.backfill_outcomes()
+    assert stats["total"] == 1 and stats["unable"] == 1
+
+    s = db()
+    row = s.query(DecisionLog).one()
+    assert row.unable_reason == "entry_price_outlier"
+    assert row.return_20d is None and row.outcome_20d is None, "一个数都不许算出来"
     s.close()
 
 

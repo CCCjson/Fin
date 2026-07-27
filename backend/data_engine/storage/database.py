@@ -216,6 +216,24 @@ def init_db():
         if _classified:
             print(f"✓ decision_logs 已回填 entry_kind 分类: {_classified} 行")
 
+        # 存量 action 大小写归一（P0-4 批次2）。库里曾同时存着 `BUY`(69) 和 `buy`(6)，
+        # 而消费方全是**精确匹配**（report_engine/picks_log.py 的 `action == "BUY"`、
+        # decision_log.query_decisions 的等值过滤）—— 小写行在它们眼里不存在。
+        #
+        # 写入期已由 `outcome_eval.normalize_action` 收口，这条只管存量。
+        # `WHERE action <> upper(trim(action))` 让它**天然幂等**（改完条件就不成立）。
+        #
+        # ⚠️ 这**不违反**「原始决策不可篡改」（`decision_log._IMMUTABLE_REFRESH_FIELDS`）：
+        # 那条铁律管的是**回填评估路径**（改了当时的止损再去算胜率 = 给自己发奖状），
+        # 而大小写归一是**无损**变换，不改变任何语义。
+        with engine.begin() as conn:
+            _upcased = conn.execute(text("""
+                UPDATE decision_logs SET action = upper(trim(action))
+                WHERE action IS NOT NULL AND action <> upper(trim(action))
+            """)).rowcount
+        if _upcased:
+            print(f"✓ decision_logs 已归一 action 大小写: {_upcased} 行")
+
         dl_idx = {i["name"] for i in insp.get_indexes("decision_logs")}
         if "idx_decision_outcome_scan" not in dl_idx:
             with engine.begin() as conn:

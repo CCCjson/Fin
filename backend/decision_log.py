@@ -31,6 +31,7 @@ from common.outcome_eval import (
     RETRYABLE_UNABLE_REASONS,
     OutcomeResult,
     evaluate_single,
+    normalize_action,
 )
 from data_engine.storage.database import get_session
 from data_engine.storage.models import DailyQuote, DecisionLog
@@ -158,6 +159,11 @@ def record_decision(
     """
     try:
         entry_kind = normalize_kind(entry_kind)
+        # 大小写归一收在这一处（P0-4 批次2）。消费方全是**精确匹配**
+        # （`picks_log.py` 的 `action == "BUY"`、下方 query_decisions 的等值过滤），
+        # 小写行在它们眼里等于不存在。产地是 crypto 那边原样透传币安的 `side`，
+        # 但**不去改调用方** —— 靠每个写入点自觉正是这张卡在治的病。
+        action = normalize_action(action)
         _warn_if_confidence_looks_normalized(source, confidence)
         _warn_if_missing_outcome_fields(source, action, entry_price, prompt_version, entry_kind)
         if not total_tokens and (prompt_tokens or completion_tokens):
@@ -314,7 +320,9 @@ def query_decisions(
         if source:
             q = q.filter(DecisionLog.source == source)
         if action:
-            q = q.filter(DecisionLog.action == action)
+            # 入参也归一：不然传 `action="buy"` 查回 0 条 —— 比报错还糟（静默的空结果
+            # 会被读成「历史上没推荐过」）。写入期已保证库里全大写，两边同一把尺子。
+            q = q.filter(DecisionLog.action == normalize_action(action))
         if outcome_status:
             q = q.filter(DecisionLog.outcome_status == outcome_status)
         # 用户传的是**北京的日期**，而 created_at 存 UTC —— 必须换算，别直接当 naive 比。
@@ -560,8 +568,10 @@ def get_decision_stats(
     Returns:
         `{"engine_version": [...], "horizon_days": 20, "overall": {...}, "by_source": {...}}`。
         `engine_version` 是**数据里实际 distinct 的版本集合**而不是硬编码常量 ——
-        bump 之后老 completed 行不会重算，库里会混着两版；本卡不做重算，
-        但至少让「你正在跨版本混算」这件事可见。
+        bump 之后不可重试的 unable 行不会被回填再扫到，库里会混着两版；
+        至少让「你正在跨版本混算」这件事可见。
+        （v1 → v2 那次趁 `completed` 还是 0 用 `scripts/reset_decision_outcomes_v2.py`
+        整体重刷过一遍，代价为零；以后再 bump 就没这个窗口了，得掂量。）
     """
     if horizon not in (5, 20):
         horizon = 20

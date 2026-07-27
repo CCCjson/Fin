@@ -4,7 +4,7 @@ title: 决策留痕卫生（DecisionLog 被执行记录污染 + entry_price 定�
 size: 小
 depends: 无（但**卡住 P0-1/P0-3 真正产出可信数字**）
 paths_verified: 2026-07-27
-status: 🟢 批次1（止血）已完工 2026-07-27 —— 炸弹已拆；批次2（防复发）、批次3（可见性）待做
+status: 🟢 批次1（止血）+ 批次2（防复发）已完工 2026-07-27 —— 炸弹已拆且路已焊死；批次3（可见性）待做
 ---
 
 # P0-4 决策留痕卫生
@@ -197,11 +197,32 @@ BTC 同期真实价约 **6.1~6.5 万**。`entry_price=100.0` 只可能是：挂�
 `backfill_outcomes` 候选集从「全表」收敛到 **23 条（全部 advice）**；胜率分母 31（此前 98）。
 全套 **1614 passed**，跑前跑后生产库行数不变。
 
+### ✅ 批次2（防复发）已完工 2026-07-27
+
+| 类型 | 文件 | 做了什么 |
+|---|---|---|
+| 修改 | `common/outcome_eval.py` | **离谱入场价守卫**：`ENTRY_PRICE_OUTLIER_RATIO=10.0`、`_reference_price` / `_is_entry_outlier`、新 unable 原因 `entry_price_outlier`（**不可重试**）；新增 `normalize_action()` 作为全项目 action 的唯一一把尺子；**`ENGINE_VERSION` → `decision-outcome-v2`** |
+| 修改 | `decision_log.py` | `record_decision` 写入期归一 action（**单一收口点**，不改调用方）；`query_decisions` 的 action 入参也归一 |
+| 修改 | `data_engine/storage/database.py` | 存量 action 大小写一次性 UPDATE（`WHERE action <> upper(trim(action))` 天然幂等） |
+| 新增 | `scripts/reset_decision_outcomes_v2.py` | §C 两条：清非 advice 行的评估残留 + 趁 `completed=0` 整体重刷成 v2。已执行 |
+| 新增 | `tests/common/test_outcome_eval.py` +9 条 | 炸弹固定用例 / 对照组 / 双向 / 边界严格 `>` / 顺序在 MIN_BARS 之前 / 0 bar 仍报 no_quotes / 参考价不可用则放行 / action 归一 ×2 |
+| 新增 | `tests/test_decision_action_normalize.py`（9 条） | 写入期归一、查询入参归一、存量迁移幂等 + 不变式 |
+| 修改 | `tests/test_decision_entry_kind.py` | 原「对照组」entry 从 100 调到 6500（否则被第二道防线拦掉 → 对照组失效却看不出来），并新增一条**纵深防御**测试：分类层被绕过时守卫仍咬得住 |
+
+**三个关键设计取舍**（改这块前必读）：
+
+1. **参考物取「首根 bar」而不是当日收盘价** —— 首根 bar 是调用方已切好递进来的，评估期因此仍是**纯函数、不查库**；且它是决策次日的价，与 entry 只隔一天，**任何合法资产隔夜都不可能偏离 10 倍**，阈值极其安全。
+2. **守卫位置在 `MIN_BARS` 之前、`if not bars` 之后** —— 离谱价 1 根 bar 就判得出，放后面会先报 `insufficient_bars`（可重试）→ 每天被重扫，白等攒够 5 根；而 0 根 bar 时没有参考物，说「离谱」是猜，诚实地留在 `no_quotes` 里。
+3. **阈值用严格 `>`** —— 10:1 拆股会让复权价与原始 entry 恰好差 10 倍整，不该误杀。反过来 20:1 这类会被标 outlier，而那种情况本来也算不出有意义的收益率。
+
+**生产实测**（改完当场验）：全套 **1633 passed**（基线 1614 + 19 新增）；`init_db` 归一 6 行小写 action；重刷脚本清空 60 行的 12 个 outcome 列后按 v2 重评 33 条 → 待评 18 / 没法评 15；**`engine_version` 只剩 `decision-outcome-v2`**（v1 彻底消失）；execution/ops 的 **27 行残留评估戳清零**；`entry_price_outlier` 命中 **0 条**（如预期 —— 脏行批次1 已删干净，这道守卫是纯防复发不是止血）；action 大小写脏行 0。
+
+> ⚠️ **`completed=0` 这个重刷窗口已经用掉了**。以后再 bump `ENGINE_VERSION`，不可重试的 unable 行不会被回填重扫 → 会长期混着两版；那时候重刷就要连「已经进过 P0-3 校准的历史结果」一起洗，得掂量。
+
 ### 待做
 
 | 批次 | 内容 |
 |---|---|
-| **批次2 防复发** | ① 评估期离谱值守卫（`common/outcome_eval.py`，entry 与首根 bar 偏离 >10 倍 → `unable/entry_price_outlier` 不可重试，**bump `ENGINE_VERSION` → v2**，拿 entry=100 的 BTC 当固定用例）② `action` 写入期强制大写 + 历史一条 UPDATE 归一 |
 | **批次3 可见性** | ① `agents/tools/decision_tools.py` 的 `_SOURCES` Literal 补 `crypto`/`crypto_cockpit`/`crypto_earn`（现在 MoneyBill **根本没法按 crypto 来源查胜率**）+ 开 `entry_kind` 入参让回执可查 ② 下单的双重留痕收口（confirm_gate 与 execution.py 记同一笔单）③ 该工具 docstring 里「完整快照留在 /decisions 页面看」是**陈述过期**，没有这个页面 |
 
 ## 4. 为什么这张卡值得插在 P1 之前

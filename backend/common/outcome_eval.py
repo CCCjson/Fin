@@ -27,7 +27,9 @@ from typing import Any, Protocol
 # 判定口径的版本戳。**改窗口天数 / 中性带 / ambiguous 策略 / 方向公式 = 必须 bump。**
 # 不 bump 就等于让新口径的结果和旧口径的结果混在一张表里，跨版本混算胜率 ——
 # 正是上方设计点 2 要防的事。
-ENGINE_VERSION = "decision-outcome-v1"
+#
+# v2（P0-4 批次2）：加入下方的**离谱入场价守卫**，多了一个 `entry_price_outlier` 判定。
+ENGINE_VERSION = "decision-outcome-v2"
 
 # 中性带：|收益率| <= 1% 视为「没看错也没看对」。
 # 取 1.0 是为了和 `analysis_engine/signal_tracker.py` 的 outcome 判定对齐（那里也是 ±1%），
@@ -44,6 +46,22 @@ MIN_BARS = 5
 # 超过这个天龄还凑不满 bar，就从「可重试」降级为「不可重试」——
 # 三个月都没补上的行情，明天也不会有（退市/长期停牌），别让它每天被扫一遍。
 STALE_AFTER_DAYS = 90
+
+# 离谱入场价的双向倍数阈值（P0-4 批次2 的防复发线）。
+#
+# 病史：`decision_logs` 里曾躺着 39 条 `BTCUSDT.BN BUY entry=100.0`（BTC 真实价 6 万+），
+# 只要攒够 bar 就会被评成 `(65000-100)/100 ≈ +64900%` 的 **win**，把胜率顶到 100%、
+# 让 P0-3 的校准（只下调不上抬）**永久失效且不报错**。那批脏行的来源已经堵死
+# （`entry_kind` 分类 + 测试写生产库的结构性堵法），这道守卫防的是**下一个**来源。
+#
+# **参考物取「首根 bar」**：它是决策次日的价，与 entry 只隔一天 —— 任何合法资产
+# 隔夜都不可能偏离 10 倍，所以阈值极其安全（crypto 的真实极端行情也够不着）。
+# 拿「当日收盘价」当参考物则要查库，评估期就不再是纯函数了。
+#
+# 顺带的好处：若行情是复权价而 entry 是当时的原始价，20:1 这类大比例拆股会被标成
+# outlier 而不是算出一个垃圾收益率 —— 这正是想要的结果。10:1 拆股 ratio 恰好等于
+# 10.0，用严格 `>` 判定不误伤。
+ENTRY_PRICE_OUTLIER_RATIO = 10.0
 
 # 能评出方向的 action。HOLD / AGGREGATE / cockpit 的 "N/A" 都不在此列 ——
 # 它们没有可证伪的方向断言，**这不是「判错」，是「没法评」**。
@@ -66,6 +84,10 @@ RETRYABLE_UNABLE_REASONS = frozenset({
 #   action_not_directional —— HOLD / AGGREGATE / "N/A"，没有可证伪的方向
 #   no_entry_price         —— 没记入场价，见上方分歧说明
 #   invalid_entry_price    —— 入场价 <= 0，脏数据
+#   entry_price_outlier    —— 入场价与首根 bar 偏离超过 ENTRY_PRICE_OUTLIER_RATIO 倍。
+#                             **不可重试**：它是这条留痕的永久属性 —— entry_price 被
+#                             `_IMMUTABLE_REFRESH_FIELDS` 冻死（原始决策不可篡改），
+#                             重试一万次结果一样。同 no_entry_price 的道理。
 #   stale_no_data          —— 超过 STALE_AFTER_DAYS 仍无数据
 
 
@@ -107,6 +129,53 @@ def is_retryable(reason: str | None) -> bool:
     独立列会允许「reason=no_action 但 retryable=1」这种不可能状态存在。
     """
     return reason in RETRYABLE_UNABLE_REASONS
+
+
+def normalize_action(action: str | None) -> str | None:
+    """`buy` / ` Buy ` → `BUY`；空串、纯空白、None → `None`。
+
+    **全项目对 `action` 的唯一一把尺子**（P0-4 批次2）。放在这儿而不是
+    `decision_log.py`，是因为 `evaluate_single` 本来就要做这次归一（评估侧必须容忍
+    历史脏行），两边共用一个函数才不会出现「写入期归一成 A、评估期归一成 B」。
+
+    为什么写入期也要归一：`DecisionLog.action` 曾同时存着 `BUY`(69) 和 `buy`(6)，
+    而消费方是**精确匹配** —— `report_engine/picks_log.py` 的 `action == "BUY"`、
+    `query_decisions(action=...)` 的等值过滤，小写行在它们眼里根本不存在。归一收在
+    `record_decision` 一处，**不去逐个改调用方**（小写就是 crypto 那边原样透传
+    币安的 `side` 来的）—— 靠每个调用方自觉正是这张卡在治的病。
+
+    大小写归一是**无损**变换（`buy` → `BUY` 不改变任何语义），所以对存量数据做
+    一次性 UPDATE 不违反「原始决策不可篡改」。
+    """
+    a = (action or "").strip().upper()
+    return a or None
+
+
+def _reference_price(bar: BarLike) -> float | None:
+    """一根 bar 上取一个「这资产大概值多少」的参考价。
+
+    优先 close；close 缺就退 (high+low)/2；**都拿不到就返 None → 守卫直接跳过**
+    （宁可放过一条离谱价，也不能拿空气当参考物误杀真建议）。
+    """
+    close = bar.close
+    if close is not None and close > 0:
+        return float(close)
+    high, low = bar.high, bar.low
+    if high is not None and low is not None and high > 0 and low > 0:
+        return (float(high) + float(low)) / 2
+    return None
+
+
+def _is_entry_outlier(entry: float, bar: BarLike) -> bool:
+    """入场价与首根 bar 偏离超过 `ENTRY_PRICE_OUTLIER_RATIO` 倍？
+
+    **双向**判定：`entry=100 / ref=65000`（少写了几个零）和 `entry=65000 / ref=100`
+    （多写了几个零 / 传错字段）是同一类错误，都得抓。
+    """
+    ref = _reference_price(bar)
+    if ref is None or ref <= 0 or entry <= 0:
+        return False
+    return max(entry / ref, ref / entry) > ENTRY_PRICE_OUTLIER_RATIO
 
 
 def _label(ret: float | None) -> str | None:
@@ -151,7 +220,7 @@ def evaluate_single(
     # ---- 判定顺序即优先级，短路，不可换 ----
     # （顺序的意义：action=None 且 entry_price=None 时，答案必须是 no_action ——
     #   「连方向都没记」是更根本的原因，报 no_entry_price 会误导人去补价格。）
-    action = (advice.action or "").strip().upper()
+    action = normalize_action(advice.action)
     if not action:
         return OutcomeResult("unable", "no_action")
     if action not in _DIRECTIONAL_ACTIONS:
@@ -164,7 +233,15 @@ def evaluate_single(
         return OutcomeResult("unable", "invalid_entry_price")
 
     if not bars:
+        # ⚠️ 离谱价守卫**够不着这里** —— 没有 bar 就没有参考物，此时说「离谱」是猜。
+        # 诚实地留在可重试里，等 bar 来了自然翻成 entry_price_outlier。
         return OutcomeResult("unable", "stale_no_data" if stale else "no_quotes")
+    # 离谱入场价守卫（P0-4 批次2）。**位置在 MIN_BARS 之前是刻意的**：离谱价是数据
+    # 自身的属性，1 根 bar 就判得出来。放后面的话，entry=100 那条会先报
+    # insufficient_bars（可重试）→ 每天被重扫，白等攒够 5 根才拦得住；放前面 =
+    # 见到第一根 bar 就终结、当场退出候选集。
+    if _is_entry_outlier(entry, bars[0]):
+        return OutcomeResult("unable", "entry_price_outlier")
     if len(bars) < MIN_BARS:
         return OutcomeResult("unable", "stale_no_data" if stale else "insufficient_bars")
 

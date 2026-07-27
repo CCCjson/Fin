@@ -17,6 +17,7 @@ from common.outcome_eval import (  # noqa: E402
     compute_summary,
     evaluate_single,
     is_retryable,
+    normalize_action,
 )
 
 
@@ -101,7 +102,135 @@ def test_retryable_classification():
     assert not is_retryable("no_entry_price")
     assert not is_retryable("invalid_entry_price")
     assert not is_retryable("stale_no_data")
+    # entry_price_outlier 同理：entry_price 冻结 → 离谱就永远离谱，重试一万次一样。
+    assert not is_retryable("entry_price_outlier")
     assert not is_retryable(None)
+
+
+# ---------- 离谱入场价守卫（P0-4 批次2 的防复发线）----------
+
+def test_the_bomb_entry_100_btc_is_not_evaluated():
+    """⭐ **那颗炸弹的固定用例**：`BTCUSDT.BN BUY entry=100.0` 撞上 6.5 万的 bar。
+
+    库里曾躺着 39 行这个（测试写进生产库的假成交）。只要攒够 bar 就会被评成
+    `(65000-100)/100 ≈ +64900%` 的 **win** → 胜率顶到 100% → P0-3 的校准
+    （只下调不上抬）永久失效**且不报错**。批次1 已把那批脏行删了，这道守卫防的是
+    **下一个**来源。
+    """
+    bars = _flat_bars(20, close=65000.0)
+    r = evaluate_single(_advice(action="BUY", entry_price=100.0), bars)
+    assert r.outcome_status == "unable"
+    assert r.unable_reason == "entry_price_outlier"
+    assert not is_retryable(r.unable_reason)
+    # 收益率一个都不许算出来 —— 守卫的意义就是让这条行进不了任何统计。
+    assert r.return_5d is None and r.return_20d is None
+    assert r.outcome_5d is None and r.outcome_20d is None
+
+
+def test_the_bomb_control_group_would_have_been_a_win():
+    """**对照组** —— 防这条测试哪天测了空气。
+
+    同一批 bar、同一个方向，只把 entry 换成合理值 → 正常评出来。若哪天守卫写错成
+    「什么都拦」，上面那条测试照样绿，只有这条会红。
+    """
+    bars = _flat_bars(20, close=65000.0)
+    r = evaluate_single(_advice(action="BUY", entry_price=65000.0), bars)
+    assert r.outcome_status == "completed"
+    assert r.unable_reason is None
+
+    # 再证一次「若当成可评的就是一条 +64900% 的 win」：把守卫的阈值换算掉之后，
+    # 同样的数据用 entry=6500（差 10 倍整，不触发严格 `>`）确实产出巨额正收益。
+    r2 = evaluate_single(_advice(action="BUY", entry_price=6500.0), bars)
+    assert r2.outcome_status == "completed"
+    assert r2.outcome_20d == "win" and r2.return_20d == 900.0
+
+
+def test_outlier_guard_is_bidirectional():
+    """`entry=100 / ref=65000`（少写几个零）和 `entry=65000 / ref=100`（多写几个零、
+    或把金额传进了 price 参数）是同一类错误，两个方向都得抓。"""
+    assert evaluate_single(_advice(entry_price=1.0), _flat_bars(20, close=1000.0)
+                           ).unable_reason == "entry_price_outlier"
+    assert evaluate_single(_advice(entry_price=1000.0), _flat_bars(20, close=1.0)
+                           ).unable_reason == "entry_price_outlier"
+
+
+def test_outlier_boundary_is_exclusive():
+    """恰好 10 倍**放行**，10 倍多一点点才拦。
+
+    严格 `>` 是刻意的：10:1 拆股会让复权价与原始 entry 恰好差 10 倍，那种情况不该
+    被当成脏数据误杀。
+    """
+    on_edge = evaluate_single(_advice(entry_price=100.0), _flat_bars(20, close=1000.0))
+    assert on_edge.unable_reason != "entry_price_outlier"
+    assert on_edge.outcome_status == "completed"
+
+    over = evaluate_single(_advice(entry_price=100.0), _flat_bars(20, close=1000.01))
+    assert over.unable_reason == "entry_price_outlier"
+
+
+def test_outlier_guard_fires_before_insufficient_bars():
+    """**判定顺序**：1 根 bar 就判得出离谱，不必等攒够 5 根。
+
+    放在 MIN_BARS 之后的话，这条行会先报 insufficient_bars（**可重试**）→ 每天被
+    回填重扫一遍，白等到第 5 根 bar 才拦得住。放前面 = 见到第一根就终结、当场退出
+    候选集。
+    """
+    r = evaluate_single(_advice(entry_price=100.0), _flat_bars(1, close=65000.0))
+    assert r.unable_reason == "entry_price_outlier"
+    assert not is_retryable(r.unable_reason)
+
+
+def test_no_bars_still_reports_no_quotes_not_outlier():
+    """0 根 bar → 没有参考物，此时说「离谱」是**猜**。
+
+    诚实地留在可重试的 no_quotes 里，等 bar 来了自然翻成 entry_price_outlier。
+    """
+    r = evaluate_single(_advice(entry_price=100.0), [])
+    assert r.unable_reason == "no_quotes" and is_retryable(r.unable_reason)
+
+
+def test_guard_skips_when_reference_price_unusable():
+    """参考价取不到就**跳过守卫**，不误杀。
+
+    宁可放过一条离谱价（它顶多是一条噪声），也不能拿空气当参考物把真建议判成脏数据
+    —— 后者是**看不见**的数据损失。close 缺 → 退 (high+low)/2；再缺 → 放行。
+    """
+    # close 缺、high/low 在 → 用中值 (65000+65000)/2 仍判得出离谱
+    r = evaluate_single(_advice(entry_price=100.0), [_bar(65000.0, 65000.0, None)] * 20)
+    assert r.unable_reason == "entry_price_outlier"
+
+    # 三个价全缺 → 守卫放行，走正常流程（收益率自然是 None）
+    r = evaluate_single(_advice(entry_price=100.0), [_bar(None, None, None)] * 20)
+    assert r.unable_reason is None
+    assert r.outcome_status == "completed"
+
+
+# ---------- action 归一（P0-4 批次2）----------
+
+def test_normalize_action_is_the_single_ruler():
+    """`buy` / ` Buy ` → `BUY`；空串与纯空白 → None（不是 `""`）。
+
+    库里曾同时存着 `BUY`(69) 和 `buy`(6)，而消费方全是**精确匹配**
+    （`report_engine/picks_log.py` 的 `action == "BUY"`、`query_decisions` 的等值
+    过滤）—— 小写行在它们眼里根本不存在。写入期与评估期共用这一个函数，两边才不会
+    各归一各的。
+    """
+    assert normalize_action("buy") == "BUY"
+    assert normalize_action("  Buy  ") == "BUY"
+    assert normalize_action("BUY") == "BUY"
+    assert normalize_action("") is None
+    assert normalize_action("   ") is None
+    assert normalize_action(None) is None
+
+
+def test_lowercase_action_still_evaluates():
+    """评估侧对历史脏行的**容错不许撤**：库里存量的 `buy` 照样评得出方向。
+
+    写入期归一只管新行；把评估期的 upper() 拿掉，存量小写行会全部掉进 no_action。
+    """
+    r = evaluate_single(_advice(action="buy"), _flat_bars(20, close=110.0))
+    assert r.outcome_status == "completed"
+    assert r.outcome_20d == "win"
 
 
 # ---------- 状态机 ----------
