@@ -153,13 +153,45 @@ paths_verified: 2026-07-27
 
 ---
 
-## 4. crypto 兼容（本卡属分类 ②：要加 crypto 分支）
+## 4. 🪙 crypto 兼容（2026-07-27 重设计｜**A 段 = ① · B 段 = ②**）
 
-crypto 五维没有 ML 维（`crypto_intel_engine/scorer.py:179`）。按 [[gap-analysis-roadmap]] 的 crypto 重设计要求：
+> 先读 `00-PLAN.md` §4b 通用口径。
 
-- crypto 横截面样本量远小于 A 股（币种数量级是几百不是 5000+），**能不能撑起一个独立模型要先验**，别想当然照搬
-- crypto 7×24 无交易日历 → 「未来 N 日」的定义、walk-forward 的期划分都要重新定
-- **A 段与市场无关**（披露逻辑通用），B 段的 crypto 分支单独评估
+### 🔴 A 段：披露机制要覆盖**两个 scorer**，不是一个（重设计新增的关键点）
+
+原先写的是「A 段与市场无关，披露逻辑通用」—— **一半对一半错**。逻辑确实通用，但**落点有两处**：
+
+| scorer | 位置 | 有 `dimension_coverage` 吗 |
+|---|---|---|
+| 股票 cockpit | `cockpit_engine/scorer.py:103` | ✅ |
+| **crypto cockpit** | `crypto_intel_engine/scorer.py:602` | ✅ **同款已有** |
+
+**两个 scorer 各写了一遍同一套「缺维 → 重新归一化 → 记 coverage」的逻辑。** A 段若只接股票那条，crypto 侧的缺维披露照样是哑巴。
+
+而且 **crypto 更常缺维**：五维里的 `flow`（资金流）和 `sentiment`（新闻事件）都依赖外部免费源，取数失败是常态 —— `scorer.py:380/438` 专门为此写了 `weight_covered` 的部分覆盖机制。**crypto 的 coverage < 1.0 出现频率比股票高。**
+
+> ✅ **一个好消息**：crypto 侧已经把 `dimension_coverage` / `weights_used` / `available_dimensions` 存进 `DecisionLog.input_snapshot` 了（`agents/tools/crypto_tools.py:178-183`）。**数据早就有，还是那句话 —— 病在这份诚实没传到 MoneyBill 嘴上。**
+
+**A 段落点因此 +1**：`crypto_tools.py` 的 `analyze_crypto` 返回值也要把缺席维度名单往上带。
+
+### B 段：crypto 横截面**能不能做，先验样本量**
+
+| 项 | A 股 | crypto |
+|---|---|---|
+| 标的数 | **5201** | **460**（实测 `daily_quotes` distinct symbol） |
+| 面板行数 | ≈ 452 万 | 数量级小两档 |
+| 行业分类 | 有 | **无** |
+| 单一标的主导 | 无 | **BTC 主导度极高**，多数币是 BTC 的 beta |
+
+**「未来 N 日相对市场中位数的超额收益」这个标签在 crypto 上要重新想**：460 个高度相关的标的，中位数很大程度就是 BTC 走势，减掉它之后剩下的残差信噪比有多少 —— **没验过，别想当然。**
+
+🔗 **与 [[P2-3]] B 段是同一个问题**：那张卡的 IC/IR 横截面口径面对的是**一模一样**的三个障碍（样本量/无行业/BTC 主导）。**验一次，两张卡共用结论。**
+
+### 其他 crypto 差异
+
+- **7×24 无交易日历** → 「未来 N 日」= N 个自然日；walk-forward 的「每季度」在 crypto 上要重新定期界
+- **无财报** → B 段的「财报按 report_date + 45 天对齐」这条**整条不适用**，crypto 的对应物是链上数据（TVL/解锁表，见 [[P2-1]] 的 crypto 章节）
+- **⛔ 别拿 A 股的做法照搬** —— `00-PLAN.md` §4b.4 反模式 3：每次用之前先验样本量
 
 ---
 

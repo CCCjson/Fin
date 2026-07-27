@@ -65,3 +65,59 @@ paths_verified: 2026-07-07 ⚠️ 待核实
 ## 连带（做这项时顺手，别单开）
 
 **结构化 bull/bear**：定义 `{bull_case: [{claim, evidence, source}], bear_case: [...]}` schema，deep_stock 输出契约升级 + widget 渲染对称双栏。现在 bull/bear **只在 prompt 层**，无结构化对称对象。
+
+---
+
+## 🪙 crypto 兼容（2026-07-27 重设计｜**分类 ②：要加 crypto 分支**）
+
+> 先读 `00-PLAN.md` §4b 通用口径。
+
+### 🔴 核心问题：crypto **没有 deep_stock 可反驳**
+
+验收标准 1 写的是「**输入 deep_stock 的结论文本**」。查代码：
+
+| 检查 | 结果 |
+|---|---|
+| `agents/subagents/deep_stock.py` 的 crypto 命中 | **0** |
+| `agents/skills/deep_stock.md` 的 crypto 命中 | **0** |
+| `_DEEP_STOCK_TOOLS` 六只工具 | `get_daily_data` / `get_realtime_quote` / `get_cockpit_score` / `get_news_sentiment` / `get_stock_signals` / `search_knowledge` —— **全部是股票工具**（`get_cockpit_score` 是股票 cockpit，crypto 走独立的 `analyze_crypto`） |
+
+**crypto 侧的「深度分析」是一个工具（`analyze_crypto`）不是 subagent**，产出是结构化 `ToolEnvelope`（含 dimensions / weights_used / screen / data_quality），不是自由文本结论。
+
+### 于是本卡的入参契约要重新设计（**这是 crypto 分支的全部重点**）
+
+反方 subagent 会拿到**两种形状完全不同的输入**：
+
+| 来源 | 形状 | 反方能拿到什么 |
+|---|---|---|
+| `run_deep_stock` | **自由文本**结论（≤1500 字摘要） | 论点靠 LLM 从文本里读 |
+| `analyze_crypto` | **结构化 dict**（五维分数 + 排雷结果 + 数据质量） | 论点是现成字段，**反方其实更好写** |
+
+**两个方向，倾向 B**：
+
+- **A**：反方只接文本 → crypto 侧先把 `analyze_crypto` 结果渲染成文本再喂。**简单，但把结构化信息降级成文本，白瞎了**
+- **B（倾向）**：入参契约定义成 `{conclusion_text, structured?}`，两边都能喂，反方 prompt 按有无 `structured` 分支。**crypto 的排雷维本来就是天然的反方论据**
+
+⚠️ **这个选择要在探查 ai-hedge-fund 时一并回答**（本卡开头探查前置的问题 ②「反方角色拿到的是什么形状的输入」）—— **它现在有了第二个必须回答的理由**。
+
+### crypto 的反方论据来源（股票侧没有的）
+
+crypto 有一整套**结构性看空论据**，是股票分析里没有对应物的，反方 prompt 应该显式要求检查：
+
+| 论据 | 数据源（已有） |
+|---|---|
+| 代币解锁砸盘 | 真解锁表（[[crypto-decision-sources-v2]]） |
+| 链上资金流出 / 交易所储备异动 | flow 维 |
+| 代币经济学缺陷（通胀率、集中度） | 排雷层 |
+| 硬否决级事件（下架 / 被盗 / 监管执法） | `crypto_intel_engine/news.py:169` `check_hard_events` |
+
+> 💡 **`check_hard_events` 已经是一个规则版的反方** —— 它做的正是「找否决这笔交易的理由」。本卡的 LLM 反方**不该重复它已覆盖的事件类型**，而应补它补不了的（叙事证伪、竞品替代、估值逻辑漏洞）。**开工时先读它的 `_HARD_EVENT_RULES`，避免重叠。**
+
+### crypto 分支的落点增量
+
+| 类型 | 文件 | 要做什么 |
+|---|---|---|
+| 新增 | `backend/agents/subagents/devils_advocate.py` | 入参契约支持结构化输入（方向 B） |
+| 新增 | `backend/agents/skills/devils_advocate.md` | prompt 分支：股票用财务/估值/竞争视角；crypto 用解锁/链上/代币经济学视角 |
+| 修改 | `backend/agents/skills/monitor.md` | 纪律要写成「**deep_stock 或 analyze_crypto** 给出 BUY 后追加反方」，别只写 deep_stock |
+| 测试 | `backend/tests/agents/` | 契约测试要**两种输入形状都覆盖** |

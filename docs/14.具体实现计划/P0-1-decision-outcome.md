@@ -113,3 +113,42 @@ status: ✅ 已完工 2026-07-17（commit ee561a1 → f95c08d，六笔）
 - **回填骨架仍抄自家** SignalTracker/PredictionValidator——我们有本地行情库和定时任务，不必像它那样「下次 run 时现拉 yfinance」。
 - **教训生成+注入**参考它。
 - 与 P0-3 **互补不重复**：这条是**定性**的（文字教训），P0-3 是**定量**的（数值系数）。**先做 P0-3**（确定性强、可测），教训半环随后。
+
+---
+
+## 🪙 crypto 实况补记（2026-07-27 重设计｜**分类 ④：已完工，但 crypto 实况未验**）
+
+> 本卡写于 2026-07-07~17，**crypto 模块 07-20 才启动**，卡里零 crypto 覆盖。以下是 07-27 查生产库/代码的实况，**是事实补记不是方案变更**。
+
+### ✅ 代码层面 crypto 已通（不用改）
+
+| 检查 | 结果 |
+|---|---|
+| `backfill_outcomes` 认不认 crypto | ✅ **已逐行按 symbol 推市场**（`decision_log.py:406` `infer_market_from_symbol` + `market_today` + `market_day_of`），注释原文：「decision_logs 里 A 股和 crypto 混存（crypto 的市场日是 UTC），所以只能逐行按 symbol 推市场」 |
+| crypto 日线取不取得到 | ✅ 落**同一张** `daily_quotes`（`market='crypto'`，460 币种，最新 07-26 —— 比 A 股还新） |
+| `infer_market_from_symbol('BTCUSDT.BN')` | ✅ 实测返回 `crypto` |
+| `outcome_eval` 内核 | ✅ **纯函数、市场无关**（调用方切好 bars 传入，只按 bar 序号算） |
+
+**这是时区统一工程（[[timezone-unification]]）顺手带到的** —— 那轮改造覆盖了 crypto，本卡因此意外地不用返工。
+
+### 🔴 但数据层面有雷 —— 见新卡 [[P0-4]]
+
+| 实测 | 数字 |
+|---|---|
+| `decision_logs` 总行数 | 98 |
+| **crypto 来源占比** | **53 行 = 54%（最大来源）** |
+| `outcome_status = completed` | **0** |
+| 🔴 `BTCUSDT.BN BUY entry_price=100.0`（BTC 真实价 6 万+） | **39 行 = 全表 40%** |
+
+**本卡的评估管道是对的，喂给它的东西不对。** `source="crypto"` 的 45 条来自 `crypto_intel_engine/execution.py` 的**订单成交/挂单回执**，不是 AI 建议 —— 拿它们算胜率在语义上就是错的；而 39 条 entry=100 一旦攒够 5 根 bar 会被评成 **+64900% 的 win**。
+
+**详见 `P0-4-decision-log-hygiene.md`。P0-1 的数字在 P0-4 完工前不可信。**
+
+### ⚠️ 一个口径差异（不是 bug，但任何并排展示都要标注）
+
+`HORIZONS = (5, 20)` 数的是 **bar 数**：
+
+- A 股 20 根 bar ≈ **4 个自然周**
+- crypto 20 根 bar = **20 个自然日**（7×24 每天出 bar）
+
+**两者的「20 日胜率」不是同一个东西。** 跨市场混算或并排展示时必须标注窗口长度不等。

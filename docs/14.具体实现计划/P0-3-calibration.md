@@ -75,3 +75,32 @@ paths_verified: 2026-07-17
 ## 与 P0-1「教训反哺半环」的关系
 
 **互补，不重复。** TradingAgents 那条是**定性**的（LLM 提炼 2-4 句教训注入下次 prompt）；本项是**定量**的（数值系数调置信度）。**先做本项**——确定性强、可测。
+
+---
+
+## 🪙 crypto 实况补记（2026-07-27 重设计｜**分类 ④：已完工，但 crypto 实况未验**）
+
+### ✅ crypto 已经 source 单列（做对了）
+
+`agents/tools/crypto_tools.py:163` 注释原文：
+
+> 「source 单列，crypto 与股票**各算各的**胜率/校准（`get_calibration_factor("crypto_cockpit")` 读的就是这条）」
+
+**这正是 `00-PLAN.md` §4b.4 反模式 2（别在 crypto 和股票之间混算统计量）的正确实现** —— 其他卡的 crypto 分支照这个抄。
+
+### 🔴 但本卡的机制正被 [[P0-4]] 架空
+
+本卡的核心设计是**只下调不上抬** + **≥30 已评样本才生效**。这两条在正常数据下是保守而正确的，**但配上 P0-4 的脏数据会变成致命组合**：
+
+```
+39 条 entry_price=100.0 的 BTC 建议
+   → 攒够 5 根 bar 被评成 +64900% 的 win
+   → get_decision_stats(crypto) 胜率 ≈ 100%
+   → compute_calibration 看到高命中率
+   → 「只下调不上抬」→ calibration_factor 恒 = 1.0
+   → 校准对 crypto 永久失效，且不报错、不告警
+```
+
+**「只下调不上抬」这条保守设计，在输入被污染时反而成了掩护**：它让「校准没生效」看起来跟「不需要校准」一模一样。
+
+⛔ **P0-4 完工前，`get_calibration_factor("crypto_cockpit")` 的返回值不可信。** 而 crypto 占 `decision_logs` 的 54%。

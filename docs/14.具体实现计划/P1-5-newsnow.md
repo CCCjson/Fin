@@ -50,3 +50,48 @@ status: 方案已勘察定稿，实测数据在手，可直接开工
 1. 四个真新闻源接入 + 雪球单独做热度信号。
 2. 复用 `domestic`/`global` 分组。
 3. `published_at` 只让 NewsNow 带真时间，不动其他源。
+
+---
+
+## 🪙 crypto 兼容（2026-07-27 重设计｜**分类 ②：要加 crypto 分支**）
+
+> 先读 `00-PLAN.md` §4b 通用口径。
+
+### 现状：crypto 已有一条**独立的**新闻链，本卡不能无视它
+
+| 已有资产 | 干什么 |
+|---|---|
+| `acquisition/markets/crypto_news.py` | crypto 新闻/公告出网抓取 |
+| `crypto_intel_engine/news.py`（16.7KB） | crypto 新闻 → 事件识别 → **事件硬否决**（见 [[crypto-decision-sources-v2]]） |
+| `data_engine/crypto_updater.py:264` | 公告 + 新闻 RSS → `NewsArticle(market='crypto')` + FinBERT 情绪 |
+
+**✅ 好消息：落库口径已经通** —— `news_articles` 表已有 `market='crypto'` 的行，NewsNow 的 crypto 源接进来不需要动表结构。
+
+**⚠️ 真正的决策点：NewsNow 的 crypto 源并进哪条链？**
+
+- 并进 `news_engine/fetcher.py:collect_market_news`（本卡主路径）→ 进通用新闻池，**但拿不到 `crypto_intel_engine/news.py` 的事件硬否决能力**
+- 并进 crypto 自己那条链 → 能吃到事件否决，**但要在 crypto 侧再写一遍 NewsNow 接入**
+- **倾向前者 + 让 crypto 链去读通用池**，但这依赖 crypto 链现在怎么取新闻 —— **开工时先勘察 `crypto_intel_engine/news.py` 的数据来源，再定**。别先写代码。
+
+### ⚠️ 未经核实的部分（**开工时必须先实测，不许照抄下面这段当结论**）
+
+本卡正文那四个源（cls-hot / gelonghui / wallstreetcn-quick / jin10）是 **2026-07-17 实测过 shape 的**，可信。但 crypto 相关的以下几点**全部只是推测**：
+
+| 推测 | 要验什么 |
+|---|---|
+| NewsNow 有 crypto 分类的源（coindesk / odaily / blockbeats / 深潮之类） | **先 `GET {base}/api/s?id=<猜的id>` 挨个试**，拿到真实 source_id 和 shape 再写进卡。⛔ 别把「据说有」写成落点 |
+| `jin10` / `wallstreetcn-quick` 里本来就混着 crypto 快讯 | 实测抓一批看有多少条是币圈内容 —— 若比例够高，**可能根本不需要新增 crypto 源**，只需在消费侧按关键词分流 |
+| 雪球热度的 crypto 对应物（币安热搜 / CoinGecko trending） | CoinGecko 有**滚动窗口封禁**（见 [[crypto-decision-sources-v2]]），排雷类调用必须一天一次。热度信号若要高频，**换币安自己的接口** |
+
+### crypto 分支的落点增量
+
+| 类型 | 文件 | 要做什么 |
+|---|---|---|
+| 修改 | `backend/acquisition/markets/newsnow.py`（本卡新增的那个文件） | `_NEWSNOW_SOURCES` 目录加 crypto 组（**source_id 待实测填**）。`Channel.OVERSEAS` 不变 |
+| 修改 | `backend/news_engine/fetcher.py` | crypto 源的 `market` 字段要落 `crypto`，**别混进 domestic/global 两组**——那两组是给股票消费方用的 |
+| 待定 | `backend/crypto_intel_engine/news.py` | 是否改读通用新闻池（见上方「真正的决策点」）。**开工时勘察后决定，别提前动** |
+
+### ⛔ 别踩的坑
+
+- **`news_articles` 表无 retention、只增不减**（本卡正文已警告）。crypto 新闻源普遍**高频且噪声大**（各种 KOL 转发、交易所公告刷屏），比 A 股财经源更容易灌爆这张表。**接 crypto 源前先想清楚频率**。
+- **48 小时同标题去重**对 crypto 更容易误伤：币圈同一条消息各家标题几乎一致，去重会吃掉大部分。这与股票侧「吃掉转载」是同一机制，但 crypto 上更严重。

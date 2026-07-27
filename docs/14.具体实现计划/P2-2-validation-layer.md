@@ -48,3 +48,21 @@ paths_verified: 2026-07-07 ⚠️ 待核实
 ## 参考
 
 **Great Expectations**（开源数据质量框架）：「expectation suite + 每日校验报告」模式可简化后用于跨源抽检。⚠️ 未做过源码级核实。
+
+---
+
+## 🪙 crypto 实况补记（2026-07-27 重设计｜**分类 ④：B/C 已完工但 crypto 未验；A 段要加 crypto 分支**）
+
+### B 段（health 扩域）—— crypto 部分已有
+
+`common/market_freshness.py` 已含 crypto 覆盖（07-27 grep 命中 5 处），且新鲜度按市场分开算参考日、木桶取短板（见 [[daily-chain-silent-day-loss]]）。
+
+⚠️ **但 crypto 的「新鲜度」定义与股票根本不同**：股票按「上一个交易日」判，**crypto 7×24 没有交易日概念** —— 数据落后 1 天在 A 股周一早上是正常的，在 crypto 上就是**故障**。开工扩域时确认这条已经分开处理，别套用 `STALE_AFTER_WEEKDAYS`。
+
+### A 段（跨源抽检）—— crypto 要加分支，但**优先级更高**
+
+本卡 A 段的现成资产（东财 vs 腾讯 vs 新浪）**全是 A 股源**，crypto 没有对应物。
+
+**但 crypto 反而更需要跨源校验**：币安是**唯一源**，没有备源可比。一旦币安返回异常数据（限流后的残缺响应、维护期的陈旧价），**当前没有任何机制能发现**。
+
+可行的 crypto 抽检方向（**未验证，待评估**）：拿 CoinGecko 的价格做交叉比对。⚠️ 但 CoinGecko 是**滚动窗口封禁**（见 [[crypto-decision-sources-v2]]），抽检频率必须一天一次，**不能像股票侧那样随便调**。

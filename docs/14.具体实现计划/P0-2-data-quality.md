@@ -103,3 +103,32 @@ status: ✅ 已完工 2026-07-17（d216c4e / 1c7b3c0 / b2ba21a / 030cdd3，四�
 | `daily_stock_analysis/src/schemas/analysis_context_pack.py` + `docs/analysis-context-pack.md` | 八态 `ContextFieldStatus` + 字段级 `{status, value, source, timestamp, fallback_from, missing_reason}` + block 级聚合 + `DataQuality{overall_score, level, block_scores, limitations}`。**它有整套专题文档 + 4 个测试文件，是本项最完整的蓝本** |
 | `daily_stock_analysis/src/phase_decision_guardrail.py`（450 行） | **硬传导的实现**：核心块降级 → 代码强制打下 `confidence_level` + 注入限制文案。含**否定检测**（避免「不建议立即买入」被误判成「立即买入」） |
 | `TradingAgents-main/tradingagents/dataflows/market_data_validator.py` | **确定性 ground-truth 快照**：分析开局注入一份本地库直查的数字快照（截止分析日 OHLCV + 固定指标集，不经 LLM），强制作为全部数字的唯一真源，冲突须标注而非编造。配套 look-ahead 断言与 `resolve_instrument_identity`（分析前锁定标的身份）。**与状态机互补**：快照解决「数字从哪来」，状态机解决「这数可不可信」 |
+
+---
+
+## 🪙 crypto 实况补记（2026-07-27 重设计｜**分类 ④：已完工，但 crypto 实况未验**）
+
+> 本卡写于 2026-07-17，**crypto 模块 07-20 才启动**，卡里零 crypto 覆盖。以下是 07-27 查代码的实况。
+
+### ✅ 状态机内核天生市场无关（本卡运气最好的一张）
+
+`common/context_quality.py` **通篇没有 market 概念** —— 它只处理「字段 → 状态 → 块 → 质量分」。这不是疏漏，是**设计对了**：
+
+> 本卡最核心的那条设计 —— **`not_supported` 权重剔除后重归一化、不打低分**（分歧 1，`context_quality.py:296`）—— **天生就是为「这个市场没有这块数据」准备的**。它当初是为「港股财务恒缺不该被系统性降级」写的，**crypto 没有财报**这件事**同一个机制原样接住**，一行不用改。
+
+### ✅ crypto 侧已经接上了（实测）
+
+`agents/tools/crypto_tools.py:183` 的 `_record_crypto_cockpit_decision` 里：
+
+```python
+input_snapshot={"dimensions": ..., "weights_used": ..., "available_dimensions": ...,
+                "dimension_coverage": ..., "screen": ..., "data_quality": r.get("data_quality")}
+```
+
+**crypto 的 cockpit 已经在产 `data_quality` 并留痕。** 且 crypto scorer 有和股票同款的 `dimension_coverage` / `weights_used`（`crypto_intel_engine/scorer.py:602`）。
+
+### ⚠️ 未验的一条（**不改方案，是待验清单**）
+
+**crypto 侧的硬传导有没有真的生效？** 已确认 crypto 在**产** `data_quality`，但没确认「数据不可信 → crypto composite 被代码强行钳制」这一步是否实现。股票侧的钳制点在 `cockpit_engine` 的 scorer，crypto 是**另一套 scorer**（`crypto_intel_engine/scorer.py`）——**两个 scorer 各写了一遍打分逻辑，钳制逻辑有没有跟着抄过去要验。**
+
+若没有 → crypto 侧「数据烂的时候仍然敢说 BUY」，本卡的核心价值在 54% 的留痕上落空。**这是一条 grep 就能验的事，别猜。**

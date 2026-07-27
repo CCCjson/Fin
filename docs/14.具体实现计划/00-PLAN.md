@@ -59,6 +59,7 @@ MoneyBill 给建议
 | ~~**P0-1**~~ | ✅ **已完工 07-17**：建议后验评估器（内核 `common/outcome_eval.py` + `backfill_outcomes`/`get_decision_stats` + cockpit 留痕接**工具层** + 每日链第⑥步）。**开工 P0-3 前先读它卡片顶部的「实施偏离」框** | 小 | 无 | ✅ 07-17 | `P0-1-decision-outcome.md` |
 | ~~**P0-2**~~ | ✅ **已完工 07-17**：字段级八态 + 质量分 + 硬传导（cockpit composite 钳制 + MoneyBill 收尾更正）。含 P2-2 的 B+C。**开工 P0-3 前先读它卡片顶部的「实施偏离」框**（尤其第 6 条：confirm_gate 记的是数据质量不是 confidence） | 中 | 无 | ✅ 07-17 | `P0-2-data-quality.md` |
 | ~~**P0-3**~~ | ✅ **已完工 07-20**：历史命中率 → calibration_factor 反调 cockpit composite（只下调、校准在硬钳前、≥30 样本才生效）。**校准点在 scorer 不在 orchestrator**，见卡「实施偏离」第 1 条 | 小 | **P0-1** | ✅ 07-17 | `P0-3-calibration.md` |
+| 🔴 **P0-4** | 🆕 **决策留痕卫生**。查生产库发现：`decision_logs` 里 **39 行 `BTCUSDT.BN BUY entry=100.0`**（BTC 真实价 6 万+），现因 bar 不够全 `unable`，**攒够 5 根就会被评成 +64900% 的 win**，占全表 40% → 直接架空 P0-3 校准。根因 = **`source="crypto"` 的 45 条是订单执行回执不是建议**，却和 AI 建议共用同一张表 + 同一个评估管道。**炸弹已装填，只等倒计时** | 小 | 无<br/>（**卡住 P0-1/P0-3 出可信数字**） | ✅ 07-27 | `P0-4-decision-log-hygiene.md` |
 | **P1-5** | NewsNow 资讯源接入（方案已勘察定稿，可立即开工） | 小 | 无 | ✅ 07-17 | `P1-5-newsnow.md` |
 | **P1-6** | **ML 打分维度重建**。🔴 实测：cockpit ML 25% 权重**从没产出过一个数**（模型目录空/两表 0 行/每日链无 ML 步），被静默摊给其他四维。**A 段=让缺席显式披露（立刻做，半天）**；**B 段=横截面模型重做 + 前端 8页→7页（Prediction+FineTune 合并成「模型实验室」）**，绑投资组合模块、等其阶段 1 规则跑通后再替换排序源（远程 GPU 已废 → 砍 LSTM 只做 GBDT，CPU 跑得动） | A 小<br/>B 大 | A 无<br/>B 绑组合模块 | ✅ 07-27 | `P1-6-ml-scoring.md` |
 | **P1-1** | 反方 subagent `run_devils_advocate` + 主结论/反方并排 | 中 | 无 | ⚠️ 待核实 | `P1-1-devils-advocate.md` |
@@ -72,6 +73,58 @@ MoneyBill 给建议
 | **P3-2** | subagent 并行 + trace 离线回放 + 决策留痕面板 | 大 | 无 | ⚠️ 待核实 | `P3-2-parallel-trace.md` |
 
 **⚠️ 待核实 = 路径是 2026-07-07 的，早于 13.x 大重构（9 域）。开工第一步必须 grep 确认文件仍在、行号仍对；对不上就先报告 Jason，不要猜。**
+
+## 4b. 🪙 crypto 兼容总纲（2026-07-27 重设计，**开任何一张卡前先读这节**）
+
+> **背景**：卡片全写于 07-07~07-17，crypto 模块 07-20 才启动 → 2026-07-24 实测 **14 张卡对 crypto 的覆盖 = 零**（逐文件 grep 全 0）。Jason 拍板：**开工前先重设计，让卡片兼容加密板块。**
+
+### 4b.1 🔴 重设计过程中的最大发现：crypto 不是「待补充的边角」，是 DecisionLog 的**主力**
+
+2026-07-27 查生产库 `backend/data/market.db`：
+
+| 事实 | 数字 |
+|---|---|
+| `decision_logs` 总行数 | **98** |
+| 其中 crypto 来源（`crypto` + `crypto_cockpit`） | **53 行 = 54%** |
+| 股票来源（advisor/cockpit/moneybill/report_picks…） | 45 行 |
+| `outcome_status = completed` | **0 行**（unable 67 / pending 17 / 未评 14） |
+| `daily_quotes` crypto | 460 币种，最新 **2026-07-26**（比 A 股的 07-24 还新） |
+
+**推论：P0 三张卡（已完工）写的时候当 crypto 不存在，但 crypto 才是它们实际吞下去最多的数据。** 这不是「以后要加的分支」，是**已经在跑、且从没被验过的主路径**。
+
+### 4b.2 分类（原三类分法 + 本次两处修正 + 新增第四类）
+
+| 类 | 含义 | 卡 |
+|---|---|---|
+| **①** 市场无关 | 只是覆盖面变大，落点表不动 | P3-2 |
+| **②** 加 crypto 分支 | 落点表要真加行 | P1-1、P1-4、P1-5、P3-1、**P1-3**（🔄 原①）、P1-6 B 段 |
+| **③** 概念不适用，要重新定义 | 股票的问法在 crypto 上没有对应物 | P2-1、P1-2、**P2-3 B 段**（🔄 原②） |
+| **④** 🆕 **已完工，但 crypto 实况未验** | 代码在跑，卡片当它不存在 | **P0-1、P0-2、P0-3、P2-2 B/C** |
+
+**两处修正的理由**（原分法是 07-24 未查代码时分的）：
+
+- 🔄 **P1-3 从 ① 改 ②**：crypto 有**独立的外部内容入口**（`acquisition/markets/crypto_news.py` 的 RSS/公告、`crypto_onchain.py`、DefiLlama/CoinGecko 等第三方 JSON），且 crypto 的下单确认走 `crypto_strategy/pending.py` 的**待确认单**，不是 `agents/confirm_gate.py` 的 `place_order`。**落点表少了这两处 = 防护有洞**，不是「覆盖面变大」。
+- 🔄 **P2-3 B 段（IC/IR）从 ② 改 ③**：IC/IR 的横截面口径建立在「市场中位数 + 行业中性化」上。crypto **只有 460 个标的、无行业分类、BTC 主导度极高** → 中性化对着谁做？这是口径重定义，不是加分支。（A 段参数敏感性、C 段泄漏扫描仍是 ①。）
+
+### 4b.3 通用口径（每张卡的 crypto 分支都按这个写，别各写一套）
+
+| 维度 | 股票 | crypto | 已验证的代码事实 |
+|---|---|---|---|
+| **symbol** | `600519.SH` / `00700.HK` / `AAPL` | `BTCUSDT.BN`（**`.BN` 后缀**） | `infer_market_from_symbol` 对四市场**全部判对**（实测）；⚠️ 裸 `BTCUSDT`（无后缀）会被判成 `us_stock` |
+| **落表** | `daily_quotes` | **同一张 `daily_quotes`**，`market='crypto'` | `crypto_updater.py:108`；下游只要带 market 过滤就通 |
+| **时区/日历** | 上海 / 纽约(DST) / 香港 | **UTC，7×24，无交易日历** | `common/market_time.py` 已覆盖 crypto；`backfill_outcomes` **已逐行按 symbol 推市场**（`decision_log.py:406`） |
+| **「N 日」语义** | N 个交易日 ≈ 1.4N 自然日 | **N 根 bar = N 自然日** | ⚠️ **跨市场混算胜率时窗口不等长**——20 日窗口在 A 股是 4 周、在 crypto 是 20 天 |
+| **打分维度** | cockpit 五维（tech/ml/fund/sent/pos） | crypto 五维（tech30/deriv20/regime20/flow15/sent15）**无 ML 维** | `crypto_intel_engine/scorer.py:178` |
+| **coverage 机制** | `dimension_coverage` + `weights_used` | **同款已有**（`scorer.py:602`），且已存进 `input_snapshot` | 两个 scorer 各写了一遍同一套逻辑 |
+| **估值** | PE/PB/DCF/EV-EBITDA | **MVRV / NVT / 代币经济学 / 解锁表** | `crypto_intel_engine` 排雷维已有现成的 |
+| **财报** | 三大报表 + 45 天披露滞后 | **不存在** → 对应物是链上数据 | — |
+| **确认门** | `agents/confirm_gate.py` | `crypto_strategy/pending.py` 待确认单 | 两条路径，改确认文案要改两处 |
+
+### 4b.4 ⛔ 三条 crypto 专属反模式（写任何 crypto 分支前先看）
+
+1. **别拿「工作日 / 收盘后」当假设**——crypto 没有收盘。凡是写着「每日 15:35」「收盘后跑」的调度，crypto 侧要单独定义触发点。
+2. **别在 crypto 和股票之间混算统计量**——胜率、IC、校准 factor 全部**按 market 分桶**。`get_calibration_factor("crypto_cockpit")` 已经是这么做的（source 单列），**照它抄**。
+3. **别假设 crypto 样本量够**——460 个标的对横截面模型/IC 分组都可能不够，**每次用之前先验样本量**，别照搬 A 股 5201 只的做法。
 
 ## 5. 未决阻塞项（**遇到就停，问 Jason，不要自己拍板**）
 

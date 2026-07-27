@@ -71,6 +71,40 @@ akshare 接口**全部现成，只是没人接**。
 
 `cninfo_job.py` / `research_report_job.py` / 财务补齐目前**均为手动触发**，可一并挂进 `daily_pipeline_scheduler.py` 或 `knowledge_engine/scheduler.py`（前者已有五步串行链，直接加步骤）。
 
+## 🪙 crypto 兼容（2026-07-27 重设计｜**分类 ③：概念不适用，要重新定义**）
+
+> 先读 `00-PLAN.md` §4b 通用口径。
+
+### 三块逐条对照
+
+| 块 | crypto 上的情况 |
+|---|---|
+| **A 社交舆情** | ⚠️ **概念成立、对象全换**。雪球/股吧对 crypto 完全无用；对应物是 Twitter / Telegram / Reddit / 币安广场，**这些站点一个都没侦查过**（`backend/configs/scrapers/` 下只有 xueqiu / guba / gbapi）。「爬虫配置已侦查好、性价比最高」这句话**对 crypto 不成立** |
+| **B 宏观数据** | 🔄 **要重新定义什么叫「宏观」**。CPI/PMI/LPR 对币价的传导远比对 A 股弱。crypto 的宏观水位是**另一套东西**（见下表） |
+| **C 港美股财务** | ❌ 完全不适用，crypto 没有财报 |
+
+### crypto 的「宏观」对应物（部分**已经有了**，别重复造）
+
+| crypto 宏观指标 | 现状 |
+|---|---|
+| **稳定币总供应** | ✅ **已有** `crypto_onchain.stablecoin_supply`（整个市场的「弹药量」） |
+| **恐惧贪婪指数** | ✅ **已有** `crypto_intel_engine/scorer.py:33` `_fng_label` |
+| **BTC 主导度 / 市场 regime** | ✅ **已有** regime 维（占 crypto 五维 20%） |
+| **ETF 净流入** | ❌ [[crypto-decision-sources-v2]] 实测：**零 key 拿不到** |
+| 美元流动性 / 美债利率 | ⚠️ 未接。**这一条反而是股票宏观（B 段）与 crypto 共享的** —— 若 B 段接了美国宏观，crypto 可直接复用 |
+
+> 💡 **B 段的一个意外收获**：`macro_usa_cpi` 这类美国宏观数据**股票和 crypto 都用得上**。B 段做的时候把它设计成市场无关的 `macro_indicators` 表（本卡落点表已经是这么写的），crypto 侧零成本复用。**这是三块里唯一真正共享的部分。**
+
+### crypto 舆情（A 段）若要做，先回答这三个问题
+
+1. **抓哪里** —— Twitter API 已收费；Telegram / Reddit / 币安广场哪个信噪比最高？**没有任何一个被侦查过，别假设「照抄 xueqiu.com.json 的模式」就能做**
+2. **合规** —— 直接撞 `00-PLAN.md` §5 的 **B-3 阻塞项**（逆向爬虫栈的合规边界）。crypto 社交平台的 ToS 与雪球/股吧不同，**要单独看**
+3. **BERT 情绪能不能用** —— `news_engine/sentiment.py` 的 FinBERT 是**金融英文/中文语料**训练的，币圈黑话（gm / wagmi / rug / 归零）大概率打不准。**复用前先抽样验，别直接接上就信**
+
+### ⛔ 本卡的 crypto 分支**优先级低**
+
+crypto 的信息源在 [[crypto-decision-sources-v2]] 那轮已经从 3 维扩到 5 维（新增 flow + sentiment），**当前不是 crypto 的短板**。本卡三块里 crypto 唯一真正缺的是社交舆情，而它卡在 B-3 合规 + 站点未侦查两道门后面。**建议：本卡按纯股票口径施工，crypto 舆情另开卡。**
+
 ## 本卡不做（记录以免遗漏）
 
 - **SEC/港交所**：`sec_search` 是「检索即弃」设计（只检索标题+链接，不落库），没走 IngestPipeline → 美股监管文件无法沉淀复用。修法：结果经 `read_url` → IngestPipeline 落知识库（source_type 加 `filing`）。港交所披露易有公开 API（`www1.hkexnews.hk` 的 titlesearch 接口），可用 discover_api 侦查后接入。**另开卡。**
