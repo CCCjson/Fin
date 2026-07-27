@@ -21,6 +21,8 @@ from loguru import logger
 from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy import case as sql_case
 
+from common.decision_kind import ADVICE, EVALUABLE_KINDS
+from common.decision_kind import normalize as normalize_kind
 from common.market import A_SHARE, infer_market_from_symbol
 from common.market_time import market_day_of, market_range_bounds, market_today, utc_now
 from common.outcome_eval import (
@@ -86,9 +88,13 @@ _MISSING_FIELD_WARN_EXEMPT = frozenset({"advisor", "moneybill"})
 
 def _warn_if_missing_outcome_fields(
     source: str, action: Optional[str], entry_price: Optional[float],
-    prompt_version: Optional[str],
+    prompt_version: Optional[str], entry_kind: str = ADVICE,
 ) -> None:
     """关键字段缺了就吼一嗓子 —— **只告警，不拦截**。
+
+    ⚠️ **只对 `advice` 吼**（P0-4）：订单回执和加自选股本来就没有 prompt_version、
+    也不需要 entry_price 去做后验评估，对它们告警是纯噪音 —— 而噪音多了就没人看
+    告警了，反而更危险（同下方 `_MISSING_FIELD_WARN_EXEMPT` 的理由）。
 
     与 `_warn_if_confidence_looks_normalized` 同构：留痕**绝不能**反过来搞坏主流程
     （advisor 是 SSE 流式，抛异常会掐断用户正在读的回答）。所以漏传的代价是一行
@@ -97,6 +103,8 @@ def _warn_if_missing_outcome_fields(
     「新加写入点忘了传 prompt_version」这类结构性遗漏由
     tests/baseline/test_prompt_version_pinned.py 的源码 grep 门禁兜。
     """
+    if entry_kind != ADVICE:
+        return
     if not prompt_version:
         logger.warning(
             f"DecisionLog 缺 prompt_version（source={source}）；"
@@ -114,6 +122,7 @@ def _warn_if_missing_outcome_fields(
 def record_decision(
     *,
     source: str,
+    entry_kind: str = ADVICE,
     symbol: Optional[str] = None,
     name: Optional[str] = None,
     action: Optional[str] = None,
@@ -138,10 +147,19 @@ def record_decision(
     executed: Optional[bool] = None,
     risk_passed: Optional[bool] = None,
 ) -> Optional[str]:
-    """记录一条决策，返回 decision_id；任何异常都被吞掉并返回 None（不影响主流程）。"""
+    """记录一条决策，返回 decision_id；任何异常都被吞掉并返回 None（不影响主流程）。
+
+    Args:
+        entry_kind: `advice`（AI 的可证伪断言，默认）/ `execution`（订单回执）/
+            `ops`（非交易操作）。取值与语义见 `common/decision_kind.py`。
+            **只有 advice 进后验评估与胜率** —— 订单回执不是预测，没有对错可评。
+            ⚠️ 新增写入点务必显式传，别让「默认 advice」把回执悄悄送进胜率分母
+            （P0-4 那 39 条假成交就是这么来的）。
+    """
     try:
+        entry_kind = normalize_kind(entry_kind)
         _warn_if_confidence_looks_normalized(source, confidence)
-        _warn_if_missing_outcome_fields(source, action, entry_price, prompt_version)
+        _warn_if_missing_outcome_fields(source, action, entry_price, prompt_version, entry_kind)
         if not total_tokens and (prompt_tokens or completion_tokens):
             total_tokens = prompt_tokens + completion_tokens
         decision_id = uuid.uuid4().hex[:32]
@@ -150,6 +168,7 @@ def record_decision(
             row = DecisionLog(
                 decision_id=decision_id,
                 source=source,
+                entry_kind=entry_kind,
                 symbol=symbol,
                 name=name,
                 action=action,
@@ -197,6 +216,20 @@ def _range_bounds(start_date: Optional[str], end_date: Optional[str]):
     return market_range_bounds(A_SHARE, sd, ed, storage="utc")
 
 
+def _kind_filter(entry_kind: Optional[str]):
+    """`entry_kind` 过滤条件；`None` = 不过滤（三类全看）。
+
+    查 `advice` 时**连 NULL 一起捞**，与 `backfill_outcomes` 的 `evaluable`、
+    `common.decision_kind.normalize` 三处同口径 —— 否则「回填评了它、统计看不见它」
+    这种分裂会让胜率分母和评估集悄悄对不上。
+    """
+    if not entry_kind:
+        return None
+    if entry_kind == ADVICE:
+        return or_(DecisionLog.entry_kind == ADVICE, DecisionLog.entry_kind.is_(None))
+    return DecisionLog.entry_kind == entry_kind
+
+
 def _to_dict(r: DecisionLog) -> Dict[str, Any]:
     def _load(s):
         if not s:
@@ -210,6 +243,7 @@ def _to_dict(r: DecisionLog) -> Dict[str, Any]:
         "decision_id": r.decision_id,
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "source": r.source,
+        "entry_kind": r.entry_kind,
         "symbol": r.symbol,
         "name": r.name,
         "action": r.action,
@@ -258,13 +292,23 @@ def query_decisions(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     outcome_status: Optional[str] = None,
+    entry_kind: Optional[str] = ADVICE,
     limit: int = 100,
     offset: int = 0,
 ) -> Dict[str, Any]:
-    """按 symbol/来源/动作/日期/评估状态过滤，倒序返回决策记录。"""
+    """按 symbol/来源/动作/日期/评估状态过滤，倒序返回决策记录。
+
+    Args:
+        entry_kind: 默认只看 `advice`（AI 建议）。传 `execution` 看订单回执、
+            `ops` 看非交易操作、`None` 看全部。**默认值是刻意的**：问「之前推荐过
+            什么」的人要的是建议，不是 39 条挂单回执（P0-4）。
+    """
     session = get_session()
     try:
         q = session.query(DecisionLog)
+        kf = _kind_filter(entry_kind)
+        if kf is not None:
+            q = q.filter(kf)
         if symbol:
             q = q.filter(DecisionLog.symbol == symbol)
         if source:
@@ -312,7 +356,7 @@ _OUTCOME_WRITE_FIELDS = frozenset({
 # **原始决策不可篡改** —— 否则复盘就是自欺欺人（改了当时的止损再去算胜率，
 # 等于给自己发奖状）。抄自外部蓝本 decision_signal_repo.py:43。
 _IMMUTABLE_REFRESH_FIELDS = frozenset({
-    "id", "decision_id", "created_at", "source", "symbol", "name",
+    "id", "decision_id", "created_at", "source", "entry_kind", "symbol", "name",
     "action", "recommendation", "confidence",
     "entry_price", "stop_loss", "take_profit", "position_pct",
     "model_id", "prompt_version", "input_snapshot", "reasons",
@@ -356,6 +400,18 @@ def backfill_outcomes() -> Dict[str, int]:
     """
     session = get_session()
     try:
+        # 「可评的」= entry_kind 是 advice（P0-4）。**订单回执与非交易操作永不进候选集**
+        # —— 「我以 6.5 万挂单买了 BTC」是已发生的事实，不是预测，没有对错可评；
+        # 拿它算胜率等于问「这笔成交的准确率是多少」。
+        #
+        # NULL 视同 advice：与 `common.decision_kind.normalize` 同口径（宁可多评一条
+        # 也不少评一条 —— 静默把真建议排除在评估外是**看不见**的数据损失，比多一条
+        # 噪声危险得多）。存量行由 `database.init_db()` 的自动迁移一次性归类，
+        # 新行由 ORM 默认值兜底，所以这条分支实际只在裸 SQL 插入时才走到。
+        evaluable = or_(
+            DecisionLog.entry_kind.in_(sorted(EVALUABLE_KINDS)),
+            DecisionLog.entry_kind.is_(None),
+        )
         # 「未终结」= 还没评过 / 评了但窗口没满 / 可重试的 unable。
         # `completed` 和不可重试的 unable 天然落在这个条件外 → 增量、自限。
         unfinished = or_(
@@ -368,7 +424,8 @@ def backfill_outcomes() -> Dict[str, int]:
                 DecisionLog.unable_reason.in_(sorted(RETRYABLE_UNABLE_REASONS)),
             ),
         )
-        rows = session.query(DecisionLog).filter(unfinished).all()
+        candidates = and_(evaluable, unfinished)
+        rows = session.query(DecisionLog).filter(candidates).all()
 
         if not rows:
             logger.info("[决策后验] 没有待评估的建议")
@@ -376,10 +433,11 @@ def backfill_outcomes() -> Dict[str, int]:
 
         # 批量取行情：一次拉全 + 内存分组，显式避免 N+1。
         # 用 select() 子查询喂 in_()（不是 Python list）—— 绕开 SQLite 变量数上限，
-        # 手法与 signal_tracker.py:89-101 逐字同构。**子查询要带上同一个
-        # unfinished 条件**，否则会把全表所有 symbol 的行情都拉回来。
+        # 手法与 signal_tracker.py:89-101 逐字同构。**子查询要带上和上面
+        # 一模一样的 candidates 条件**，否则会把全表所有 symbol 的行情都拉回来
+        # （漏了 entry_kind 那半边 = 白拉一堆只有回执、根本不会被评的币的行情）。
         symbols_select = select(distinct(DecisionLog.symbol)).where(
-            DecisionLog.symbol.isnot(None), unfinished
+            DecisionLog.symbol.isnot(None), candidates
         )
         min_date = min(r.created_at.date() for r in rows if r.created_at)
         all_quotes = (
@@ -478,9 +536,14 @@ def get_decision_stats(
     source: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    entry_kind: Optional[str] = ADVICE,
     horizon: int = 20,
 ) -> Dict[str, Any]:
     """AI 建议的历史胜率，按 source 分组 —— 「MoneyBill 的推荐历史胜率是多少」。
+
+    ⚠️ **默认只算 `advice`（P0-4）。** 光让 `backfill_outcomes` 跳过订单回执是不够的：
+    回执的 `outcome_status` 永远是 NULL，会被这里的 `pending` 和 `total` 全额计入 ——
+    「98 条建议里 17 条待评」实则其中 40 条根本不是建议。分母脏了，胜率就是假的。
 
     ⚠️ **不接 `limit`，这是刻意的。** 胜率是过滤条件下的**全量事实**；`get_decision_history`
     的 limit 只管返回几条样本给 LLM 看。两者混淆 → 「MoneyBill 推荐胜率」会变成
@@ -506,6 +569,9 @@ def get_decision_stats(
     return_col = getattr(DecisionLog, f"return_{horizon}d")
 
     filters = []
+    kf = _kind_filter(entry_kind)
+    if kf is not None:
+        filters.append(kf)
     if symbol:
         filters.append(DecisionLog.symbol == symbol)
     if source:
@@ -638,6 +704,10 @@ def compute_calibration(source: str, *, window: int = _CALIBRATION_WINDOW,
     try:
         rows = (session.query(DecisionLog.confidence, outcome_col.label("outcome"))
                 .filter(DecisionLog.source == source,
+                        # 纵深防御（P0-4）：回执本来就评不出 outcome，理论上进不来；
+                        # 但校准因子是**会静默失效**的东西（100% 命中率 → factor 恒
+                        # 1.0，不报错），这一层多花一个 AND 换「永远不可能」。
+                        _kind_filter(ADVICE),
                         DecisionLog.confidence.isnot(None),
                         outcome_col.isnot(None))
                 .order_by(DecisionLog.created_at.desc())

@@ -4,10 +4,44 @@ title: 决策留痕卫生（DecisionLog 被执行记录污染 + entry_price 定�
 size: 小
 depends: 无（但**卡住 P0-1/P0-3 真正产出可信数字**）
 paths_verified: 2026-07-27
-status: 🔴 计划阶段未开工 —— 本卡由 crypto 兼容重设计过程中查生产库发现
+status: 🟢 批次1（止血）已完工 2026-07-27 —— 炸弹已拆；批次2（防复发）、批次3（可见性）待做
 ---
 
 # P0-4 决策留痕卫生
+
+> ## ⚠️ 实施偏离 / 探查结论（**动这张卡剩下两个批次前必读**）
+>
+> 2026-07-27 开工时先查了生产库与源码，**推翻了本卡两处前提**，方案随之调整：
+>
+> ### 1. 🔴 那 39 条不是 Jason 的实测痕迹，**是测试写进生产库的**
+> 下方第 2 步原文写着「它们是 Jason 07-22/07-24 实测下单流程的真实痕迹，删了就没了」——**错的**。
+> 40 条脏行（39 成交 + 1 市价零成交）的 `output_text` 全带 `order=BTCUSDT.BN:999`，
+> 这个 order_id **只存在于** `tests/test_crypto_strategy_engine.py:199` 的 `_FakeOrder`，
+> 价 100.0 / 量 0.5 / 手续费 0.05 与 `test_confirm_executes_and_records` 逐字对得上。
+> 泄漏机制、结构性堵法、两个坑 → `docs/GOTCHAS.md`「测试写进生产库」。
+> **处置**：Jason 拍板删、不备份 → `backend/scripts/purge_test_residue_decisions.py`，已执行（99 → 58 行）。
+>
+> ### 2. 🔴 「crypto 占 decision_logs 54%」这个结论本身是污染的产物
+> 53 条 crypto 里 40 条是测试残留 → **真实 crypto 留痕只有 13 条（5 execution + 8 crypto_cockpit）= 22%**。
+> `00-PLAN.md` §4b.1 那张表已同步更正。
+>
+> ### 3. 分类改成**三值**，且 `confirm_gate` 也在治理范围内（本卡原文只点了 execution.py 两处）
+> `agents/confirm_gate.py:104`（`source=moneybill`，22 行 = 当时全表 22%）记的是「每一次经确认的
+> 工具调用」——加自选股 / 建预警 / 编策略 / 下单，**没有一条是预测**。而且下单那几条与
+> `execution.py` 的回执是**同一笔单的双重留痕**（实测 id 42/43 是同一秒同一张 ETH 挂单）。
+> Jason 拍板三值 `advice | execution | ops`：真下单/补录成交 → `execution`，其余受确认门的工具 → `ops`。
+> 判定表 `common/decision_kind.py::CONFIRMED_TOOL_KINDS`，新增确认门工具漏登记有门禁咬。
+>
+> ### 4. 本卡漏了一处：**只堵 `backfill_outcomes` 不够**
+> 回执的 `outcome_status` 恒为 NULL，会被 `get_decision_stats` 的 `total` / `pending` 全额计入 ——
+> 分母照样脏。查询侧（`query_decisions` / `get_decision_stats`）默认也改成只看 `advice`。
+>
+> ### 5. 第 2 步的「入库期离谱值检查」→ **改到评估期，推迟到批次2**
+> 写入期做要在留痕热路径上加一次 DB 查询才拿得到参考价；评估期做是**纯函数、可测、
+> 能追溯已入库的历史行**，且天然被 `ENGINE_VERSION` 背书。批次2 落 `common/outcome_eval.py`，
+> 判定改动需 bump `ENGINE_VERSION` → v2。
+>
+> ### 6. 第 3 步 action 大写归一 → **推迟到批次2**（它不是炸弹，是统计口径瑕疵）
 
 > **一句话**：`decision_logs` 里有 **39 行 `BTCUSDT.BN BUY entry_price=100.0`**（BTC 真实价 6 万+）。它们现在因为 bar 不够全是 `unable` 所以没出事，**等 bar 攒够就会被评成 +64900% 的 win**，占全表 40%，直接灌进 P0-1 的胜率和 P0-3 的校准系数。
 >
@@ -116,9 +150,18 @@ BTC 同期真实价约 **6.1~6.5 万**。`entry_price=100.0` 只可能是：挂�
 
 ### 第 4 步｜门禁
 
-1. `entry_kind='execution'` 的行**永不出现在** `backfill_outcomes` 的候选集里
-2. `record_decision` 写入的 `action` **必然是大写**
-3. 离谱 `entry_price` 会被打标（拿 entry=100 的 BTC 当固定用例）
+✅ 已落 `tests/test_decision_entry_kind.py`（13 条）：
+
+1. `execution`/`ops` 的行**永不出现在** `backfill_outcomes` 的候选集里
+2. `entry_kind IS NULL` 视同 advice（与 `normalize()` 同口径 —— 宁可多评一条噪声，也不能把真建议**静默**排除在评估外）
+3. **那颗具体的炸弹**：entry=100 的 BTC + 6.5 万的 bar → 不被评；同时用对照行证明「若当成 advice 就是一条 +64900% 的 win」（对照组失效也会红，防这条测试哪天测了个空气）
+4. 胜率**分母**里没有 execution/ops，但显式传 `entry_kind=` 仍查得到（审计线索一条不丢）
+5. 校准样本不含回执（纵深防御）
+6. **每个 `requires_confirmation=True` 的工具都已归类**，新增漏登记 → 红。⚠️ 判定读**源码 AST 不读运行期 `REGISTRY`**：别的测试会往全局 REGISTRY 里塞假工具，读 REGISTRY 会「单跑绿、全套红」
+7. 全项目 `record_decision(` 写入点必须在 `_WRITE_SITES` 表里；非 advice 的写入点必须**显式**传 `entry_kind=`（不许靠默认值兜底）
+8. 存量归类迁移幂等 + **永不覆盖**已显式标好的值。⚠️ 造「存量行」必须用裸 SQL 打回 NULL：ORM 的 `default="advice"` 对 `entry_kind=None` 也会生效（SQLAlchemy 把 None 当「没给值」）
+
+⏳ 批次2 再加：`action` 必然大写、离谱 `entry_price` 被打标。
 
 ---
 
@@ -136,14 +179,30 @@ BTC 同期真实价约 **6.1~6.5 万**。`entry_price=100.0` 只可能是：挂�
 
 ## 3. 落点
 
-| 类型 | 文件 | 要做什么 |
+### ✅ 批次1（止血）已完工 2026-07-27
+
+| 类型 | 文件 | 做了什么 |
 |---|---|---|
-| 修改 | `backend/data_engine/storage/models.py`（`DecisionLog`） | 加 `entry_kind` 字段（默认 `advice`） |
-| 修改 | `backend/decision_log.py:114`（`record_decision`） | 收 `entry_kind` 入参；`action` 强制大写；`entry_price` 离谱值打标 |
-| 修改 | `backend/decision_log.py:338`（`backfill_outcomes`） | `unfinished` 条件加 `entry_kind == 'advice'` |
-| 修改 | `backend/crypto_intel_engine/execution.py:389, 411` | 两处传 `entry_kind="execution"` |
-| 新增 | `backend/scripts/`（一次性迁移） | 历史数据回填 `entry_kind` + action 大写归一 |
-| 新增 | `backend/tests/` | 四条门禁（见第 4 步） |
+| 新增 | `backend/common/decision_kind.py` | **三值真源**：`advice/execution/ops` + `CONFIRMED_TOOL_KINDS` 判定表 + `normalize()`。已进 mypy 强检名单 |
+| 修改 | `data_engine/storage/models.py`（`DecisionLog`） | 加 `entry_kind`（默认 `advice`） |
+| 修改 | `data_engine/storage/database.py`（`init_db`） | `ALTER TABLE` + **存量按 source 一次性归类**（`WHERE entry_kind IS NULL` → 幂等且永不覆盖已标好的值） |
+| 修改 | `decision_log.py` | `record_decision` 收 `entry_kind`；`_IMMUTABLE_REFRESH_FIELDS` 纳入；`backfill_outcomes` 候选集 + **symbols 子查询**同步加；`query_decisions`/`get_decision_stats` 默认只看 advice；`compute_calibration` 加纵深防御；缺字段告警只对 advice 吼 |
+| 修改 | `crypto_intel_engine/execution.py` | 成交/挂单 → `execution`，理财申购 → `ops` |
+| 修改 | `agents/confirm_gate.py` | `entry_kind=kind_for_confirmed_tool(pending.name)` 运行期分流 |
+| 新增 | `tests/conftest.py`（**根级**） | 结构性堵死「测试写生产库」：整体替换 engine/SessionLocal，逃生门 `FIN_TEST_USE_REAL_DB=1` |
+| 新增 | `tests/test_decision_entry_kind.py` | 13 条门禁（见第 4 步） |
+| 新增 | `scripts/purge_test_residue_decisions.py` | 一次性清 41 行测试残留，已执行 |
+
+**生产实测**：`decision_logs` 99 → 58 行；`entry_kind` = advice 31 / execution 16 / ops 11；
+`backfill_outcomes` 候选集从「全表」收敛到 **23 条（全部 advice）**；胜率分母 31（此前 98）。
+全套 **1614 passed**，跑前跑后生产库行数不变。
+
+### 待做
+
+| 批次 | 内容 |
+|---|---|
+| **批次2 防复发** | ① 评估期离谱值守卫（`common/outcome_eval.py`，entry 与首根 bar 偏离 >10 倍 → `unable/entry_price_outlier` 不可重试，**bump `ENGINE_VERSION` → v2**，拿 entry=100 的 BTC 当固定用例）② `action` 写入期强制大写 + 历史一条 UPDATE 归一 |
+| **批次3 可见性** | ① `agents/tools/decision_tools.py` 的 `_SOURCES` Literal 补 `crypto`/`crypto_cockpit`/`crypto_earn`（现在 MoneyBill **根本没法按 crypto 来源查胜率**）+ 开 `entry_kind` 入参让回执可查 ② 下单的双重留痕收口（confirm_gate 与 execution.py 记同一笔单）③ 该工具 docstring 里「完整快照留在 /decisions 页面看」是**陈述过期**，没有这个页面 |
 
 ## 4. 为什么这张卡值得插在 P1 之前
 

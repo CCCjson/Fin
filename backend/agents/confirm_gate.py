@@ -87,12 +87,21 @@ class ConfirmationGate:
             # 决策留痕（provenance）：MoneyBill 实际下单。
             #
             # ⚠️ 这里记的是**每一次经确认的工具调用**，不只是买卖 —— 「加自选股」
-            # 「删自选股」也会落一行（它们没有 action/entry_price）。后验评估把它们
-            # 判成 unable/no_action **不进胜率分母**，而不是算成「判错」——
-            # 这正是 unable≠miss 的意义（见 common/outcome_eval.py）。
+            # 「删自选股」也会落一行（它们没有 action/entry_price）。
+            #
+            # 🔴 **这一整批都不是 AI 建议**（P0-4）：确认门记的是「已经发生的操作」，
+            # 而 P0-1 评的是「AI 的预测对不对」。所以按工具名分流成 execution（真下单/
+            # 补录成交）与 ops（加自选股/建预警/改设置/编策略），**两类都不进胜率分母**。
+            # 分类表在 `common/decision_kind.py`，新增受确认门的工具漏登记会被门禁咬。
+            #
+            # 早先靠「它们没有 action → 后验判 unable/no_action」被动挡住 —— 那只对
+            # 非交易操作成立：`place_order` 的行**有 action 也有成交价**，一直是可评的，
+            # 且与 `crypto_intel_engine/execution.py` 的回执**双重留痕同一笔单**
+            # （实测 id 42/43 是同一秒同一张 ETH 挂单）。
             try:
                 from agents.quality_guard import worst_turn_quality
                 from agents.skills_loader import MONITOR_PROMPT_VERSION
+                from common.decision_kind import kind_for_confirmed_tool
                 from decision_log import record_decision
                 _summ = result.get("data", {}) if isinstance(result, dict) else {}
                 _summ = _summ if isinstance(_summ, dict) else {}
@@ -103,6 +112,7 @@ class ConfirmationGate:
                 _q = worst_turn_quality(session.turn_quality)
                 record_decision(
                     source="moneybill",
+                    entry_kind=kind_for_confirmed_tool(pending.name),
                     symbol=_summ.get("symbol") or pending.args.get("symbol"),
                     action=_summ.get("action") or pending.args.get("side"),
                     entry_price=_summ.get("price") or pending.args.get("price"),

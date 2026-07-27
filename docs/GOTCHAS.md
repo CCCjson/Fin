@@ -117,6 +117,60 @@
 
 **诊断手法（下次遇到「进程活着但不干活」直接照抄）**：`sample <pid> 3 -f out.txt` 抓栈 → 按线程看叶子帧。全员 `uv_cond_wait`/`kevent` = 真空闲；某条卡在 `lock_PyThread_acquire_lock` → `acquire_timed` = 等锁。`py-spy dump` 能直接给 Python 行号但 macOS 上**必须 sudo**。另外 `lsof -nP -a -p <pid> -iTCP` 看有没有在等网络——一条 ESTABLISHED 的对外连接都没有，就说明卡在本地而非网络。
 
+### 测试写进生产库：`from X import get_session` 是模块级绑定，patch 打不到（P0-4，2026-07-27 实锤）
+**症状**：生产 `data/market.db` 的 `decision_logs` 里躺着 40 行
+`BTCUSDT.BN BUY entry_price=100.0 order=BTCUSDT.BN:999`。那个 order_id 只存在于
+`tests/test_crypto_strategy_engine.py` 的 `_FakeOrder`。**是测试写的。**
+
+**根因（同一个函数里两种 import，命运完全不同）**：`mem_db` fixture patch 的是
+`data_engine.storage.database.get_session`。
+
+- `record_crypto_trade` ① 写成交台账走**函数内延迟 import** → 调用时才解析 → 吃到 patch → 进内存库 ✅
+- 同函数 ③ 决策留痕走 `decision_log.record_decision`，而 `decision_log.py` 顶部是
+  `from ... import get_session`（**模块级绑定，import 时就固化**）→ patch 打不到 → **直写生产库** 💥
+
+所以生产 `crypto_trades` 是 0 行、`decision_logs` 却多了 40 行 —— 同一次调用的两个副作用去了两个库。
+全项目有 **20+ 个模块**是同款模块级绑定，靠「每个测试记得 patch 对地方」堵不住。
+
+**已修（结构性）**：`tests/conftest.py`（根级）在**任何测试跑起来之前**把
+`data_engine.storage.database` 的 `engine` / `SessionLocal` / `ScopedSession` 整体换成临时库。
+`get_session()` 的实现是 `return SessionLocal()`，**调用时**才读模块全局 → 那 20+ 个
+`from ... import get_session` 会**一起**改到临时库。逃生门 `FIN_TEST_USE_REAL_DB=1`。
+
+**⛔ 两个坑，别再踩**：
+1. **只设 `DATABASE_URL` 环境变量没用**。`.env` 里有 `DATABASE_URL=sqlite:///./data/market.db`，
+   而项目里六七处 `load_dotenv(override=True)`（`acquisition/config.py`、`news_engine/*`、
+   `review/service.py`…）会在 `import data_engine.storage.database` 的链路上**把它踩回生产库**，
+   然后 database.py 才读它。实测：只设环境变量，跑完全套后生产库照样多一行。
+2. **门禁比路径要 `resolve()` 后再比**。`.env` 写的是相对路径 `sqlite:///./data/market.db`，
+   拿绝对路径做子串匹配**永远匹配不上** —— 第一版门禁就是这么在泄漏正在发生的同时显示全绿的。
+
+**验收手法**：跑全套前后 `sqlite3 data/market.db "select count(*) from decision_logs"` 对比，
+数字必须一模一样。
+
+### `decision_logs` 的三类行：改留痕/胜率/校准前先看 `entry_kind`（P0-4）
+这张表里躺着**语义完全不同**的三类行，靠 `entry_kind` 区分（真源 `common/decision_kind.py`）：
+
+| 值 | 是什么 | 进胜率吗 |
+|---|---|---|
+| `advice` | AI 的可证伪断言（「买茅台，入场 1650」） | ✅ 唯一被评的 |
+| `execution` | 订单回执：成交 / 挂单 / 补录真实成交 | ❌ 已发生的事实，没有对错 |
+| `ops` | 非交易操作：加自选股 / 建预警 / 改设置 / 编策略 | ❌ 连价格都没有 |
+
+**⛔ 别用 `source` 分类**：`source` 是「**谁**写的」，`entry_kind` 是「写的是**什么**」。
+靠 source 命名约定分类正是这颗炸弹的成因 —— crypto 的成交回执和 AI 建议共用 source 域，
+39 条 `entry=100` 的假成交排队等着被评成 **+64900% 的 win**（占当时全表 40%），
+一旦评出来 `compute_calibration` 会看到 100% 命中率 → 只下调不上抬 → **factor 恒 1.0，
+crypto 的置信度校准永久失效且不报错**。
+
+**只堵 `backfill_outcomes` 是不够的**：回执的 `outcome_status` 恒为 NULL，会被
+`get_decision_stats` 的 `total` / `pending` 全额计入。查询侧（`query_decisions` /
+`get_decision_stats`）默认也只看 `advice`，要看回执得显式传 `entry_kind=`。
+
+**新增 `record_decision` 写入点**：必须去 `tests/test_decision_entry_kind.py::_WRITE_SITES`
+登记，并先回答「它写的是可证伪断言还是既成事实」。**新增 `requires_confirmation=True` 的工具**：
+必须进 `common/decision_kind.py::CONFIRMED_TOOL_KINDS`。两处都有门禁咬。
+
 ### market 过滤不统一导致的统计失真
 **实锤案例**：`DailyUpdater.get_update_status()` 算 `fresh_count` 时两处查询漏了 `market=="a_share"` 过滤，把三市场股票数混进A股分母，导致覆盖率显示301%。
 

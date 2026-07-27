@@ -24,6 +24,7 @@
 5. **出网代码必须写在 `backend/acquisition/` 下**，否则 `tests/net/test_egress_single_entry.py` 会咬（`_PENDING_DEBT` 已清零，加白名单绕过已封死）。
 6. **分层依赖方向**（`docs/CODING_STANDARDS.md` §0）：`engines → acquisition → common/net`。反向依赖不允许。
 7. **优先照抄项目内已有的成熟模式**（每张卡的「抄的模式」列），别造新轮子。
+8. **新增 `record_decision` 写入点必须显式归类 `entry_kind`**（`advice`/`execution`/`ops`，真源 `backend/common/decision_kind.py`），并去 `tests/test_decision_entry_kind.py::_WRITE_SITES` 登记；**新增 `requires_confirmation=True` 的工具**必须进 `CONFIRMED_TOOL_KINDS`。两处都有门禁咬。先回答这个问题再写代码：**它记的是 AI 的可证伪断言，还是已经发生的事实？**（P0-4）
 
 ## 3. P0 是一个闭环，必须按 P0-1 → P0-2 → P0-3 顺序做
 
@@ -59,7 +60,7 @@ MoneyBill 给建议
 | ~~**P0-1**~~ | ✅ **已完工 07-17**：建议后验评估器（内核 `common/outcome_eval.py` + `backfill_outcomes`/`get_decision_stats` + cockpit 留痕接**工具层** + 每日链第⑥步）。**开工 P0-3 前先读它卡片顶部的「实施偏离」框** | 小 | 无 | ✅ 07-17 | `P0-1-decision-outcome.md` |
 | ~~**P0-2**~~ | ✅ **已完工 07-17**：字段级八态 + 质量分 + 硬传导（cockpit composite 钳制 + MoneyBill 收尾更正）。含 P2-2 的 B+C。**开工 P0-3 前先读它卡片顶部的「实施偏离」框**（尤其第 6 条：confirm_gate 记的是数据质量不是 confidence） | 中 | 无 | ✅ 07-17 | `P0-2-data-quality.md` |
 | ~~**P0-3**~~ | ✅ **已完工 07-20**：历史命中率 → calibration_factor 反调 cockpit composite（只下调、校准在硬钳前、≥30 样本才生效）。**校准点在 scorer 不在 orchestrator**，见卡「实施偏离」第 1 条 | 小 | **P0-1** | ✅ 07-17 | `P0-3-calibration.md` |
-| 🔴 **P0-4** | 🆕 **决策留痕卫生**。查生产库发现：`decision_logs` 里 **39 行 `BTCUSDT.BN BUY entry=100.0`**（BTC 真实价 6 万+），现因 bar 不够全 `unable`，**攒够 5 根就会被评成 +64900% 的 win**，占全表 40% → 直接架空 P0-3 校准。根因 = **`source="crypto"` 的 45 条是订单执行回执不是建议**，却和 AI 建议共用同一张表 + 同一个评估管道。**炸弹已装填，只等倒计时** | 小 | 无<br/>（**卡住 P0-1/P0-3 出可信数字**） | ✅ 07-27 | `P0-4-decision-log-hygiene.md` |
+| 🟢 **P0-4** | **决策留痕卫生**。✅ **批次1（止血）已完工 07-27，炸弹已拆**：新增 `entry_kind`（`advice`/`execution`/`ops` 三值，真源 `common/decision_kind.py`），只有 advice 进评估与胜率分母；存量一次性归类；**测试写生产库的泄漏结构性堵死**（根级 `tests/conftest.py`）。⚠️ **开工剩余批次前必读卡顶「实施偏离」6 条** —— 那 39 条脏行**不是 Jason 的实测痕迹而是测试污染**（已删），且「crypto 占 54%」这个结论本身就是污染的产物。剩余：**批次2** 评估期离谱值守卫 + action 大写归一；**批次3** `_SOURCES` 补 crypto + 双重留痕收口 | 小 | 无<br/>（**卡住 P0-1/P0-3 出可信数字**） | ✅ 07-27 | `P0-4-decision-log-hygiene.md` |
 | **P1-5** | NewsNow 资讯源接入（方案已勘察定稿，可立即开工） | 小 | 无 | ✅ 07-17 | `P1-5-newsnow.md` |
 | **P1-6** | **ML 打分维度重建**。🔴 实测：cockpit ML 25% 权重**从没产出过一个数**（模型目录空/两表 0 行/每日链无 ML 步），被静默摊给其他四维。**A 段=让缺席显式披露（立刻做，半天）**；**B 段=横截面模型重做 + 前端 8页→7页（Prediction+FineTune 合并成「模型实验室」）**，绑投资组合模块、等其阶段 1 规则跑通后再替换排序源（远程 GPU 已废 → 砍 LSTM 只做 GBDT，CPU 跑得动） | A 小<br/>B 大 | A 无<br/>B 绑组合模块 | ✅ 07-27 | `P1-6-ml-scoring.md` |
 | **P1-1** | 反方 subagent `run_devils_advocate` + 主结论/反方并排 | 中 | 无 | ⚠️ 待核实 | `P1-1-devils-advocate.md` |
@@ -78,19 +79,26 @@ MoneyBill 给建议
 
 > **背景**：卡片全写于 07-07~07-17，crypto 模块 07-20 才启动 → 2026-07-24 实测 **14 张卡对 crypto 的覆盖 = 零**（逐文件 grep 全 0）。Jason 拍板：**开工前先重设计，让卡片兼容加密板块。**
 
-### 4b.1 🔴 重设计过程中的最大发现：crypto 不是「待补充的边角」，是 DecisionLog 的**主力**
+### 4b.1 重设计过程中的最大发现：crypto 是 DecisionLog 里**从没被验过的一条真实路径**
 
-2026-07-27 查生产库 `backend/data/market.db`：
+> 🔄 **2026-07-27 P0-4 开工时更正**：原文写的是「crypto 占 54%，是 DecisionLog 的**主力**」——
+> **那个数字是测试污染的产物**。53 条 crypto 里 **40 条是测试写进生产库的假成交**
+> （`order=BTCUSDT.BN:999`，见 `P0-4` 卡「实施偏离」）。已清理，下表为清理后的真实数字。
+
+清理后（`backend/data/market.db`，2026-07-27）：
 
 | 事实 | 数字 |
 |---|---|
-| `decision_logs` 总行数 | **98** |
-| 其中 crypto 来源（`crypto` + `crypto_cockpit`） | **53 行 = 54%** |
-| 股票来源（advisor/cockpit/moneybill/report_picks…） | 45 行 |
-| `outcome_status = completed` | **0 行**（unable 67 / pending 17 / 未评 14） |
+| `decision_logs` 总行数 | **58**（清理前 99，其中 41 行是测试残留） |
+| 其中 crypto 来源（`crypto` 5 + `crypto_cockpit` 8） | **13 行 = 22%** |
+| 按 `entry_kind` 分 | advice **31** / execution 16 / ops 11 |
+| **进胜率分母的**（advice） | 31 行 —— 此前是 98，**分母里三分之二根本不是建议** |
+| `outcome_status = completed` | **0 行**（数据要养，见 §3） |
 | `daily_quotes` crypto | 460 币种，最新 **2026-07-26**（比 A 股的 07-24 还新） |
 
-**推论：P0 三张卡（已完工）写的时候当 crypto 不存在，但 crypto 才是它们实际吞下去最多的数据。** 这不是「以后要加的分支」，是**已经在跑、且从没被验过的主路径**。
+**推论**：crypto 不是「以后要加的分支」，是**已经在跑、且从没被验过的一条真实路径**——
+P0 三张卡写的时候当它不存在，而它贡献了 DecisionLog 里唯一一批**非 advice** 的行，
+也正是这批行差点把 P0-3 的校准架空（详见 `P0-4-decision-log-hygiene.md`）。
 
 ### 4b.2 分类（原三类分法 + 本次两处修正 + 新增第四类）
 

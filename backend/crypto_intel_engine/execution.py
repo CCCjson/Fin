@@ -337,8 +337,12 @@ def record_earn_sweep(asset: str, amount: float) -> None:
     except Exception:  # noqa: BLE001
         pass
     try:
+        from common.decision_kind import OPS
         from decision_log import record_decision
-        record_decision(source="crypto_earn", symbol=f"{asset}.EARN", action="SUBSCRIBE",
+        # ops：真金白银动了，但**不是订单撮合、更不是预测** —— 申购活期理财没有
+        # 「后来对了吗」可评（P0-4）。
+        record_decision(source="crypto_earn", entry_kind=OPS,
+                        symbol=f"{asset}.EARN", action="SUBSCRIBE",
                         executed=True, risk_passed=True,
                         output_text=f"闲置 {amount:g} {asset} 自动申购活期理财")
     except Exception:  # noqa: BLE001
@@ -385,8 +389,12 @@ def record_crypto_trade(symbol: str, action: str, price: float, qty: float,
         pass
     # ③ 决策留痕
     try:
+        from common.decision_kind import EXECUTION
         from decision_log import record_decision
-        record_decision(source="crypto", symbol=symbol, action=action,
+        # ⛔ entry_kind=EXECUTION 不可省（P0-4）：这里的 entry_price 是**成交价**，
+        # 不是建议入场价。当成建议去评，等于问「这笔成交的准确率是多少」——
+        # 而当成交价是脏的（曾有 39 条 entry=100 的 BTC）就会被评成 +64900% 的 win。
+        record_decision(source="crypto", entry_kind=EXECUTION, symbol=symbol, action=action,
                         entry_price=price, executed=True, risk_passed=True,
                         output_text=f"币安现货成交 order={order_id} {qty:g} @ ${price:,.4f}")
     except Exception as e:  # noqa: BLE001
@@ -407,8 +415,10 @@ def record_crypto_resting(symbol: str, action: str, price: float | None, order_i
     note = ("币安限价单挂出（未成交，盘口等待撮合）" if order_type.upper() == "LIMIT"
             else "币安市价单零成交（异常：薄盘/交易对暂停/被拒），请去币安核对")
     try:
+        from common.decision_kind import EXECUTION
         from decision_log import record_decision
-        record_decision(source="crypto", symbol=symbol, action=action,
+        # 同上：挂单价是**已挂出的价**，不是可证伪的断言（P0-4）。
+        record_decision(source="crypto", entry_kind=EXECUTION, symbol=symbol, action=action,
                         entry_price=price, executed=False, risk_passed=True,
                         output_text=f"{note} order={order_id}")
     except Exception as e:  # noqa: BLE001

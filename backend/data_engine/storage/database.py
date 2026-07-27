@@ -184,6 +184,38 @@ def init_db():
         # 刻意**不**回填 outcome_status='pending'：存量行该标什么状态是评估内核的判断
         # （advisor 该 unable/no_action、report_picks 该按龄分流），在 SQL 里手写等于
         # 把内核逻辑复制一份，engine_version 也没法戳。留 NULL 让首次回填自然分流。
+        # 自动迁移：entry_kind（P0-4）—— 「这一行记的是哪一类事」。
+        # 取值与语义的单一真源在 common/decision_kind.py。
+        if "entry_kind" not in dl_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE decision_logs ADD COLUMN entry_kind VARCHAR(12)"))
+            print("✓ decision_logs 表已添加 entry_kind 列")
+        # 存量行归类。**与 P0-1 那批 outcome 列刻意相反：这次要回填。**
+        # 那次留 NULL 是因为「该标什么状态」是评估内核的判断，写进 SQL 等于把内核
+        # 复制一份；这次「这行是建议还是回执」是**写入点的既成事实**，SQL 里判得准，
+        # 而且不回填就等于把 40% 的脏行继续留在评估候选集里 —— 炸弹不拆。
+        #
+        # `WHERE entry_kind IS NULL` 让它天然幂等，且**永不覆盖**后来写入的分类。
+        with engine.begin() as conn:
+            _classified = conn.execute(text("""
+                UPDATE decision_logs SET entry_kind = CASE
+                    -- crypto：全是 execution.py 的成交/挂单回执，一条建议都没有
+                    WHEN source = 'crypto' THEN 'execution'
+                    WHEN source = 'crypto_earn' THEN 'ops'
+                    -- moneybill：全部出自 confirm_gate（「每一次经确认的工具调用」）。
+                    -- 有 action 的是下单（place_order / place_crypto_order），其余是
+                    -- 加自选股/建预警/编策略这类非交易操作。
+                    WHEN source = 'moneybill' AND trim(coalesce(action, '')) <> '' THEN 'execution'
+                    WHEN source = 'moneybill' THEN 'ops'
+                    -- advisor / cockpit / crypto_cockpit / moneybill_recommend /
+                    -- report_picks —— 这些才是 AI 的可证伪断言
+                    ELSE 'advice'
+                END
+                WHERE entry_kind IS NULL
+            """)).rowcount
+        if _classified:
+            print(f"✓ decision_logs 已回填 entry_kind 分类: {_classified} 行")
+
         dl_idx = {i["name"] for i in insp.get_indexes("decision_logs")}
         if "idx_decision_outcome_scan" not in dl_idx:
             with engine.begin() as conn:

@@ -360,6 +360,8 @@ module = [
   # 时间口径真源：纯逻辑、零 DB、零第三方，天生该在强检域里
   "common.market_time",
   "common.outcome_eval",
+  # P0-4 留痕分类真源：同上，纯逻辑零依赖
+  "common.decision_kind",
   "net.clash",
   "net.env",
   "net.session",

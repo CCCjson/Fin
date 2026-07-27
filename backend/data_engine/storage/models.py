@@ -1085,8 +1085,11 @@ class PositionReconciliation(Base):
 class DecisionLog(Base):
     """决策留痕表 —— 每条 AI 产生的买卖建议的可复现、可归因记录。
 
-    活跃 source：advisor / cockpit / moneybill / moneybill_recommend / report_picks。
-    规则信号已有 Signal 表故不重复记。
+    活跃 source：advisor / cockpit / moneybill / moneybill_recommend / report_picks /
+    crypto / crypto_cockpit / crypto_earn。
+
+    ⚠️ 这张表里躺着**三类语义完全不同**的行，靠 `entry_kind` 区分（见该列注释）——
+    只有 `advice` 那类进后验评估。规则信号已有 Signal 表故不重复记。
     """
     __tablename__ = "decision_logs"
 
@@ -1095,6 +1098,15 @@ class DecisionLog(Base):
     created_at = Column(DateTime, server_default=func.now(), index=True)
 
     source = Column(String(20), nullable=False, index=True)     # advisor / cockpit / moneybill
+    # 记的是**哪一类事**（P0-4）。取值见 common/decision_kind.py，只有 advice 进
+    # 后验评估 / 胜率 / 置信度校准：
+    #   advice    —— AI 的可证伪断言（「买茅台，入场 1650」）。P0-1 评的就是它。
+    #   execution —— 订单回执（成交 / 挂单 / 补录真实成交）。**已发生的事实，没有对错可评**。
+    #   ops       —— 非交易操作（加自选股 / 建预警 / 改设置 / 编策略）。连价格都没有。
+    # ⛔ **别再用 source 去区分这件事**：source 是「谁写的」，entry_kind 是「写的是什么」。
+    # 靠 source 命名约定分类正是 P0-4 那颗炸弹的成因 —— crypto 的成交回执与 AI 建议
+    # 共用一个 source 域，39 条 entry=100 的假成交排着队等被评成 +64900% 的 win。
+    entry_kind = Column(String(12), default="advice")
     symbol = Column(String(20), index=True)
     name = Column(String(100))
     action = Column(String(12))          # BUY / SELL / HOLD / AGGREGATE
