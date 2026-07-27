@@ -17,6 +17,7 @@ from typing import Any
 from loguru import logger
 
 from common.market_time import utc_iso, utc_now
+from common.trade_source import STRATEGY as TRADE_STRATEGY
 
 # ⏱ 本模块所有时刻一律 **naive UTC**（`utc_now()`），与 `CryptoPendingOrder` 的列口径
 # 一致，见 docs/CODING_STANDARDS.md §11。展示交给前端 `utils/datetime.ts` 转本地。
@@ -423,8 +424,13 @@ class CryptoPendingOrderService:
                     "note": "市价单零成交（未吃到量），请去币安核对"}
 
         fill_price = order.filled_price or cur
+        # 归因（S1）：这笔成交属于哪条策略，**只有此刻知道** —— `CryptoPendingOrder` 这张
+        # 桥表的 FILLED 行 24 小时后就被 `cleanup()` 删掉，超期之后再也查不回来。
+        # 所以必须当场写进成交台账本身。真源 `common/trade_source.py`。
         ex.record_crypto_trade(symbol, side, fill_price, filled, order.order_id,
-                               commission=order.commission or 0.0)
+                               commission=order.commission or 0.0,
+                               source_kind=TRADE_STRATEGY,
+                               source_ref=intent.get("strategy_id"))
         if side == "SELL":
             ex.auto_sweep_to_earn(broker)
         # terminal_bad 且 filled>0 = 部分成交后余量被撤/过期：成交那部分是**真的**，必须落账

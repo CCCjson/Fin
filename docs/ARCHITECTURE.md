@@ -262,6 +262,7 @@ frontend/src/
 | AI建议后来对没对 / 推荐胜率 | `common/outcome_eval.py`（判定内核，纯逻辑）+ `decision_log.py` 的 `backfill_outcomes()`/`get_decision_stats()`。**与C++回测是两根轴**：C++测策略，这个测AI的嘴。⚠️ 只有 `entry_kind='advice'` 的行进评估与分母，见下行 |
 | 「这条留痕是建议还是订单回执」 | `common/decision_kind.py`（`advice`/`execution`/`ops` 三值真源 + 确认门工具判定表）。**改留痕/胜率/校准前必读** `docs/GOTCHAS.md` 那两条（P0-4） |
 | 「这条留痕是谁写的 / 新增一个 source 要动哪」 | `common/decision_source.py`（8 个 source × label/kinds/指路），与 `decision_kind` 成对。门禁 `tests/test_decision_source_registry.py` |
+| 「这笔成交是哪条策略/谁下的 · 策略赚了多少」 | `common/trade_source.py`（归因真源）+ `crypto_strategy/performance.py`（战绩内核）。⛔ `crypto_strategy_runs.pnl_realized_today` 是**整个账户**不是这条策略 |
 | 「风控上限为什么没拦住 / 20% 现金底线在哪」 | `trading_engine/risk/adapter.py::get_max_total_position_pct()`（独立硬底线，只读 `RISK_CONFIG`）。⛔ 别再写 `max(总仓位上限, 单股上限)`，那个模式已被复制三次，有 AST 门禁咬 |
 | "已退役的旧页面"逻辑（信号/自选/复盘/报告/顾问/持仓等）| 不要找 `pages/`（已硬删除），去 `backend/agents/tools/*.py` 找同名工具文件 |
 | MoneyBill人格/沟通风格/工具分组铁律 | `backend/agents/skills/monitor.md` |

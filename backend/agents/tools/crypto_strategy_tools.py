@@ -129,3 +129,90 @@ def compile_crypto_strategy(spec: Any, description_nl: str | None = None) -> Too
             "⚠️那个回测只是双均线代理、不测你的规则，仅供参考——安全靠逐笔确认+护栏+硬风控，不靠它。"),
     })
     return ToolEnvelope(data=plain, widget=widget)
+
+
+# ──────────────────── 回头看：策略战绩（S1）────────────────────
+#
+# `crypto_strategy_runs` 从 2026-07 就在逐 tick 落审计日志，**在此之前没有任何工具读过它**。
+# 这两个工具给 AI 装上「回头看我这条策略跑得怎么样」的眼睛，是策略竞技场（S3）里
+# 「卫冕者是不是开始失效」的数据入口。
+
+class StrategyPerformanceArgs(BaseModel):
+    strategy_id: str = Field(..., min_length=3, description="策略号，形如 CS-20260721191526-17cb24")
+    days: int = Field(30, ge=1, le=365, description="回看多少天，默认 30")
+
+
+@tool(
+    name="get_strategy_performance",
+    description="【crypto 半自动策略·体检】单条策略的完整战绩：跑了多少 tick、"
+                "**为什么没开单**（成本吃光边际/条件没触发/风控护栏拦下，按占比排序）、"
+                "赚了多少、护栏状态，并给一句人话结论。"
+                "用户问「我那条策略最近怎么样 / 它为什么不下单 / 它赚钱了吗」时用。"
+                "⚠️ 返回的 pnl.basis 必须跟着数字一起读：live_fills=真金白银；"
+                "paper_simulated=理想撮合的模拟账，**不可与实盘策略比大小**；none=还算不出来。",
+    args_model=StrategyPerformanceArgs,
+    category="crypto", group="crypto",
+)
+def get_strategy_performance(strategy_id: str, days: int = 30) -> ToolEnvelope:
+    from crypto_strategy.performance import strategy_health
+
+    h = strategy_health(strategy_id, days=days)
+    if not h.get("ok"):
+        # 「没跑过」和「跑了但没赚」给出的下一步动作完全不同，所以理由要原样带出去，
+        # 不能压成一句「没有数据」。
+        return ToolEnvelope(business_result="negative", message=h.get("reason", "查不到"),
+                            data=h)
+    return ToolEnvelope(data=h, widget=_health_widget(h))
+
+
+def _health_widget(h: dict) -> Any:
+    from agents.widgets import metric_cards_widget
+
+    pnl = h.get("pnl") or {}
+    basis = pnl.get("basis")
+    # ⚠️ 卡片契约是 `type ∈ {'return','risk','quality','neutral'}` + 独立的 `positive: bool`
+    # （`agents/widgets.py`）。传 `type="positive"` 前端会 fallthrough 到 neutral ——
+    # **盈亏卡永远白色，赚亏不变色**。全仓 20+ 处无一例外，别在这儿开先例。
+    realized = pnl.get("realized_pnl")
+    if basis == "mixed":
+        realized = (pnl.get("live") or {}).get("realized_pnl")
+    if basis in ("live_fills", "mixed"):
+        pnl_card = {"label": "实盘盈亏", "value": f"{realized or 0:+.2f} USDT",
+                    "type": "return", "positive": (realized or 0) >= 0}
+    elif basis == "paper_simulated":
+        pnl_card = {"label": "盈亏（模拟）", "value": f"{realized or 0:+.2f}",
+                    "type": "neutral"}
+    else:
+        pnl_card = {"label": "盈亏", "value": "暂无", "type": "neutral"}
+    top = next(iter(h.get("no_order_reasons") or {}), None)
+    return metric_cards_widget([
+        {"label": "运行", "value": f"{h['runs']['total']} 次", "type": "neutral"},
+        {"label": "待确认单", "value": f"{h.get('orders_staged', 0)} 张", "type": "neutral"},
+        {"label": "没开单主因",
+         "value": (h["no_order_reasons"][top]["means"] if top else "—"), "type": "neutral"},
+        pnl_card,
+    ], title=f"📊 {h.get('name')} · 最近 {h['window']['days']} 天")
+
+
+class StrategyStandingsArgs(BaseModel):
+    days: int = Field(30, ge=1, le=365, description="回看多少天，默认 30")
+
+
+@tool(
+    name="list_strategy_standings",
+    description="【crypto 半自动策略·总览】列出全部策略及各自战绩摘要（运行次数/产单数/盈亏/一句话结论）。"
+                "用户问「我现在有哪些策略 / 它们都怎么样」时用。"
+                "⚠️ **刻意不排名**：paper 与 live 不可比、样本量差异大，按收益排序等于诱导追涨杀跌。"
+                "真正的优劣判定要走观察期/显著性/回测/风险四道门槛（还没实现）。",
+    args_model=StrategyStandingsArgs,
+    category="crypto", group="crypto",
+)
+def list_strategy_standings(days: int = 30) -> ToolEnvelope:
+    from crypto_strategy.performance import standings
+
+    rows = standings(days=days)
+    if not rows:
+        return ToolEnvelope(business_result="negative",
+                            message="一条 crypto 策略都还没建。用 compile_crypto_strategy 编一条。")
+    return ToolEnvelope(data={"count": len(rows), "days": days, "strategies": rows,
+                              "ranking_note": "未排名——比较规则见工具说明。"})

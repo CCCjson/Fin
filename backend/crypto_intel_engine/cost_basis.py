@@ -207,7 +207,8 @@ class _FeePricer:
 
 # ──────────────── 回放（单一真源）────────────────
 
-def replay(symbol: str | None = None) -> dict[str, dict[str, Any]]:
+def replay(symbol: str | None = None, *,
+           order_ids: set[str] | None = None) -> dict[str, dict[str, Any]]:
     """按加权平均成本法回放 `crypto_fills`，返回 **{symbol: 状态}**。
 
     状态字段：
@@ -221,18 +222,34 @@ def replay(symbol: str | None = None) -> dict[str, dict[str, Any]]:
     ⚠️ 卖出量可能超过回放出的持仓量（币是充值/空投进来的，我们没有它的买入记录）。
     这种情况下把超出部分的成本记为 **未知**（不按 0 成本算成暴利，那会把当日已实现盈亏
     灌成巨额正数、当天的熔断线直接失效），并置 `has_uncosted_sell`。
+
+    Args:
+        order_ids: 只回放这些币安 orderId 的成交（S1 策略战绩归因用）。
+            ⭐ 策略盈亏**必须走这条路**而不是直接算 `crypto_trades`：那张台账的
+            `commission` 丢了 `commissionAsset`，买 BTC 扣的 0.00001 BTC 会被当成
+            0.00001 美元 —— 这是本模块存在的原因之一，别在别处重犯。
+            空集合表示「一笔都不匹配」，返回 {}（区别于 `None` = 不过滤）。
     """
     from sqlalchemy import text
 
     from data_engine.storage.database import get_session
+    if order_ids is not None and not order_ids:
+        return {}
     session = get_session()
     try:
         sql = ("SELECT symbol, price, quantity, quote_qty, commission, commission_asset,"
                " is_buyer, trade_time FROM crypto_fills")
         params: dict[str, Any] = {}
+        where: list[str] = []
         if symbol:
-            sql += " WHERE symbol = :symbol"
+            where.append("symbol = :symbol")
             params["symbol"] = symbol
+        if order_ids:
+            keys = [f"oid{i}" for i in range(len(order_ids))]
+            where.append(f"order_id IN ({', '.join(':' + k for k in keys)})")
+            params.update(dict(zip(keys, [str(o) for o in sorted(order_ids)], strict=True)))
+        if where:
+            sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY trade_time ASC, CAST(trade_id AS INTEGER) ASC"
         rows = session.execute(text(sql), params).fetchall()
     except Exception as e:  # noqa: BLE001

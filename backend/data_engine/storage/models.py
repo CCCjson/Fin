@@ -1304,10 +1304,18 @@ class CryptoTrade(Base):
     commission = Column(Float, default=0)
     order_id = Column(String(50), nullable=True, index=True)  # 币安 orderId
     trade_date = Column(Date, nullable=False, index=True)
+    # ── 来源归因（S1）：这笔单是从哪儿来的。真源 `common/trade_source.py` ──
+    # 🔴 **必须写在成交台账本身**，不能靠事后 join：策略排的单只在 `CryptoPendingOrder`
+    # 里留桥接，而那张表的 FILLED 行 24 小时后就被 `pending.cleanup()` 删掉 ——
+    # 超期之后「这笔成交属于哪条策略」永久查不回来。
+    # `source_ref`：strategy → 策略号 `CS-…`；ai_advice → decision_id（S4 接）。
+    source_kind = Column(String(16), default="unknown", index=True)
+    source_ref = Column(String(64))
     created_at = Column(DateTime, server_default=func.now())
 
     __table_args__ = (
         Index("idx_crypto_trade_symbol_date", "symbol", "trade_date"),
+        Index("idx_crypto_trade_source", "source_kind", "source_ref"),
     )
 
     def __repr__(self):
@@ -1439,7 +1447,11 @@ class CryptoStrategyRun(Base):
     symbols_evaluated = Column(Integer, default=0)
     orders_placed = Column(Integer, default=0)
     decision_detail = Column(Text)                     # JSON：每币命中条件/composite/毛边际/往返成本/净边际/护栏/风控
-    executed_order_ids = Column(Text)                  # JSON：币安 orderId 列表（live）；paper 为 null
+    # 🔴 **不是币安 orderId** —— 这里存的是 `engine._run_one` 攒的 `staged_refs`，
+    # 也就是待确认单的 `CPO-<ts>-<hex6>` 引用（live）；paper 为 null。列名是历史遗留。
+    # ⛔ 别拿它去 join `CryptoTrade.order_id`，**一条都对不上**。策略盈亏归因走
+    # `CryptoTrade.source_kind/source_ref`（S1，真源 `common/trade_source.py`）。
+    executed_order_ids = Column(Text)
     pnl_realized_today = Column(Float)                 # 当日已实现盈亏快照
     fees_today = Column(Float)                         # 当日累计手续费快照（费用漂移护栏）
     error_message = Column(Text)

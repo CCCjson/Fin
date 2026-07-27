@@ -63,6 +63,7 @@ MoneyBill 人格/沟通风格/工作方式铁律：`backend/agents/skills/monito
 | 模型微调 | `finetune/{pipeline,remote_train}.py` | 本地/远程GPU微调流水线 | 页面（FineTune工作台） |
 | 自动化常驻监控 | `automation/{limit_up_scanner,pending_order_manager,position_guardian,price_alert_monitor,scheduler,websocket_manager}.py` | 涨停扫描/待审批订单/止损守护/价格预警，开机自启 | 页面（Automation工作台）+ WebSocket推送 |
 | 交易执行 | `trading_engine/brokers/{qmt_broker,paper_broker,easytrader_broker,openctp_broker,base}.py` | 多broker适配（模拟盘/QMT/东财/OpenCTP实盘） | 页面（Automation）+ 对话下单确认流 |
+| crypto 半自动策略 | `crypto_strategy/{engine,pending,guardrails,backtest_gate,performance}.py`、`common/trade_source.py` | 人话→DSL 编译 + 逐 tick 评估 + 排待确认单（**引擎永不自动成交**）+ **策略战绩体检**（触发/拦截分布/归因盈亏）。成交按 `CryptoTrade.source_kind/source_ref` 归因到策略 | 对话（`compile_crypto_strategy` / `get_strategy_performance` / `list_strategy_standings`） |
 | 决策留痕 | `decision_log.py`、`common/decision_kind.py`、`common/decision_source.py`、`business_events.py` | AI建议(advisor/cockpit/moneybill)持久化归因 + 业务事件总线→WS推送。表里三类行靠 `entry_kind` 区分（`advice` 才进胜率，回执/操作不进）；来源 8 个由 `decision_source` 建表 | 系统内部，各功能调用时自动记录；查询唯一出口 = `get_decision_history` 工具（`entry_kind`/`verbose`/`exec_state`） |
 
 ## 4. 市场与数据源覆盖表

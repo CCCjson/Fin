@@ -30,6 +30,7 @@ from agents.widgets import (
     crypto_screen_widget,
     metric_cards_widget,
 )
+from common.trade_source import AI_ADVICE as TRADE_AI_ADVICE
 
 # 执行/风控/资金/台账原语的单一真源（见 crypto_intel_engine/execution.py）。
 # 以旧私有名别名导入，使本模块下方 preview/place 的函数体零改动，两条下单路径共用同一份。
@@ -404,8 +405,12 @@ def place_crypto_order(symbol: str, side: str, quantity=None,
     fill_price = order.filled_price or ref
     # terminal_bad 且 filled>0 = 部分成交后余量被撤/过期：成交那部分是真的，必须落账
     partial = terminal_bad or filled_qty < qty
+    # 归因（S1）：经 MoneyBill 对话下的单。⚠️ `ai_advice` 说的是**渠道**（AI 在环）
+    # 不是「AI 拍的板」—— 确认键是 Jason 按的。`source_ref` 现在留空：`confirm_gate`
+    # 在本工具**返回之后**才写 DecisionLog，下单这一刻还没有 decision_id，接它属于 S4。
     _record_crypto_trade(symbol, action, fill_price, filled_qty, order.order_id,
-                         commission=order.commission or 0.0)
+                         commission=order.commission or 0.0,
+                         source_kind=TRADE_AI_ADVICE)
 
     # 卖出成交 → 闲置 USDT 全自动扫进最优活期理财（吃收益，不弹确认）
     if action == "SELL":

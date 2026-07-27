@@ -243,6 +243,39 @@ def init_db():
                 ))
             print("✓ decision_logs 表已添加 idx_decision_outcome_scan 复合索引")
 
+    # 自动迁移：crypto_trades 的来源归因两列（S1）—— 「这笔单是从哪儿来的」。
+    # 取值真源 common/trade_source.py。
+    #
+    # ⚠️ 存量行**刻意回填成 `unknown` 而不是猜**：策略排的单只在 `CryptoPendingOrder`
+    # 里留过桥接，而那张表的 FILLED 行 24 小时后就被清理了 —— 对存量成交，「它属于哪条
+    # 策略」这个信息**是真的没了**。SQL 里按时间/symbol 去猜等于凭空捏造某条策略的战绩，
+    # 而战绩要拿来决定切不切换策略。宁可让它显示「N 笔来源不明」。
+    if "crypto_trades" in insp.get_table_names():
+        _ct_cols = {c["name"] for c in insp.get_columns("crypto_trades")}
+        _ct_new = [("source_kind", "VARCHAR(16)"), ("source_ref", "VARCHAR(64)")]
+        _ct_added = [c for c, _ in _ct_new if c not in _ct_cols]
+        if _ct_added:
+            with engine.begin() as conn:
+                for _col, _typ in _ct_new:
+                    if _col not in _ct_cols:
+                        conn.execute(text(f"ALTER TABLE crypto_trades ADD COLUMN {_col} {_typ}"))
+            print(f"✓ crypto_trades 表已添加来源归因列: {_ct_added}")
+        # `WHERE source_kind IS NULL` 天然幂等，且**永不覆盖**写入点显式标好的值。
+        with engine.begin() as conn:
+            _tagged = conn.execute(text(
+                "UPDATE crypto_trades SET source_kind = 'unknown' WHERE source_kind IS NULL"
+            )).rowcount
+        if _tagged:
+            print(f"✓ crypto_trades 存量行标记来源不明: {_tagged} 行")
+        # ⚠️ **ALTER TABLE 不会建索引，`create_all` 对已存在的表整表跳过** ——
+        # 于是模型里声明的索引在**老库上永远不存在**，而全新库（测试库）里有，
+        # schema drift 对测试完全隐形。必须显式建（同上面 decision_logs 的做法）。
+        with engine.begin() as conn:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_trade_source "
+                              "ON crypto_trades (source_kind, source_ref)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_crypto_trades_source_kind "
+                              "ON crypto_trades (source_kind)"))
+
     # 自动迁移：回填 stock_info 表的 stock_type 和 exchange
     if "stock_info" in insp.get_table_names():
         with engine.begin() as conn:

@@ -18,7 +18,10 @@ ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 
 
 # —— 配置字段白名单（分组）——
-# type: text | password | select；sensitive=True 的字段不回传真实值。
+# 字段的 `type` 取值：text | password | select；sensitive=True 的字段不回传真实值。
+# ⚠️ 别写成 `# type: ...` 开头 —— mypy 会把它当 PEP 484 类型注释去解析，
+# 直接报 `Invalid syntax`，且**任何传递 import 到本模块的文件都跑不了 mypy**
+# （运行时完全正常，所以这个坑能潜伏很久）。
 SETTINGS_SCHEMA: list[dict[str, Any]] = [
     {
         "group": "ai",

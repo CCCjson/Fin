@@ -14,6 +14,9 @@ from loguru import logger
 
 from common.market import CRYPTO
 from common.market_time import market_today
+from common.trade_source import UNKNOWN as TRADE_UNKNOWN
+from common.trade_source import needs_ref as needs_trade_ref
+from common.trade_source import normalize as normalize_trade_source
 
 # ──────────────────── 风控 broker_info + 连亏台账回放 ────────────────────
 
@@ -353,12 +356,26 @@ def record_earn_sweep(asset: str, amount: float) -> None:
 
 
 def record_crypto_trade(symbol: str, action: str, price: float, qty: float,
-                        order_id: str, commission: float = 0.0) -> None:
+                        order_id: str, commission: float = 0.0, *,
+                        source_kind: str, source_ref: str | None = None) -> None:
     """**真实成交**留痕：成交台账 + 业务事件 + DecisionLog(source=crypto)。吞异常不坏主流程。
 
     只在 filled_quantity > 0 时调用（qty 为已成交量）。台账（CryptoTrade）喂连亏风控回放；
     commission 取自币安 fills 汇总（手续费币种可能非 USDT，回放里作近似处理）。
+
+    Args:
+        source_kind: 这笔单从哪儿来（`common/trade_source.py`）。**关键字且无默认值
+            是刻意的** —— 归因一旦能靠默认值兜底，下一个写入点就会忘，而忘掉的后果是
+            某条策略的战绩里凭空多/少一笔钱。门禁 `tests/test_trade_source.py` 会咬。
+        source_ref: `strategy` → 策略号 `CS-…`（**必填**，不然只知道「来自某条策略」
+            却不知道哪条 = 等于没归因）；`ai_advice` → decision_id（S4 接，现在留空）。
     """
+    kind = normalize_trade_source(source_kind)
+    if needs_trade_ref(kind) and not source_ref:
+        # 不抛异常（留痕绝不能坏主流程），但降级成 unknown 并吼一声：
+        # 记成「来自某条不知道哪条的策略」比记成「来源不明」更坏 —— 后者至少诚实。
+        logger.warning(f"crypto 成交归因缺 source_ref（kind={kind} order={order_id}），降级为 unknown")
+        kind = TRADE_UNKNOWN
     # ① 成交台账（连亏风控的回放数据源）
     try:
 
@@ -372,6 +389,7 @@ def record_crypto_trade(symbol: str, action: str, price: float, qty: float,
                 # 交易日按 **crypto 市场日**（UTC）—— 要和 `crypto_fills` 回放出的
                 # `closed[].date`、以及引擎的当日熔断/费用窗口对得上
                 order_id=order_id, trade_date=market_today(CRYPTO),
+                source_kind=kind, source_ref=source_ref or None,
             ))
             session.commit()
         finally:

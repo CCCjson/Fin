@@ -364,6 +364,10 @@ module = [
   "common.decision_kind",
   # S0 留痕来源真源：与 decision_kind 成对，同样纯逻辑零依赖
   "common.decision_source",
+  # S1 成交来源归因真源：同上
+  "common.trade_source",
+  # S1 策略战绩内核：纯计算、只读库，算错就是给策略发假奖状，值得强检
+  "crypto_strategy.performance",
   "net.clash",
   "net.env",
   "net.session",
