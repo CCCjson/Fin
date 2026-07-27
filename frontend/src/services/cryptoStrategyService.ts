@@ -5,8 +5,15 @@ import api from './api';
 export interface CryptoStrategyItem {
   strategy_id: string;
   name: string;
+  // 版本化（S2）：一个版本一行，family_id 把同一条策略的历代版本串起来。
+  // fork 出的新版本默认继承名字，所以**必须显示 version 才分得清哪条是哪版**。
+  family_id: string;
+  version: number;
+  forked_from: string | null;
   mode: 'paper' | 'live';
-  status: string;              // draft|backtested|armed|paused_by_guardrail|retired
+  // draft|backtested|armed|paused_by_guardrail|superseded|retired
+  //   superseded = 同族有新版本 arm 了，这一版让位停跑（不删，战绩留着比）
+  status: string;
   enabled: boolean;
   strategy_kind: 'swing' | 'arb' | 'long_hold';
   interval_minutes: number;

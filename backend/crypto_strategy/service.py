@@ -8,6 +8,7 @@ from datetime import timedelta
 from typing import Any
 
 from loguru import logger
+from sqlalchemy import func, or_
 
 from common.market import CRYPTO
 from common.market_time import market_today, utc_iso, utc_now
@@ -56,10 +57,73 @@ def _gen_id() -> str:
     return f"CS-{utc_now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
 
+def _gen_family_id() -> str:
+    import secrets
+    return f"SF-{utc_now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+
+
+# 同 family 里**最多只能有一个**处于这些状态（新版本上线时旧版本要让位）。
+_LIVE_STATUSES = ("armed", "paused_by_guardrail")
+
+
+def _family_filter(row):
+    """匹配同族的 SQL 条件。
+
+    ⚠️ 带 `strategy_id == family` 这条兜底是刻意的：`family_id` 允许为 NULL（存量行靠
+    `init_db` 回填），万一某个新插入点忘了传，`family` 会回落成 `strategy_id` ——
+    那时只按 `family_id` 匹配会**一条都匹配不到**，于是 v1 和 v2 同时 armed，
+    而 `pending.has_open` 的去重是按 `strategy_id` 的，拦不住跨版本重复下单。
+    """
+    from sqlalchemy import or_
+
+    from data_engine.storage.models import CryptoStrategy
+    family = row.family_id or row.strategy_id
+    return or_(CryptoStrategy.family_id == family,
+               CryptoStrategy.strategy_id == family)
+
+
+def _supersede_siblings(session, row) -> list[str]:
+    """让同族其它在跑的版本退位。返回被退位的 strategy_id 列表。"""
+    from data_engine.storage.models import CryptoStrategy
+    out = []
+    for other in session.query(CryptoStrategy).filter(
+            _family_filter(row),
+            CryptoStrategy.strategy_id != row.strategy_id,
+            CryptoStrategy.status.in_(_LIVE_STATUSES)).all():
+        other.status = "superseded"
+        other.enabled = 0
+        out.append(other.strategy_id)
+    return out
+
+
+def _assert_armable(row) -> None:
+    """已退役的策略不许被 arm/enable 复活 —— 退役是 Jason 的决定，不该被一次上线动作推翻。"""
+    if row.status == "retired":
+        raise StrategyError(
+            f"{row.strategy_id} 已退役，不能直接上线。要重新启用请先基于它 fork 一个新版本。")
+
+
+def _apply_backtest(row, bt: dict[str, Any]) -> None:
+    """把回测结果写进策略行 —— `compile_and_persist` 与 `fork_version` 共用一份。"""
+    row.last_backtest_at = utc_now()
+    row.backtest_net_return = bt.get("net_return")
+    row.backtest_metrics = json.dumps(
+        {"metrics": bt.get("metrics"), "degraded": bt.get("degraded"),
+         "degraded_reasons": bt.get("degraded_reasons"),
+         # caveats 与 degraded 正交：规则回放了，但数字本身的含义比看上去弱
+         # （费率口径对不上 / 大量日子结构上不可能开仓）
+         "caveats": bt.get("caveats"),
+         "per_symbol": bt.get("per_symbol")}, ensure_ascii=False)
+    row.backtest_passed = 1 if bt.get("passed") else 0
+    row.status = "backtested"
+
+
 def row_summary(row) -> dict[str, Any]:
     """给前端/工具的轻量摘要（不含 JSON 全文）。"""
     return {
         "strategy_id": row.strategy_id, "name": row.name, "mode": row.mode,
+        "family_id": row.family_id or row.strategy_id, "version": row.version or 1,
+        "forked_from": row.forked_from,
         "status": row.status, "enabled": bool(row.enabled),
         "strategy_kind": row.strategy_kind, "interval_minutes": row.interval_minutes,
         "backtest_passed": bool(row.backtest_passed),
@@ -117,28 +181,72 @@ class CryptoStrategyService:
         bt = self.backtest(spec) if do_backtest else None
         session = self._session()
         try:
-            row = CryptoStrategy(strategy_id=_gen_id(), description_nl=description_nl,
+            sid = _gen_id()
+            row = CryptoStrategy(strategy_id=sid, description_nl=description_nl,
+                                 # 全新策略 = 一族的第一版。fork 出的新版本走 `fork_version`。
+                                 family_id=_gen_family_id(), version=1,
                                  enabled=0, status="draft", **_spec_to_columns(spec))
             if bt is not None:
-                row.last_backtest_at = utc_now()
-                row.backtest_net_return = bt.get("net_return")
-                row.backtest_metrics = json.dumps(
-                    {"metrics": bt.get("metrics"), "degraded": bt.get("degraded"),
-                     "degraded_reasons": bt.get("degraded_reasons"),
-                     # caveats 与 degraded 正交：规则回放了，但数字本身的含义比看上去弱
-                     # （费率口径对不上 / 大量日子结构上不可能开仓）
-                     "caveats": bt.get("caveats"),
-                     "per_symbol": bt.get("per_symbol")}, ensure_ascii=False)
-                row.backtest_passed = 1 if bt.get("passed") else 0
-                row.status = "backtested"
+                _apply_backtest(row, bt)
             session.add(row)
             session.commit()
             return {"strategy_id": row.strategy_id, "summary": row_summary(row), "backtest": bt}
         finally:
             session.close()
 
+    # ---- fork：在某个版本基础上生成下一版（S2）----
+    def fork_version(self, base_strategy_id: str, spec: CryptoStrategySpec, *,
+                     description_nl: str | None = None,
+                     do_backtest: bool = True) -> dict[str, Any]:
+        """把新 spec 落成同 family 的下一个版本。
+
+        ⛔ **绝不自动上线**：新版本 `enabled=0`、`status=draft`/`backtested`，
+        旧版本**原样继续跑**。「批准了提案」和「让它上线」是两个决定
+        （S2 §2.2）—— 上线要 Jason 再点一次 arm。
+        """
+        from data_engine.storage.models import CryptoStrategy
+
+        session = self._session()
+        try:
+            base = self._get_row(session, base_strategy_id)
+            family = base.family_id or base.strategy_id
+            base_desc = base.description_nl
+        finally:
+            session.close()
+
+        bt = self.backtest(spec) if do_backtest else None
+        session = self._session()
+        try:
+            # ⚠️ 版本号在**插入的同一个 session 里**重新取 max —— 回测可能跑几十秒，
+            # 用回测之前读到的数会让并发 apply 出两个同号版本（那个索引不是唯一索引，
+            # DB 不挡），而 `latest_only` 只会留下其中一条，另一条永久隐身。
+            top = session.query(func.max(CryptoStrategy.version)).filter(
+                or_(CryptoStrategy.family_id == family,
+                    CryptoStrategy.strategy_id == family)).scalar() or 1
+            row = CryptoStrategy(
+                strategy_id=_gen_id(), family_id=family, version=int(top) + 1,
+                # 血缘：直接调 fork（不走提案）时，「v4 是从哪一版分出来的」只在返回值里，
+                # 落一份到策略行上才查得回来。
+                description_nl=description_nl or base_desc,
+                enabled=0, status="draft", **_spec_to_columns(spec))
+            row.forked_from = base.strategy_id
+            if bt is not None:
+                _apply_backtest(row, bt)
+            session.add(row)
+            session.commit()
+            return {"strategy_id": row.strategy_id, "family_id": family,
+                    "version": row.version, "base_strategy_id": base_strategy_id,
+                    "summary": row_summary(row), "backtest": bt}
+        finally:
+            session.close()
+
     # ---- 读 ----
-    def list_strategies(self, *, mode: str | None = None, enabled: bool | None = None) -> list[dict]:
+    def list_strategies(self, *, mode: str | None = None, enabled: bool | None = None,
+                        latest_only: bool = True) -> list[dict]:
+        """默认**每个 family 只列当前版本** —— 否则版本一多列表就被历史版本淹掉。
+
+        `latest_only=False` 看全部历史版本（S3 竞技场比 v1 vs v2 时要）。
+        """
         from data_engine.storage.models import CryptoStrategy
         session = self._session()
         try:
@@ -147,7 +255,33 @@ class CryptoStrategyService:
                 q = q.filter(CryptoStrategy.mode == mode)
             if enabled is not None:
                 q = q.filter(CryptoStrategy.enabled == (1 if enabled else 0))
-            return [row_summary(r) for r in q.order_by(CryptoStrategy.created_at.desc()).all()]
+            rows = q.order_by(CryptoStrategy.created_at.desc()).all()
+            if latest_only:
+                # 「当前版本」= 同 family 里 version 最大的那个。
+                # 🔴 **但必须并上所有 `enabled=1` 的行**（S2 复审补）：v1 armed 正在排真单、
+                # AI 刚 apply 出 v2(draft) 时，只取最大版号会把**那条真在下单的 v1 藏起来** ——
+                # Jason 在 App 里看到一条未启用的草稿，而真在跑的那条看不到、也 pause 不了。
+                best: dict[str, Any] = {}
+                for r in rows:
+                    fam = r.family_id or r.strategy_id
+                    cur = best.get(fam)
+                    if cur is None or (r.version or 1) > (cur.version or 1):
+                        best[fam] = r
+                keep = set(best.values()) | {r for r in rows if r.enabled}
+                rows = sorted(keep, key=lambda r: r.created_at or "", reverse=True)
+            return [row_summary(r) for r in rows]
+        finally:
+            session.close()
+
+    def list_family(self, family_id: str) -> list[dict]:
+        """一族里的全部版本，按 version 升序 —— 「改完变好了没」的数据入口。"""
+        from data_engine.storage.models import CryptoStrategy
+        session = self._session()
+        try:
+            rows = session.query(CryptoStrategy).filter(
+                CryptoStrategy.family_id == family_id).order_by(
+                    CryptoStrategy.version.asc()).all()
+            return [row_summary(r) for r in rows]
         finally:
             session.close()
 
@@ -170,30 +304,47 @@ class CryptoStrategyService:
         ⛔ 半自动系统里安全靠**逐笔确认 + 护栏 + 硬风控**，不靠回测——故 arm **不卡回测**
         （回测是双均线代理、不测你的 DSL 规则，仅供参考）。烂策略只会提烂建议、被你拒掉，
         赔不了钱。想纯观察不产真单用 enable_paper。
+
+        ⭐ **同 family 永远最多一个 armed**（S2）：arm 一个版本时，同族其它在跑的版本
+        自动置 `superseded` + `enabled=0`。不这么做的话 v1 和 v2 会同时对同一批币下单
+        （`has_open` 的去重是按 strategy_id 的，拦不住跨版本重复）。
         """
         session = self._session()
         try:
             row = self._get_row(session, strategy_id)
+            _assert_armable(row)
+            superseded = _supersede_siblings(session, row)
             row.mode = "live"
             row.enabled = 1
             row.status = "armed"
             row.halted_reason = None
             session.commit()
-            return row_summary(row)
+            out = row_summary(row)
+            out["superseded"] = superseded
+            return out
         finally:
             session.close()
 
     def enable_paper(self, strategy_id: str) -> dict:
-        """纸面启用（不需回测通过，纯模拟不动真钱）。"""
+        """纸面启用（不需回测通过，纯模拟不动真钱）。
+
+        ⭐ **同样要让位**（S2 复审补）：不这么做的话 v1(live) 和 v2(paper) 会同族并存、
+        引擎两条都跑。钱是安全的（paper 分支不排真单），但「同 family 最多一个在跑」
+        这条不变式在文档里是**无条件**的，而且 `superseded` 的行能被 enable_paper 直接复活。
+        """
         session = self._session()
         try:
             row = self._get_row(session, strategy_id)
+            _assert_armable(row)
+            superseded = _supersede_siblings(session, row)
             row.mode = "paper"
             row.enabled = 1
             row.status = "armed"
             row.halted_reason = None
             session.commit()
-            return row_summary(row)
+            out = row_summary(row)
+            out["superseded"] = superseded
+            return out
         finally:
             session.close()
 
@@ -201,24 +352,63 @@ class CryptoStrategyService:
         return self._set_state(strategy_id, enabled=0, status="draft")
 
     def retire(self, strategy_id: str) -> dict:
-        """退役 = **彻底删除**策略（连它的待确认单 + 运行日志一起清），从列表消失。
+        """退役 = **停跑并归档**，🔴 2026-07-27（S2）从「彻底删除」改成软退役。
 
-        想只是暂时停用、留着以后再 arm 的用 pause。删除是终态、不可恢复。
+        做三件事：`status=retired` + `enabled=0` + **清掉它还没被确认的待确认单**
+        （那些必须清 —— 留着 Jason 一点确认就会给一条已退役的策略成交）。
+
+        ⭐ **`crypto_strategy_runs` 一行不删。** 旧实现连运行日志一起 `delete`，
+        于是退役即失忆：S1 的战绩、S3 竞技场的历史对比全没了。而 AI 提案样本一年才
+        12-24 条（`00-PLAN §4` 问题 2），删一条少一条。
+        真要腾空间用 `delete_strategy()`（显式、不可恢复）。
+
+        🔴 **只删 `PENDING`。`EXECUTING` / `STALE` 一律留着**（S2 复审补）——
+        `pending.py` 的注释是写死的禁令：「搁浅的 EXECUTING 绝不能删、也绝不能当失败」。
+        Jason 点了确认、币安调用还在途（或后端此刻重启）时把行删掉，`_finalize()` 会
+        找不到行静默 no-op、`cleanup()` 也再没机会把它标成 STALE 发对账告警 ——
+        **一笔可能已经在币安成交的真单，本地线索直接归零**。
         """
-        from data_engine.storage.models import (
-            CryptoPendingOrder,
-            CryptoStrategyRun,
-        )
+        from data_engine.storage.models import CryptoPendingOrder
         session = self._session()
         try:
             row = self._get_row(session, strategy_id)   # 不存在则抛 StrategyError
+            dropped = session.query(CryptoPendingOrder).filter(
+                CryptoPendingOrder.strategy_id == strategy_id,
+                CryptoPendingOrder.status == "PENDING").delete(synchronize_session=False)
+            kept = [r.order_ref for r in session.query(CryptoPendingOrder).filter(
+                CryptoPendingOrder.strategy_id == strategy_id,
+                CryptoPendingOrder.status.in_(("EXECUTING", "STALE"))).all()]
+            row.enabled = 0
+            row.status = "retired"
+            session.commit()
+            out = row_summary(row)
+            out["pending_orders_dropped"] = dropped
+            out["pending_orders_kept"] = kept
+            if kept:
+                out["warning"] = (f"{len(kept)} 张单处于在途/状态未知（{'、'.join(kept)}），"
+                                  f"**没有删** —— 它们可能已经在币安成交，请去核对。")
+            return out
+        finally:
+            session.close()
+
+    def delete_strategy(self, strategy_id: str) -> dict:
+        """**彻底删除**：连待确认单 + 运行日志一起清，不可恢复。
+
+        ⚠️ 删掉运行日志 = 删掉这条策略的全部战绩证据，S3 竞技场再也比不到它。
+        正常「不想跑了」用 `retire()`（软退役，数据留着）。这个入口留给「建错了/测试残留」。
+        """
+        from data_engine.storage.models import CryptoPendingOrder, CryptoStrategyRun
+        session = self._session()
+        try:
+            row = self._get_row(session, strategy_id)
             session.query(CryptoPendingOrder).filter(
                 CryptoPendingOrder.strategy_id == strategy_id).delete(synchronize_session=False)
-            session.query(CryptoStrategyRun).filter(
+            runs = session.query(CryptoStrategyRun).filter(
                 CryptoStrategyRun.strategy_id == strategy_id).delete(synchronize_session=False)
             session.delete(row)
             session.commit()
-            return {"strategy_id": strategy_id, "status": "deleted", "deleted": True}
+            return {"strategy_id": strategy_id, "status": "deleted", "deleted": True,
+                    "runs_deleted": runs}
         finally:
             session.close()
 

@@ -70,6 +70,11 @@ CONFIRMED_TOOL_KINDS: dict[str, str] = {
     "delete_price_alert": OPS,
     "update_setting": OPS,
     "compile_crypto_strategy": OPS,          # 编一条策略 DSL，不等于下单
+    # S2「策略变更必须人工审核」的两个承载物。仍是 ops：改策略/上线策略没有方向、
+    # 没有入场价，连价格都没有 —— 拿它们进胜率分母纯属噪声。
+    # ⚠️ 但别因此觉得它们「不重要」：`arm_crypto_strategy` 是整条自动交易链路的开关。
+    "apply_strategy_proposal": OPS,          # 把提案落成新版本（草稿，不上线）
+    "arm_crypto_strategy": OPS,              # 让某个版本上 live（旧版本自动停跑）
 }
 
 

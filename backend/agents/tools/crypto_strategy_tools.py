@@ -113,7 +113,9 @@ def compile_crypto_strategy(spec: Any, description_nl: str | None = None) -> Too
         {"label": "策略", "value": parsed.name, "type": "neutral"},
         {"label": "参考回测", "value": net_label, "type": "neutral"},
         {"label": "往返成本", "value": f"{rt:.2%}", "type": "neutral"},
-        {"label": "下一步", "value": "可纸面/可上实盘", "type": "positive"},
+        # 契约是 type ∈ {return,risk,quality,neutral} + 独立 positive；
+        # 传 "positive" 前端会 fallthrough 到 neutral（等于没写）。
+        {"label": "下一步", "value": "可纸面/可上实盘", "type": "quality", "positive": True},
     ], title=f"🤖 已编译 · {parsed.name}（{parsed.strategy_kind}）")
 
     plain = _dsl_plain(parsed)
@@ -196,6 +198,8 @@ def _health_widget(h: dict) -> Any:
 
 class StrategyStandingsArgs(BaseModel):
     days: int = Field(30, ge=1, le=365, description="回看多少天，默认 30")
+    include_archived: bool = Field(
+        False, description="是否带上已退役/被新版本取代的历史版本，默认不带")
 
 
 @tool(
@@ -207,12 +211,277 @@ class StrategyStandingsArgs(BaseModel):
     args_model=StrategyStandingsArgs,
     category="crypto", group="crypto",
 )
-def list_strategy_standings(days: int = 30) -> ToolEnvelope:
+def list_strategy_standings(days: int = 30, include_archived: bool = False) -> ToolEnvelope:
     from crypto_strategy.performance import standings
 
-    rows = standings(days=days)
+    rows = standings(days=days, include_archived=include_archived)
     if not rows:
-        return ToolEnvelope(business_result="negative",
-                            message="一条 crypto 策略都还没建。用 compile_crypto_strategy 编一条。")
+        msg = ("一条 crypto 策略都还没建。用 compile_crypto_strategy 编一条。"
+               if include_archived else
+               "没有在用的 crypto 策略（历史版本没算进来，要看传 include_archived=true）。")
+        return ToolEnvelope(business_result="negative", message=msg)
     return ToolEnvelope(data={"count": len(rows), "days": days, "strategies": rows,
+                              "include_archived": include_archived,
                               "ranking_note": "未排名——比较规则见工具说明。"})
+
+
+# ──────────────────── 提议改：AI 提案 → Jason 审 → 新版本（S2）────────────────────
+#
+# `compile_crypto_strategy` 只能**从零编一条**，改不了现有的。这三个工具把
+# 「AI 提议怎么改 → Jason 审 → 落成新版本 → 上线」补齐。
+#
+# ⭐ 确认门只挂在后两个：提案不动策略也不动钱，只是一段有结构的话，
+# 给它挂确认门等于让 Jason 为「AI 想说句话」点两次（S2 §2.2）。
+
+class ProposeStrategyChangeArgs(BaseModel):
+    base_strategy_id: str = Field(..., min_length=3, description="要改哪个版本，形如 CS-…")
+    shortfall: str = Field(..., min_length=4, description="目前策略的不足（具体，别写「表现一般」）")
+    change_summary: str = Field(..., min_length=4, description="想怎么调整（人话一句）")
+    rationale: str = Field(..., min_length=4, description="为什么这么改")
+    expected_return_pct: float = Field(
+        ..., description="预期收益（小数，0.08=+8%）。**这是可证伪断言，会被真实盈亏打分**")
+    expected_win_rate: float = Field(
+        ..., ge=0, le=1, description="预期胜率 0-1。**同样会被打分**")
+    horizon_days: int = Field(..., ge=1, le=365, description="多少天内兑现上面两个数")
+    new_spec: Any = Field(..., description="完整的新策略 DSL（在原 spec 基础上改，别只给改动部分）")
+
+
+@tool(
+    name="propose_strategy_change",
+    description="【crypto 半自动策略·提议改】给现有策略提一份结构化变更提案："
+                "目前的不足 / 想怎么调整 / 为什么 / **预期收益** / **预期胜率**。"
+                "用户说「这条策略最近不行，帮我改改 / 你觉得该怎么调」时用。"
+                "⚠️ 先用 get_strategy_performance 看战绩再提，别拍脑袋。"
+                "⚠️ new_spec 要给**完整的新 DSL**（在原 spec 上改），不是只给改动部分；"
+                "改了哪些字段由系统确定性算出来，你不用也别去描述具体字段值。"
+                "⭐ 预期收益/胜率是**可证伪断言**，将来会拿真实盈亏给你打分——认真给，别写保险数字。"
+                "本工具只落提案、不改任何东西；要真的生成新版本得 Jason 批准。",
+    args_model=ProposeStrategyChangeArgs,
+    category="crypto", group="crypto",
+)
+def propose_strategy_change(base_strategy_id: str, shortfall: str, change_summary: str,
+                            rationale: str, expected_return_pct: float,
+                            expected_win_rate: float, horizon_days: int,
+                            new_spec: Any) -> ToolEnvelope:
+    from crypto_strategy import proposals as pr
+    from crypto_strategy.service import StrategyError, crypto_strategy_service
+
+    try:
+        base = crypto_strategy_service.get_strategy(base_strategy_id)
+    except StrategyError as e:
+        return ToolEnvelope(business_result="negative", message=str(e))
+    try:
+        parsed = _coerce_spec(new_spec)
+    except ValidationError as e:
+        return ToolEnvelope(business_result="negative",
+                            message=f"新 DSL 校验失败（{e.error_count()} 处）：{e.errors()[:3]}")
+
+    diff = pr.diff_specs(base.get("spec") or {}, parsed.model_dump())
+    if not diff:
+        # 空提案比错提案更浪费 Jason 的时间：他会打开、读完、发现什么都没改。
+        return ToolEnvelope(business_result="negative",
+                            message="新 spec 与当前版本完全相同，这份提案没有实际改动，没落库。")
+
+    saved = pr.create_proposal(
+        base_strategy_id=base_strategy_id, family_id=base.get("family_id"),
+        shortfall=shortfall, change_summary=change_summary, rationale=rationale,
+        expected_return_pct=expected_return_pct, expected_win_rate=expected_win_rate,
+        horizon_days=horizon_days, new_spec=parsed.model_dump(), diff=diff)
+    saved["diff_text"] = pr.diff_text(diff)
+    saved["next_steps"] = (f"提案已存（{saved['proposal_id']}）。要真的生成新版本，"
+                           f"用 apply_strategy_proposal —— 那一步 Jason 会先审。")
+    return ToolEnvelope(data=saved)
+
+
+def _decided_msg(pid: str, status: str) -> str:
+    """已定案的提案为什么用不了 —— 用人话说，别把内部状态名甩给 LLM/Jason。"""
+    if status == "superseded_by_newer":
+        return (f"提案 {pid} 已过期作废：同族有别的提案先被批准了，它的基准版本不再是最新的。"
+                f"应用它会把中间批准过的改动静默还原回去。请基于最新版重新提一份。")
+    if status == "applied":
+        return f"提案 {pid} 已经应用过了，不能重复应用（重复应用会生成第二个版本）。"
+    if status == "rejected":
+        return f"提案 {pid} 已被拒绝。"
+    return f"提案 {pid} 已经是 {status}，不能再应用。"
+
+
+def _proposal_preview(args: dict) -> dict:
+    """确认前预览：**优先摆 diff，不是 AI 的说法**。
+
+    AI 写的 `change_summary` 只是它对自己改动的描述，可能说漏说错；
+    `diff` 是逐字段比出来的事实。Jason 要审的是后者（S2 §2.1）。
+    """
+    from crypto_strategy import proposals as pr
+    pid = (args.get("proposal_id") or "").strip()
+    p = pr.get_proposal(pid)
+    if p is None:
+        return {"error": f"找不到提案 {pid}"}
+    if p["status"] != "proposed":
+        return {"error": _decided_msg(pid, p["status"])}
+    st = pr.staleness(p)
+    if st.get("stale"):
+        # ⛔ 不给「确认后果自负」的选项：这份提案的 new_spec 是对着旧版本写的，
+        # 应用它会把之后批准过的改动**静默回滚**。让 AI 基于最新版重提一份。
+        return {"error": (
+            f"提案 {pid} 已过期：它基于 v{st.get('base_version')}，"
+            f"而这条策略现在已经到 v{st.get('latest_version')}"
+            f"（{st.get('latest_strategy_id')}）。"
+            f"直接应用会把中间批准过的改动悄悄还原回去。"
+            f"请让 AI 基于最新版重新提一份。")}
+    return {
+        "proposal_id": pid,
+        "基于版本": f"{p['base_strategy_id']}（v{st.get('base_version')}，当前最新）",
+        "实际改动（系统逐字段比对）": pr.diff_text(p["diff"]),
+        "AI 说的不足": p["shortfall"],
+        "AI 说的调整": p["change_summary"],
+        "AI 给的理由": p["rationale"],
+        "AI 的可证伪断言": (f"{p['horizon_days']} 天内预期收益 "
+                            f"{p['expected_return_pct']:+.2%}、胜率 "
+                            f"{p['expected_win_rate']:.0%}"),
+        "note": ("批准 = 生成一个**新版本**（草稿，不启用），旧版本原样继续跑。"
+                 "要让新版本上线，之后还要单独 arm 一次。"),
+    }
+
+
+class ApplyProposalArgs(BaseModel):
+    proposal_id: str = Field(..., min_length=3, description="提案号，形如 PS-…")
+
+
+@tool(
+    name="apply_strategy_proposal",
+    description="【crypto 半自动策略·应用提案】把一份已提交的变更提案落成**新版本**（草稿，不启用）。"
+                "旧版本原样继续跑；要让新版本上线，之后还要单独 arm。会先让 Jason 审改动。",
+    args_model=ApplyProposalArgs,
+    category="crypto", group="crypto",
+    requires_confirmation=True, preview_fn=_proposal_preview,
+)
+def apply_strategy_proposal(proposal_id: str) -> ToolEnvelope:
+    from crypto_strategy import proposals as pr
+    from crypto_strategy.service import StrategyError, crypto_strategy_service
+
+    p = pr.get_proposal(proposal_id)
+    if p is None:
+        return ToolEnvelope(business_result="negative", message=f"找不到提案 {proposal_id}")
+    if p["status"] != "proposed":
+        return ToolEnvelope(business_result="negative",
+                            message=_decided_msg(proposal_id, p["status"]))
+    # 🔴 过期检查在这儿**也要有一份**：preview 只在走确认门时跑，直接调函数绕得过去。
+    st = pr.staleness(p)
+    if st.get("stale"):
+        pr.mark_decided(proposal_id, status="superseded_by_newer",
+                        note=f"基准 v{st.get('base_version')} 已被 v{st.get('latest_version')} 取代")
+        return ToolEnvelope(
+            business_result="negative",
+            message=(f"提案 {proposal_id} 已过期：基于 v{st.get('base_version')}，"
+                     f"而策略已到 v{st.get('latest_version')}。应用它会把中间批准过的改动"
+                     f"静默还原。请基于 {st.get('latest_strategy_id')} 重新提一份。"))
+    try:
+        parsed = _coerce_spec(p["new_spec"])
+        res = crypto_strategy_service.fork_version(p["base_strategy_id"], parsed)
+    except (StrategyError, ValidationError) as e:
+        return ToolEnvelope(business_result="negative", message=f"生成新版本失败：{e}")
+
+    # ⚠️ 先建版本再定案：反过来的话，fork 失败会留下一条「已应用但没有新版本」的提案。
+    # `mark_decided` 只认 `proposed`，所以重复点确认不会生成第二个版本。
+    decided = pr.mark_decided(proposal_id, status="applied",
+                              applied_strategy_id=res["strategy_id"])
+    # 同族其它还挂着的提案 base 已经过期了 —— 在列表里就标出来，
+    # 别让 Jason 点进去才发现（`superseded_by_newer` 这个状态就是为它准备的）。
+    stale_now = pr.supersede_siblings(res.get("family_id"), proposal_id)
+    out = {
+        "proposal": decided or p, **res,
+        "next_steps": (f"已生成 v{res['version']}（{res['strategy_id']}，草稿未启用）。"
+                       f"旧版本 {p['base_strategy_id']} 仍在原样运行。"
+                       f"确认要换上去，用 arm_crypto_strategy。"),
+    }
+    if stale_now:
+        out["superseded_proposals"] = stale_now
+        out["next_steps"] += (f" ⚠️ 同族另外 {len(stale_now)} 份提案的基准版本已过期"
+                              f"（已标记），要用得基于新版本重提。")
+    return ToolEnvelope(data=out)
+
+
+def _arm_preview(args: dict) -> dict:
+    """确认前预览：把「要上线的这版和现在跑的那版差在哪」摆出来。
+
+    ⛔ 这不是可有可无的装饰：arm 一个新版本会让**旧版本立刻停跑**，
+    Jason 得知道自己换掉的是什么。
+    """
+    from crypto_strategy import proposals as pr
+    from crypto_strategy.service import StrategyError, crypto_strategy_service
+
+    sid = (args.get("strategy_id") or "").strip()
+    try:
+        target = crypto_strategy_service.get_strategy(sid)
+    except StrategyError as e:
+        return {"error": str(e)}
+    family = target.get("family_id")
+    current = None
+    for s in crypto_strategy_service.list_family(family):
+        if s["strategy_id"] != sid and s["status"] in ("armed", "paused_by_guardrail"):
+            current = s
+    out: dict = {
+        "strategy_id": sid, "name": target.get("name"),
+        "version": f"v{target.get('version')}",
+        "note": "arm = 开始按这条 DSL 排真单（每笔仍由你逐笔确认才成交）。",
+    }
+    if current:
+        try:
+            cur_spec = crypto_strategy_service.get_strategy(current["strategy_id"]).get("spec")
+            out["将替换掉"] = f"{current['strategy_id']} v{current['version']}（会立刻停跑）"
+            out["两版差异"] = pr.diff_text(pr.diff_specs(cur_spec or {},
+                                                         target.get("spec") or {}))
+        except StrategyError:
+            pass
+    else:
+        out["将替换掉"] = "（同族当前没有在跑的版本）"
+    return out
+
+
+class ArmStrategyArgs(BaseModel):
+    strategy_id: str = Field(..., min_length=3, description="要上线的策略版本，形如 CS-…")
+
+
+@tool(
+    name="arm_crypto_strategy",
+    description="【crypto 半自动策略·上线】把某个策略版本武装到 live：引擎开始按它的 DSL 排"
+                "**待确认单**（每笔仍由 Jason 逐笔确认才成交，引擎永不自动成交）。"
+                "同一条策略的旧版本会自动停跑。会先让 Jason 审两版差异。",
+    args_model=ArmStrategyArgs,
+    category="crypto", group="crypto",
+    requires_confirmation=True, preview_fn=_arm_preview,
+)
+def arm_crypto_strategy(strategy_id: str) -> ToolEnvelope:
+    from crypto_strategy.service import StrategyError, crypto_strategy_service
+    try:
+        res = crypto_strategy_service.arm(strategy_id)
+    except StrategyError as e:
+        return ToolEnvelope(business_result="negative", message=str(e))
+    msg = f"{res['name']} v{res['version']} 已上线（live）。"
+    if res.get("superseded"):
+        msg += f"同族旧版本 {'、'.join(res['superseded'])} 已停跑。"
+    return ToolEnvelope(data=res, message=msg)
+
+
+class ListProposalsArgs(BaseModel):
+    family_id: str | None = Field(None, description="可选：只看某条策略族的提案")
+    status: str | None = Field(None, description="可选：proposed / applied / rejected")
+    limit: int = Field(10, ge=1, le=50, description="最多返回几条")
+
+
+@tool(
+    name="list_strategy_proposals",
+    description="【crypto 半自动策略·提案列表】列出策略变更提案（含每条的预期收益/预期胜率断言"
+                "和实际改了哪些字段）。用户问「有哪些待审的提案 / 你之前提过什么改法」时用。",
+    args_model=ListProposalsArgs,
+    category="crypto", group="crypto",
+)
+def list_strategy_proposals(family_id: str | None = None, status: str | None = None,
+                            limit: int = 10) -> ToolEnvelope:
+    from crypto_strategy import proposals as pr
+    rows = pr.list_proposals(family_id=family_id, status=status, limit=limit)
+    if not rows:
+        return ToolEnvelope(business_result="negative", message="没有符合条件的策略变更提案。")
+    for r in rows:
+        r["diff_text"] = pr.diff_text(r.get("diff") or [])
+    return ToolEnvelope(data={"count": len(rows), "proposals": rows})

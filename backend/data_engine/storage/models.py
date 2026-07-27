@@ -232,6 +232,95 @@ class DataUpdateLog(Base):
         return f"<DataUpdateLog(market={self.market}, status={self.status})>"
 
 
+class TradingCalendar(Base):
+    """交易日历 —— 「这一天该不该有数据」的真源。
+
+    ## 为什么单独一张表，不落进 daily_quotes
+
+    日历是靠**基准指数自证**建立的（指数那天有 bar ⟺ 那天是交易日）。如果把
+    `^HSI` / `^GSPC` 的 bar 写进 `daily_quotes(market=hk_stock)`，它会**污染覆盖率
+    统计的分子** —— `health._day_counts` 数的是 `distinct symbol`，而分母
+    （`StockInfo`）里根本没有这两个指数。分子分母口径不对称，正是「日线覆盖率
+    300% bug」那一类事故的机理（见 docs/GOTCHAS.md）。
+
+    而且它本来也不是行情，是日历：只需要「哪天开市」这一个 bit，不需要 OHLCV。
+
+    ## crypto 不入表
+
+    7×24 无休市，交易日 = 自然日，纯计算即可，存进来只是浪费行。
+    `trading_calendar.trading_days()` 对 crypto 直接生成自然日序列。
+    """
+    __tablename__ = "trading_calendar"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    market = Column(String(20), nullable=False, index=True)
+    cal_date = Column(Date, nullable=False, index=True)
+    # 这一天是怎么被确认为交易日的："index:000001.SH" / "index:^HSI" / "quotes"（从
+    # 存量日线自举）/ "manual"。排障时能一眼看出日历是哪来的。
+    source = Column(String(40), nullable=False)
+    created_at = Column(DateTime, default=utc_now)
+
+    __table_args__ = (
+        Index("idx_trading_calendar_market_date", "market", "cal_date", unique=True),
+    )
+
+    def __repr__(self):
+        return f"<TradingCalendar({self.market} {self.cal_date})>"
+
+
+class DataGap(Base):
+    """数据缺口 —— 「这一天本该有数据但没有」。
+
+    ## 为什么要落库而不是算完就扔
+
+    1. **`permanent` 状态必须持久化**。项目里没有第三方交易日历，判「哪天是假期」
+       靠的是「补了 N 次仍然一行都拉不到」的反证。这个结论不存下来，每次后端启动
+       都会重试同一个补不上的洞 —— 而港美股一次误补要白打 10-15 分钟 Yahoo。
+       **换句话说：这张表 = 实测出来的交易日历补丁。**
+    2. 前端缺口区要展示「缺哪几天」，不能每次都重扫全库。
+    3. 补齐进度要可续（补到一半被停止，下次接着补）。
+
+    ## status 状态机
+
+        open ──(开始补)──> filling ──(补到数据)──> filled
+                              │
+                              └──(attempts >= MAX)──> permanent（认定为假期/源无数据）
+
+        suspected —— 没有日历可依据、只靠「工作日」启发式推断出来的疑似缺口。
+                     ⛔ **只展示，绝不自动补**（误判代价不对称，见 00-PLAN §四）。
+    """
+    __tablename__ = "data_gaps"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # 资产 key（registry 里的 DataAsset.key，如 "daily.a_share"）
+    asset = Column(String(40), nullable=False, index=True)
+    market = Column(String(20), nullable=False, index=True)
+    gap_date = Column(Date, nullable=False, index=True)
+
+    # open / filling / filled / permanent / suspected
+    status = Column(String(20), nullable=False, default="open", index=True)
+    # certain（基准指数自证）/ suspected（工作日启发式）
+    confidence = Column(String(20), nullable=False, default="certain")
+
+    attempts = Column(Integer, nullable=False, default=0)
+    # 检出时该日实际有多少只票（0 = 整天空，>0 = 残缺）。排障时区分「没跑」和「跑残了」
+    observed_count = Column(Integer)
+    expected_count = Column(Integer)
+
+    detected_at = Column(DateTime, default=utc_now)
+    last_attempt_at = Column(DateTime)
+    filled_at = Column(DateTime)
+    note = Column(Text)
+
+    __table_args__ = (
+        Index("idx_data_gap_asset_date", "asset", "gap_date", unique=True),
+        Index("idx_data_gap_status", "status", "market"),
+    )
+
+    def __repr__(self):
+        return f"<DataGap({self.asset} {self.gap_date} {self.status})>"
+
+
 class Signal(Base):
     """交易信号表"""
     __tablename__ = "signals"
@@ -1389,11 +1478,22 @@ class CryptoStrategy(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     strategy_id = Column(String(40), nullable=False, unique=True, index=True)  # CS-<ts>-<hex6>
+    # ── 版本化（S2）：**一个版本一行**，`family_id` 把同一条策略的历代版本串起来 ──
+    # 为什么不是「单行 + 版本历史表」：`crypto_strategy_runs` 和 `CryptoTrade.source_ref`
+    # 都是按 `strategy_id` 链的，一版一行 → 战绩天然跟着版本走，「v1 vs v2 谁强」直接
+    # 就是两条策略比（正是 S3 竞技场要的形状）。反之要给 runs 和 trades 各加 version 字段。
+    # 存量行迁移时 `family_id = strategy_id`、`version = 1`。
+    family_id = Column(String(40), index=True)
+    version = Column(Integer, default=1)
+    forked_from = Column(String(40))                   # 从哪个版本 fork 出来的（血缘）
     name = Column(String(100), nullable=False)
     description_nl = Column(Text)                      # Jason 原始人话（审计留痕）
     enabled = Column(Integer, default=0, index=True)   # 默认 0，绝不建时自动武装
     mode = Column(String(10), default="paper")         # paper | live
-    status = Column(String(24), default="draft")       # draft|backtested|armed|paused_by_guardrail|retired
+    # draft|backtested|armed|paused_by_guardrail|superseded|retired
+    #   superseded 同 family 的新版本 arm 之后，旧版本的终态（**不删，战绩要留着比**）
+    #   retired    软退役：停跑、清待确认单，但 `crypto_strategy_runs` 一行不删
+    status = Column(String(24), default="draft")
     strategy_kind = Column(String(12), default="swing")  # swing | arb | long_hold
     interval_minutes = Column(Integer, default=30)     # 每策略 tick 节奏
 
@@ -1425,10 +1525,65 @@ class CryptoStrategy(Base):
 
     __table_args__ = (
         Index("idx_crypto_strategy_enabled_mode", "enabled", "mode"),
+        Index("idx_crypto_strategy_family_version", "family_id", "version"),
     )
 
     def __repr__(self):
-        return f"<CryptoStrategy({self.strategy_id} {self.name} {self.mode}/{self.status})>"
+        return (f"<CryptoStrategy({self.strategy_id} {self.name} v{self.version} "
+                f"{self.mode}/{self.status})>")
+
+
+class CryptoStrategyProposal(Base):
+    """AI 的**策略变更提案** —— 整个策略竞技场最漂亮的一环（S2）。
+
+    格式是 Jason 定的：目前策略的不足 / 想怎么调整 / 为什么 /
+    **预期收益是多少 / 预期胜率是多少**。
+
+    ⭐ 后两项让提案成为**可证伪断言**：
+
+        提案：均线 20→10，预期 30 天 +8%、胜率 55%
+          ↓ Jason 批准，跑 30 天
+        实际：+3%、48%  →  AI 这次判断记一次 miss
+
+    **这是直接拿账户余额给 AI 打分**，比「cockpit 说 BUY 后来涨没涨」跟钱的关系近得多。
+    后验评估在 S4（它没有 symbol/entry_price，⛔ 别硬塞进 `common/outcome_eval.py`）。
+
+    提案里带的是**完整的新 spec**，不是 patch —— AI 已经会写 `CryptoStrategySpec`，
+    再学一套 JSON-Patch 语法只增加出错面。而**差异由我们确定性算出来**
+    （`crypto_strategy/proposals.py::diff_specs`），不让 AI 描述自己改了什么：
+    它可能说漏说错，而 Jason 要审的正是「到底改了哪几个数」。
+    """
+    __tablename__ = "crypto_strategy_proposals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    proposal_id = Column(String(40), nullable=False, unique=True, index=True)  # PS-<ts>-<hex6>
+    family_id = Column(String(40), index=True)
+    base_strategy_id = Column(String(40), nullable=False, index=True)   # 在哪个版本的基础上改
+
+    # ── 提案正文（Jason 指定的五段）──
+    shortfall = Column(Text, nullable=False)         # 目前策略的不足
+    change_summary = Column(Text, nullable=False)    # 想怎么调整（人话）
+    rationale = Column(Text, nullable=False)         # 为什么
+    # ⭐ 可证伪断言：**必填**。没有断言的提案不是提案，是感想。
+    expected_return_pct = Column(Float, nullable=False)   # 预期收益（小数，0.08 = +8%）
+    expected_win_rate = Column(Float, nullable=False)     # 预期胜率（0-1）
+    horizon_days = Column(Integer, nullable=False)        # 多少天内兑现（后验窗口）
+
+    new_spec = Column(Text, nullable=False)          # JSON：完整的新 CryptoStrategySpec
+    diff = Column(Text)                              # JSON：确定性算出的人话差异列表
+
+    # proposed | applied | rejected | superseded_by_newer
+    status = Column(String(24), default="proposed", index=True)
+    applied_strategy_id = Column(String(40))         # 批准后生成的新版本
+    decided_at = Column(DateTime)
+    decision_note = Column(Text)                     # Jason 拒绝/批准时的一句话
+
+    # naive UTC（见文件头）
+    created_at = Column(DateTime, default=utc_now)
+
+    def __repr__(self):
+        return (f"<CryptoStrategyProposal({self.proposal_id} on {self.base_strategy_id} "
+                f"{self.status})>")
 
 
 class CryptoStrategyRun(Base):

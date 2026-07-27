@@ -276,6 +276,33 @@ def init_db():
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_crypto_trades_source_kind "
                               "ON crypto_trades (source_kind)"))
 
+    # 自动迁移：crypto_strategies 的版本化两列（S2）。
+    # 存量行 = 每条策略自成一族的第一版：`family_id = strategy_id`、`version = 1`。
+    # 这么回填是**无损**的：此前根本没有「同一条策略的多个版本」这个概念。
+    if "crypto_strategies" in insp.get_table_names():
+        _cs_cols = {c["name"] for c in insp.get_columns("crypto_strategies")}
+        _cs_new = [("family_id", "VARCHAR(40)"), ("version", "INTEGER"),
+                   ("forked_from", "VARCHAR(40)")]
+        _cs_added = [c for c, _ in _cs_new if c not in _cs_cols]
+        if _cs_added:
+            with engine.begin() as conn:
+                for _col, _typ in _cs_new:
+                    if _col not in _cs_cols:
+                        conn.execute(text(
+                            f"ALTER TABLE crypto_strategies ADD COLUMN {_col} {_typ}"))
+            print(f"✓ crypto_strategies 表已添加版本化列: {_cs_added}")
+        with engine.begin() as conn:
+            _fam = conn.execute(text(
+                "UPDATE crypto_strategies SET family_id = strategy_id "
+                "WHERE family_id IS NULL")).rowcount
+            conn.execute(text(
+                "UPDATE crypto_strategies SET version = 1 WHERE version IS NULL"))
+            # ⚠️ 同 crypto_trades 那条：ALTER 不建索引，create_all 对已存在的表整表跳过。
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_strategy_family_version "
+                              "ON crypto_strategies (family_id, version)"))
+        if _fam:
+            print(f"✓ crypto_strategies 已回填 family_id/version: {_fam} 行")
+
     # 自动迁移：回填 stock_info 表的 stock_type 和 exchange
     if "stock_info" in insp.get_table_names():
         with engine.begin() as conn:

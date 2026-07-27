@@ -463,7 +463,12 @@ def _pnl_sentence(pnl: dict) -> str:
     return f"盈亏还算不出来：{pnl.get('reason')}"
 
 
-def standings(*, days: int = 30) -> list[dict[str, Any]]:
+# 软退役之后这些状态的行会**永久累积**（旧实现是直接删的），默认不列，
+# 否则跑上半年这张表全是历史版本。要看历史用 `include_archived=True`。
+_ARCHIVED_STATUSES = ("retired", "superseded")
+
+
+def standings(*, days: int = 30, include_archived: bool = False) -> list[dict[str, Any]]:
     """所有策略的战绩排行（S3 的竞技场会扩它）。
 
     ⛔ **这里刻意不排序、不评优劣**：paper 和 live 不可比、样本量差异巨大，
@@ -474,18 +479,23 @@ def standings(*, days: int = 30) -> list[dict[str, Any]]:
     from data_engine.storage.models import CryptoStrategy
     session = get_session()
     try:
-        ids = [(r.strategy_id, r.name, r.mode, r.status, bool(r.enabled))
-               for r in session.query(CryptoStrategy).order_by(
-                   CryptoStrategy.created_at.asc()).all()]
+        q = session.query(CryptoStrategy)
+        if not include_archived:
+            q = q.filter(CryptoStrategy.status.notin_(_ARCHIVED_STATUSES))
+        # ⚠️ 带上 family/version：多版本同名（fork 默认继承名字），
+        # 只给 name 的话 AI 和 Jason 都分不清哪条是哪版。
+        meta = [(r.strategy_id, r.name, r.mode, r.status, bool(r.enabled),
+                 r.family_id or r.strategy_id, r.version or 1)
+                for r in q.order_by(CryptoStrategy.created_at.asc()).all()]
     finally:
         session.close()
 
     out = []
-    for sid, name, mode, status, enabled in ids:
+    for sid, name, mode, status, enabled, family, version in meta:
         h = strategy_health(sid, days=days)
         out.append({
-            "strategy_id": sid, "name": name, "mode": mode, "status": status,
-            "enabled": enabled,
+            "strategy_id": sid, "name": name, "version": version, "family_id": family,
+            "mode": mode, "status": status, "enabled": enabled,
             "runs": h.get("runs", {}).get("total", 0) if h.get("ok") else 0,
             "orders_staged": h.get("orders_staged", 0) if h.get("ok") else 0,
             "pnl": h.get("pnl") if h.get("ok") else None,

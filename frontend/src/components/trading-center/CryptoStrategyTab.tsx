@@ -14,6 +14,13 @@ const KIND_LABEL: Record<string, string> = { swing: '波段', arb: '套利', lon
 const STATUS_STYLE: Record<string, string> = {
   armed: 'text-green-400', backtested: 'text-blue-400', draft: 'text-gray-400',
   paused_by_guardrail: 'text-red-400', retired: 'text-gray-600',
+  // S2：同族新版本上线后旧版本的终态。没有这一项的话它会渲染成默认色，
+  // 跟正在跑的 armed 长得一样。
+  superseded: 'text-gray-600',
+};
+const STATUS_LABEL: Record<string, string> = {
+  armed: '运行中', backtested: '已回测', draft: '草稿',
+  paused_by_guardrail: '护栏熔断', retired: '已退役', superseded: '已被新版取代',
 };
 
 const StrategyCard: React.FC<{ s: CryptoStrategyItem }> = ({ s }) => {
@@ -40,6 +47,10 @@ const StrategyCard: React.FC<{ s: CryptoStrategyItem }> = ({ s }) => {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <span className="text-white font-semibold">{s.name}</span>
+          {/* fork 出的新版本默认继承名字，不显示版本号就分不清哪条是哪版 */}
+          <span className="text-xs px-1.5 py-0.5 rounded bg-dark text-gray-300">
+            v{s.version ?? 1}
+          </span>
           <span className="text-xs px-1.5 py-0.5 rounded bg-dark text-gray-400">
             {KIND_LABEL[s.strategy_kind] || s.strategy_kind}
           </span>
@@ -48,7 +59,7 @@ const StrategyCard: React.FC<{ s: CryptoStrategyItem }> = ({ s }) => {
           }`}>{s.mode === 'live' ? '实盘' : '纸面'}</span>
         </div>
         <span className={`text-xs ${STATUS_STYLE[s.status] || 'text-gray-400'}`}>
-          {s.enabled ? '● 运行中' : '○ 未启用'} · {s.status}
+          {s.enabled ? '● 运行中' : '○ 未启用'} · {STATUS_LABEL[s.status] || s.status}
         </span>
       </div>
 
