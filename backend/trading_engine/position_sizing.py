@@ -4,7 +4,7 @@
 被决策驾驶舱(cockpit)、选股器(screener)、自选股预警(watchlist) 共用。
 所有建议金额硬性受三重约束：
   1. 目标仓位金额 = target_pct% × 总资金
-  2. 单股上限     = RISK_CONFIG["max_position_pct"] × 总资金（默认 20%）
+  2. 单股上限     = get_max_position_pct() × 总资金（默认 20%，**上界是总仓位上限 80%**）
   3. 可用现金     = broker_info["cash"]
 取整到 A股 1 手 = 100 股；买不起 1 手 → affordable=False。
 最后再过一遍 RiskManager(单股20%/总仓80%/连亏暂停 等) 作硬校验。
@@ -28,12 +28,18 @@ _risk_managers: Dict[float, RiskManager] = {}
 
 
 def _get_risk_manager(pct: float) -> RiskManager:
+    """按调用方给的集中度取 RiskManager。
+
+    🔴 2026-07-27（S0 §1.3）：这里原本也有一份「单股上限把总仓位上限顶上去」的
+    拷贝，与 `adapter.get_effective_risk_config` 同款病 —— 传进来的 pct 只该覆盖
+    **单股**上限，且自身受总仓位上限 `min` 约束；总仓位 0.8 是独立硬底线，
+    任何调用方都抬不动它。
+    """
     key = round(pct, 4)
     rm = _risk_managers.get(key)
     if rm is None:
         cfg = get_effective_risk_config()
-        cfg["max_position_pct"] = pct
-        cfg["max_total_position_pct"] = max(cfg.get("max_total_position_pct", 0.8), pct)
+        cfg["max_position_pct"] = min(float(pct), cfg["max_total_position_pct"])
         rm = RiskManager(cfg)
         _risk_managers[key] = rm
     return rm

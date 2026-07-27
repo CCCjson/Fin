@@ -261,6 +261,8 @@ frontend/src/
 | 港美股日线更新 | `data_engine/overseas_daily_updater.py`（增量，**独立 job + cron 16:30**，不是每日链的一步）+ `deep_history/hk_filter.py`（universe 清洗）。`DailyUpdater` **只管A股**；`deep_history/overseas_job.py` 只能「从0到有」、结构上不可增量 |
 | AI建议后来对没对 / 推荐胜率 | `common/outcome_eval.py`（判定内核，纯逻辑）+ `decision_log.py` 的 `backfill_outcomes()`/`get_decision_stats()`。**与C++回测是两根轴**：C++测策略，这个测AI的嘴。⚠️ 只有 `entry_kind='advice'` 的行进评估与分母，见下行 |
 | 「这条留痕是建议还是订单回执」 | `common/decision_kind.py`（`advice`/`execution`/`ops` 三值真源 + 确认门工具判定表）。**改留痕/胜率/校准前必读** `docs/GOTCHAS.md` 那两条（P0-4） |
+| 「这条留痕是谁写的 / 新增一个 source 要动哪」 | `common/decision_source.py`（8 个 source × label/kinds/指路），与 `decision_kind` 成对。门禁 `tests/test_decision_source_registry.py` |
+| 「风控上限为什么没拦住 / 20% 现金底线在哪」 | `trading_engine/risk/adapter.py::get_max_total_position_pct()`（独立硬底线，只读 `RISK_CONFIG`）。⛔ 别再写 `max(总仓位上限, 单股上限)`，那个模式已被复制三次，有 AST 门禁咬 |
 | "已退役的旧页面"逻辑（信号/自选/复盘/报告/顾问/持仓等）| 不要找 `pages/`（已硬删除），去 `backend/agents/tools/*.py` 找同名工具文件 |
 | MoneyBill人格/沟通风格/工具分组铁律 | `backend/agents/skills/monitor.md` |
 | 某个API endpoint对应哪个功能域 | `docs/FEATURES.md` 第1节的功能全景表 |

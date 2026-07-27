@@ -170,6 +170,22 @@ crypto 的置信度校准永久失效且不报错**。
 **新增 `record_decision` 写入点**：必须去 `tests/test_decision_entry_kind.py::_WRITE_SITES`
 登记，并先回答「它写的是可证伪断言还是既成事实」。**新增 `requires_confirmation=True` 的工具**：
 必须进 `common/decision_kind.py::CONFIRMED_TOOL_KINDS`。两处都有门禁咬。
+**新增一个 `source`**：还要去 `common/decision_source.py::SOURCES` 登记 + 补
+`agents/tools/decision_tools.py::_SOURCES` 那串 Literal（门禁
+`tests/test_decision_source_registry.py` 会 AST 扫源码抓漏）。⚠️ `_SOURCES` 曾经漏了
+4 个 crypto 来源，症状是 **MoneyBill 按 crypto 查不了胜率且不报错** —— 与 `entry_kind`
+那颗炸弹**同款成因**（靠人肉同步的分类）。
+
+**`get_decision_history` 的查询侧口径（S0）**：
+- ⭐ `stats` / `calibration` **恒定只算 `advice`**，不随 `entry_kind` 入参变（返回标
+  `stats_scope`）。⛔ 别为了「更灵活」把 `entry_kind` 透传给 `get_decision_stats` ——
+  那等于把上面刚焊死的口径又开一条缝。
+- 🔴 **N 条 execution ≠ N 张单**：`crypto_intel_engine/execution.py` 与
+  `agents/confirm_gate.py` 会对同一张单**各记一条**（双重留痕，收口排在 doc15 S4）。
+  工具派生了 `order_id` + `exec_overview.distinct_orders`，**看单数只能看后者**。
+  实测 16 条 execution = 5 张真挂单 + 6 次根本没到交易所（风控拦/低于最小名义额）+ 5 条重复。
+- `verbose=True` 才返完整快照且只在 `limit<=3` 生效。旧注释说「完整快照留在 /decisions
+  页面看」是**过期的**——`api/routes/` 里没有任何 route 暴露 DecisionLog。
 
 ### market 过滤不统一导致的统计失真
 **实锤案例**：`DailyUpdater.get_update_status()` 算 `fresh_count` 时两处查询漏了 `market=="a_share"` 过滤，把三市场股票数混进A股分母，导致覆盖率显示301%。

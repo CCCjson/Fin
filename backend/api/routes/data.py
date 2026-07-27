@@ -344,7 +344,9 @@ async def get_stocks_names(
 # 默认设置（启动时自动写入）
 _DEFAULT_SETTINGS = {
     "total_capital": {"value": "5000", "description": "总资金（元），用于计算仓位占比与建议买入金额/股数"},
-    "max_position_pct": {"value": "0.2", "description": "单股最大仓位占比（集中度）：0.2 分散 / 0.5 集中 / 1.0 all-in（默认取风控规格最严值）"},
+    # ⚠️ 别写「1.0 = all-in」：总仓位 ≤ 80%（留 20% 现金）是抬不动的硬底线，
+    # 设 1.0 只等于「取消单股约束」，实际上界仍是 80%（见 trading_engine/risk/adapter.py）。
+    "max_position_pct": {"value": "0.2", "description": "单股最大仓位占比（集中度）：0.2 分散 / 0.5 集中 / 1.0 取消单股约束（上界仍受总仓位 80% 硬底线约束，20% 现金必留）"},
 }
 
 

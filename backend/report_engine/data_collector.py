@@ -1096,9 +1096,16 @@ class ReportDataCollector:
                         f"总资金 {total_capital:.0f}，仓位 {position_ratio}%")
 
             # ── 仓位预算计算（Step 1: 解决仓位管理自相矛盾问题） ──
-            from trading_engine.config import RISK_CONFIG
-            max_total_pct = RISK_CONFIG.get("max_total_position_pct", 0.80)
-            max_single_pct = RISK_CONFIG.get("max_position_pct", 0.20)
+            # ⚠️ 走 adapter 不直读 RISK_CONFIG：单股上限的真值在 UserSettings 里
+            # （Jason 实际设的是 0.5，而 RISK_CONFIG 的默认是 0.2）——直读会让周报
+            # 印出一个跟引擎实际用的不一样的「单股上限 20%」。总仓位上限则是硬底线，
+            # 由 `get_max_total_position_pct()` 独家提供（S0 §1.3）。
+            from trading_engine.risk.adapter import (
+                get_max_position_pct,
+                get_max_total_position_pct,
+            )
+            max_total_pct = get_max_total_position_pct()
+            max_single_pct = get_max_position_pct()
             max_total_amount = total_capital * max_total_pct
             remaining_budget = max(0, max_total_amount - total_market_value)
             remaining_budget_pct = round(remaining_budget / total_capital * 100, 1) if total_capital > 0 else 0

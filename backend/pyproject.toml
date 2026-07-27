@@ -362,6 +362,8 @@ module = [
   "common.outcome_eval",
   # P0-4 留痕分类真源：同上，纯逻辑零依赖
   "common.decision_kind",
+  # S0 留痕来源真源：与 decision_kind 成对，同样纯逻辑零依赖
+  "common.decision_source",
   "net.clash",
   "net.env",
   "net.session",

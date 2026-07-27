@@ -4,7 +4,7 @@ title: 决策留痕卫生（DecisionLog 被执行记录污染 + entry_price 定�
 size: 小
 depends: 无（但**卡住 P0-1/P0-3 真正产出可信数字**）
 paths_verified: 2026-07-27
-status: 🟢 批次1（止血）+ 批次2（防复发）已完工 2026-07-27 —— 炸弹已拆且路已焊死；批次3（可见性）待做
+status: 🟢 批次1（止血）+ 批次2（防复发）已完工 2026-07-27 —— 炸弹已拆且路已焊死；**批次3 已拆分迁出 → `docs/15.策略竞技场/` 的 S0（查询侧）与 S4（写入侧）**，本卡到此收尾
 ---
 
 # P0-4 决策留痕卫生
@@ -219,11 +219,32 @@ BTC 同期真实价约 **6.1~6.5 万**。`entry_price=100.0` 只可能是：挂�
 
 > ⚠️ **`completed=0` 这个重刷窗口已经用掉了**。以后再 bump `ENGINE_VERSION`，不可重试的 unable 行不会被回填重扫 → 会长期混着两版；那时候重刷就要连「已经进过 P0-3 校准的历史结果」一起洗，得掂量。
 
-### 待做
+### 🔀 批次3 已迁出（2026-07-27）→ `docs/15.策略竞技场/`
 
-| 批次 | 内容 |
+批次3 拆成读写两半，并入新主线（策略竞技场需要按 source 查胜率，把它挡在关键路径上了）：
+
+| 去向 | 内容 |
 |---|---|
-| **批次3 可见性** | ① `agents/tools/decision_tools.py` 的 `_SOURCES` Literal 补 `crypto`/`crypto_cockpit`/`crypto_earn`（现在 MoneyBill **根本没法按 crypto 来源查胜率**）+ 开 `entry_kind` 入参让回执可查 ② 下单的双重留痕收口（confirm_gate 与 execution.py 记同一笔单）③ 该工具 docstring 里「完整快照留在 /decisions 页面看」是**陈述过期**，没有这个页面 |
+| **doc15 `S0`**（查询侧，都在 `get_decision_history` 一个工具里，一次改完更经济） | `_SOURCES` 补全 + **建 source 真源 + 门禁** / 开 `entry_kind` 入参 / `exec_state` 派生 / `verbose` |
+| **doc15 `S4`**（写入侧，要动写入点与数据模型） | 双重留痕收口 / **归因维度**（与「这笔成交属于哪条策略」合并成一套，别建两次） |
+
+**开工前先读迁出时的四条探查实锤**（都当场验过，推翻了本卡原文的说法）：
+
+1. 🔴 **双重留痕不能靠「删 crypto 侧」解决** —— `record_crypto_trade/resting` 有**两个调用方**：
+   `crypto_tools.place_crypto_order`（走 confirm_gate → 双重）与 `crypto_strategy/pending.py:420,426`
+   （**不走 confirm_gate** → 只有这一条）。删了 crypto 侧，半自动策略引擎的下单留痕直接断线。
+   → 倾向方案：内层加 `log_decision` 开关，`crypto_tools` 传 `False`（confirm_gate 那条**信息更全**：
+   带 session_id/turn_start_idx/model_id/data_quality/完整 input_snapshot），`pending.py` 保持 `True`。
+   代价：crypto 行那句人话（「币安限价单挂出（未成交，盘口等待撮合）」）会丢 → 让
+   `place_crypto_order` 的返回 `data` 带一个 `exec_note`，confirm_gate 记 `output_summary` 时自然带走。
+2. 🔴 **`_SOURCES` 漏的是 4 个不是 3 个**，且它是**手写枚举靠人同步——与 entry_kind 那颗炸弹同款成因**。
+   补完这次下一个新 source 照样会漏 → 必须建真源 + 门禁（见 S0）。
+3. 🔴 **16 条 execution 里 6 条是「从没到达交易所的失败尝试」**（风控未通过 / `金额 4.97 低于最小名义额 5.0`）。
+   真正到币安的挂单只有 **5 张**，成交 **0 条**。光把 execution 露出来，LLM 只会说
+   「你有 16 笔未成交订单」——**而真相是 5 张**。→ 需要 `exec_state` 派生（`filled｜resting｜blocked`）。
+4. 🔴 **`/decisions` 不只是页面不存在**：`api/routes/` 里**没有任何 route 暴露 DecisionLog**，
+   `get_decision_history` 是唯一出口。所以它裁掉的 `input_snapshot`/`output_summary`/`output_text`/`reasons`
+   **是永久看不见的** → 需要 `verbose`（限 `limit<=3`）。
 
 ## 4. 为什么这张卡值得插在 P1 之前
 

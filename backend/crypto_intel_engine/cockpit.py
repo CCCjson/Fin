@@ -114,6 +114,7 @@ def size_crypto_position(symbol: str, price: float | None, target_pct: float, *,
     from trading_engine.risk.adapter import (
         get_effective_risk_config,
         get_max_position_pct,
+        get_max_total_position_pct,
         get_total_capital,
     )
     from trading_engine.risk.manager import RiskManager
@@ -122,6 +123,10 @@ def size_crypto_position(symbol: str, price: float | None, target_pct: float, *,
         total_capital = get_total_capital()
     if max_position_pct is None:
         max_position_pct = get_max_position_pct()
+    # 策略 DSL 的 `position_policy.max_position_pct` 允许到 1.0，但总仓位 0.8
+    # （= 留 20% 现金）是独立硬底线。在**入口**夹一次：不夹的话建议量会按 100% 算出来，
+    # 再在下方风控那儿被拦，Jason 看到的是「建议买 X，但风控不过」的自相矛盾。
+    max_position_pct = min(float(max_position_pct), get_max_total_position_pct())
     cash = float(broker_info.get("cash") or 0.0)
     max_single = round(max_position_pct * total_capital, 2)
     warnings: list[str] = []
@@ -170,8 +175,14 @@ def size_crypto_position(symbol: str, price: float | None, target_pct: float, *,
 
     try:
         cfg = get_effective_risk_config()
+        # 🔴 2026-07-27（S0 §1.3）：这里原本也有一份「单股上限把总仓位上限顶上去」的
+        # 拷贝（第三份，前两份在 `risk/adapter.py` 与 `position_sizing.py`）。策略 DSL 的
+        # `position_policy.max_position_pct` 允许到 1.0（`crypto_intel_engine/dsl.py`），
+        # 传下来就会把总仓位上限顶成 100% → 一张 all-in 的单被盖上 `risk_passed=True`，
+        # 而这个 True 会进 DecisionLog、也会摆给 Jason 看。
+        # 总仓位 0.8（= 留 20% 现金）是独立硬底线，谁都抬不动；单股上限受它 min 约束
+        # （已在函数入口夹过，这里直接用）。
         cfg["max_position_pct"] = max_position_pct
-        cfg["max_total_position_pct"] = max(cfg.get("max_total_position_pct", 0.8), max_position_pct)
         passed, checks = RiskManager(cfg).check_order(
             symbol=symbol, action="BUY", quantity=qty, price=price, broker_info=broker_info)
         result["risk_passed"] = passed
