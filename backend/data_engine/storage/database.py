@@ -282,7 +282,7 @@ def init_db():
     if "crypto_strategies" in insp.get_table_names():
         _cs_cols = {c["name"] for c in insp.get_columns("crypto_strategies")}
         _cs_new = [("family_id", "VARCHAR(40)"), ("version", "INTEGER"),
-                   ("forked_from", "VARCHAR(40)")]
+                   ("forked_from", "VARCHAR(40)"), ("is_benchmark", "INTEGER")]
         _cs_added = [c for c, _ in _cs_new if c not in _cs_cols]
         if _cs_added:
             with engine.begin() as conn:
@@ -297,6 +297,8 @@ def init_db():
                 "WHERE family_id IS NULL")).rowcount
             conn.execute(text(
                 "UPDATE crypto_strategies SET version = 1 WHERE version IS NULL"))
+            conn.execute(text(
+                "UPDATE crypto_strategies SET is_benchmark = 0 WHERE is_benchmark IS NULL"))
             # ⚠️ 同 crypto_trades 那条：ALTER 不建索引，create_all 对已存在的表整表跳过。
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_strategy_family_version "
                               "ON crypto_strategies (family_id, version)"))

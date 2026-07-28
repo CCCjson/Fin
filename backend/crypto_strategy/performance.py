@@ -62,7 +62,7 @@ _DEFAULT_TAKER_FEE = 0.001      # paper 记账用的兜底费率，与 DSL cost_
 
 # ──────────────────────── 读取 ────────────────────────
 
-def _strategy_row(strategy_id: str):
+def _strategy_row(strategy_id: str) -> Any:
     from data_engine.storage.database import get_session
     from data_engine.storage.models import CryptoStrategy
     session = get_session()
@@ -218,7 +218,7 @@ def _paper_legs(runs: list[dict]) -> list[dict]:
     return legs
 
 
-def _taker_fee(row) -> float:
+def _taker_fee(row: Any) -> float:
     """策略 DSL 里的吃单费率；读不到就用兜底值（**不静默当 0**）。
 
     paper 若按零手续费记账，会系统性高估它 —— 而 paper 本来就已经因为理想撮合被高估了，
@@ -331,6 +331,172 @@ def strategy_pnl(strategy_id: str, *, since: datetime | None = None,
             "coverage": {"attributed_trades": 0, "unknown_source_trades": unknown}}
 
 
+def daily_returns(strategy_id: str, *, days: int = 90) -> dict[str, Any]:
+    """这条策略的**日收益率序列** —— S3 四道门槛全靠它。
+
+    口径（五条都要一起读）：
+
+    1. **分母是本金，不是浮动权益**。策略级的「权益曲线」在共享账户里根本切不出来
+       （币安账户是一个池子，多条策略 + Jason 手动单混在一起）。所以这里算的是
+       `当日已实现盈亏 / 本金` —— **一个近似**，但它是本项目当下唯一诚实算得出来的口径。
+    2. 🔴 **只有已实现盈亏进序列，浮亏对它完全不可见。**
+       后果是**系统性偏袒「赢了就跑、亏了死扛」的策略**：那种策略的序列是清一色正数 + 零，
+       均值高、方差小、最大回撤 = 0，而它真实持仓可能挂着 -40%。
+       所以返回值带 `open_positions`，**门槛④ 必须把它露出来**，别假装看得见浮亏。
+    3. **没交易的日子是 0，不是缺失**。序列必须按自然日补齐（crypto 7×24 没有休市），
+       否则「30 天里只有 3 天有交易」会被算成「3 个样本点、波动极小、显著性爆表」——
+       那是量化里最经典的一种自欺。
+       （补零不影响 t 统计量：`t ≈ sqrt(交易日数) × μ/σ`，与只取交易日等价。）
+    4. **`days` 是「这条策略实际活了多久」，不是查询窗口长度。**
+       🔴 第一版返回的是窗口天数，于是一条今天刚建的策略也显示「跑了 91 天」——
+       门槛① 的天数那一半**永久失效**。
+    5. **paper 和 live 各算各的**，`basis` 跟着返回。两者不可比（裁决 9 坑 1）。
+
+    Returns:
+        `{basis, dates, returns, capital, capital_basis, window_days, days,
+          trade_days, trade_count, open_positions}`；算不出来时 `basis="none"`。
+    """
+    row = _strategy_row(strategy_id)
+    if row is None:
+        return {"basis": "none", "reason": f"没有 {strategy_id} 这条策略"}
+
+    until = utc_now()
+    window = max(1, int(days))
+    since = until - timedelta(days=window)
+    capital = _capital_basis(row)
+    if capital <= 0:
+        # ⛔ 分母兜底成 1.0 会让「日收益率」变成**美元金额**（一天赚 500 → r=500），
+        # 门槛②④ 和最大回撤全线失真。宁可诚实说算不出来。
+        return {"basis": "none",
+                "reason": "总资金设置为 0 或读不到，收益率没有分母可算"}
+    daily: dict[str, float] = {}
+    basis = "none"
+    open_positions: dict[str, Any] = {}
+    trade_count = 0
+
+    order_ids, _unknown = _live_order_ids(strategy_id, since, until)
+    if order_ids:
+        from crypto_intel_engine import cost_basis as cb
+        try:
+            state = cb.replay(order_ids=order_ids)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"策略 {strategy_id} 日收益序列回放失败: {e}")
+            state = {}
+        if any(st["fills"] for st in state.values()):
+            basis = "live_fills"
+            for sym, st in state.items():
+                for c in st["closed"]:
+                    daily[c["date"]] = daily.get(c["date"], 0.0) + c["pnl"]
+                    trade_count += 1
+                if st["quantity"] > 0:
+                    open_positions[sym] = {"quantity": round(st["quantity"], 8),
+                                           "avg_cost": round(st["avg_cost"], 6)}
+
+    if basis == "none":
+        legs = _paper_legs(_runs(strategy_id, since, until))
+        if legs:
+            basis = "paper_simulated"
+            for d, pnl in _paper_daily_pnl(legs, _taker_fee(row)):
+                daily[d] = daily.get(d, 0.0) + pnl
+                trade_count += 1
+            pos = _pair(legs, _taker_fee(row)).get("open_positions") or {}
+            open_positions = dict(pos)
+
+    if basis == "none":
+        return {"basis": "none",
+                "reason": "这条策略在窗口内没有可算收益的成交/纸面记录"}
+
+    lo = market_day_of(since, CRYPTO)
+    hi = market_day_of(until, CRYPTO)
+    dates: list[str] = []
+    rets: list[float] = []
+    cur = lo
+    while cur <= hi:
+        key = cur.isoformat()
+        dates.append(key)
+        rets.append(round(daily.get(key, 0.0) / capital, 8))
+        cur += timedelta(days=1)
+    return {"basis": basis, "dates": dates, "returns": rets,
+            "capital": capital, "capital_basis": (row.capital_basis or "config"),
+            "window_days": len(dates),
+            "days": _active_days(row, window),
+            "trade_days": sum(1 for r in rets if r != 0.0),
+            "trade_count": trade_count,
+            "open_positions": open_positions,
+            "note": ("日收益 = 当日已实现盈亏 / 本金（近似，不是真权益曲线）；"
+                     "没交易的日子记 0 而不是缺失；"
+                     "⚠️ **浮亏不在这个序列里** —— 看 open_positions。")}
+
+
+def _active_days(row: Any, window: int) -> int:
+    """这条策略**实际活了多久**（天），与查询窗口取小。
+
+    🔴 别用窗口长度冒充它：那样一条今天刚建的策略也会显示「跑了 91 天」，
+    门槛① 的天数那一半就永久失效了（默认窗口 90 天 > 阈值 30 天，恒过）。
+    """
+    created = getattr(row, "created_at", None)
+    if created is None:
+        return 0
+    try:
+        alive = (utc_now() - created).days
+    except TypeError:      # created_at 是字符串（server_default 落的裸串）
+        return min(window, 0)
+    return max(0, min(window, int(alive)))
+
+
+def _capital_basis(row: Any) -> float:
+    """算收益率的分母 —— **统一用配置本金，对所有策略一把尺子**。
+
+    两个刻意的取舍：
+
+    1. ⛔ **不去连币安拿账户实时总值**。本模块开头声明的是「纯计算：不出网」，而
+       `broker.connect()` 每次都真发一次账户签名请求；`evaluate_arena` 对每条策略各调
+       一次，一个「该不该换策略」的判定就挂在币安可用性上了。
+    2. ⭐ **所有策略共用同一个分母**，否则一条 `real_total_value`（比如 2000 USDT）
+       对上一条 `config`（5000）时，前者的日收益率被整体放大 2.5 倍 ——
+       门槛②④ 会给出**系统性错误**的结论，而「口径可比」那道门槛根本看不见分母差异。
+       统一分母之后比例效应两边抵消，比较是 apples-to-apples 的。
+
+    ⚠️ 代价：对声明了 `real_total_value` 的策略，**收益率的绝对量级会偏**
+    （它按真实账户值定仓位，却按配置本金算收益率）。所以 `capital_basis` 一起返回，
+    由「口径可比」那道门槛去卡两边是否同源。
+    """
+    from trading_engine.risk.adapter import get_total_capital
+    try:
+        return float(get_total_capital() or 0)
+    except Exception as e:  # noqa: BLE001 — 读不到就返 0，由调用方判「算不出来」
+        logger.warning(f"策略 {row.strategy_id} 取本金失败: {e}")
+        return 0.0
+
+
+def _paper_daily_pnl(legs: list[dict], fee_pct: float) -> list[tuple[str, float]]:
+    """paper 腿 → [(日期, 当日已实现盈亏)]，配对规则与 `_pair` 完全一致。
+
+    ⚠️ 不复用 `_pair` 是因为那个函数只回汇总值；这里要的是**按日拆开**。
+    两处的配对规则必须一模一样，改一边就要改另一边（有测试钉死两者的总和相等）。
+    """
+    state: dict[str, dict[str, float]] = {}
+    out: list[tuple[str, float]] = []
+    for lg in legs:
+        st = state.setdefault(lg["symbol"], {"qty": 0.0, "cost": 0.0, "avg": 0.0})
+        gross = lg["qty"] * lg["price"]
+        fee = gross * fee_pct
+        day = (market_day_of(lg["at"], CRYPTO).isoformat() if lg.get("at")
+               else market_day_of(utc_now(), CRYPTO).isoformat())
+        if lg["side"] == "BUY":
+            st["cost"] += gross + fee
+            st["qty"] += lg["qty"]
+        else:
+            sold = lg["qty"]
+            costed = min(sold, st["qty"])
+            if costed > 0:
+                out.append((day, (gross - fee) * (costed / sold) - st["avg"] * costed))
+            st["qty"] = max(0.0, st["qty"] - sold)
+            st["cost"] = st["avg"] * st["qty"]
+        st["avg"] = (st["cost"] / st["qty"]) if st["qty"] > 0 else 0.0
+    return out
+
+
 def strategy_health(strategy_id: str, *, days: int = 30) -> dict[str, Any]:
     """体检报告：跑了多少 tick、为什么不开单、赚没赚、护栏状态，外加一句人话结论。"""
     row = _strategy_row(strategy_id)
@@ -387,7 +553,7 @@ def strategy_health(strategy_id: str, *, days: int = 30) -> dict[str, Any]:
     }
 
 
-def _verdict(row, runs: list[dict], reasons: dict[str, int],
+def _verdict(row: Any, runs: list[dict], reasons: dict[str, int],
              staged: int, pnl: dict) -> str:
     """一句人话结论 —— 屏幕上任一数字，3 秒内说不出「所以我该干嘛」就不配摆出来
     （`00-PLAN §3` 裁决 16）。这套东西只服务 Jason 一人，**所以它必须解释**。

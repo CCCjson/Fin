@@ -388,3 +388,82 @@ def test_standings_lists_all_without_ranking(db):
 
 def test_standings_on_empty_db_does_not_blow_up(db):
     assert perf.standings() == []
+
+
+# ── 5. 日收益率序列（S3 四道门槛的地基）────────────────────────────────────
+
+def test_daily_returns_pads_non_trading_days_with_zero(db):
+    """🔴 没交易的日子记 0 而**不是缺失**。
+
+    不补齐的话，「30 天里只有 3 天有交易」会被算成「3 个样本点、波动极小、
+    显著性爆表」—— 那是量化里最经典的一种自欺，而门槛② 正好吃这个序列。
+    """
+    _mk_strategy(db, SID, mode="paper", cost_model='{"taker_fee_pct": 0.001}')
+    _mk_run(db, SID, mode="paper", detail=_paper_detail("BUY", 1.0, 100.0),
+            minutes_ago=60 * 24 * 3)
+    _mk_run(db, SID, mode="paper", detail=_paper_detail("SELL", 1.0, 120.0),
+            minutes_ago=60 * 24 * 2)
+
+    r = perf.daily_returns(SID, days=10)
+    assert r["basis"] == "paper_simulated"
+    assert len(r["returns"]) == len(r["dates"]) == r["window_days"]
+    assert r["window_days"] >= 10               # 按自然日补齐，不是只有交易日
+    assert r["trade_days"] == 1                 # 只有平仓那天非零
+    assert sum(1 for x in r["returns"] if x == 0.0) == r["window_days"] - 1
+    # 🔴 `days` 是**策略实际活了多久**，不是窗口长度。第一版返回窗口长度，
+    # 于是一条今天刚建的策略也显示「跑了 91 天」，门槛① 的天数那一半永久失效。
+    assert r["days"] == 0, "days 又变回窗口长度了"
+
+
+def test_daily_returns_days_is_strategy_age_not_window(db):
+    """门槛① 的天数那一半必须真的能拦住新策略。"""
+    from datetime import datetime
+    from datetime import timedelta as _td
+    row = _mk_strategy(db, SID, mode="paper", cost_model='{"taker_fee_pct": 0.001}')
+    _mk_run(db, SID, mode="paper", detail=_paper_detail("BUY", 1.0, 100.0), minutes_ago=90)
+    _mk_run(db, SID, mode="paper", detail=_paper_detail("SELL", 1.0, 120.0), minutes_ago=45)
+
+    assert perf.daily_returns(SID, days=90)["days"] == 0      # 刚建的
+    s = get_session()
+    try:
+        r2 = s.query(CryptoStrategy).filter(CryptoStrategy.strategy_id == SID).first()
+        r2.created_at = datetime.utcnow() - _td(days=45)
+        s.commit()
+    finally:
+        s.close()
+    assert perf.daily_returns(SID, days=90)["days"] == 45     # 活了 45 天
+    assert perf.daily_returns(SID, days=10)["days"] == 10     # 与窗口取小
+    assert row is not None
+
+
+def test_daily_returns_matches_the_aggregate(db):
+    """按日拆开的总和，必须等于 `strategy_pnl` 的汇总值 —— 两处配对规则是同一套。"""
+    _mk_strategy(db, SID, mode="paper", cost_model='{"taker_fee_pct": 0.001}')
+    _mk_run(db, SID, mode="paper", detail=_paper_detail("BUY", 1.0, 100.0),
+            minutes_ago=60 * 24 * 3)
+    _mk_run(db, SID, mode="paper", detail=_paper_detail("SELL", 1.0, 120.0),
+            minutes_ago=60 * 24 * 2)
+
+    agg = perf.strategy_pnl(SID)["realized_pnl"]
+    dr = perf.daily_returns(SID, days=10)
+    assert sum(dr["returns"]) * dr["capital"] == pytest.approx(agg, abs=1e-4)
+
+
+def test_daily_returns_none_when_no_data(db):
+    _mk_strategy(db, SID, mode="live")
+    r = perf.daily_returns(SID)
+    assert r["basis"] == "none" and "没有可算收益" in r["reason"]
+
+
+def test_daily_returns_uses_live_when_both_exist(db):
+    """真金白银优先：两边都有数据时，序列用 live（paper 是理想撮合，掺进来会污染判定）。"""
+    _mk_strategy(db, SID, mode="paper", cost_model='{"taker_fee_pct": 0.001}')
+    _mk_trade(db, order_id="A1", kind=STRATEGY, ref=SID)
+    _mk_trade(db, order_id="A2", kind=STRATEGY, ref=SID, side="SELL")
+    _mk_fill(db, order_id="A1", trade_id="1", symbol="BTCUSDT.BN",
+             price=100.0, qty=1.0, is_buyer=True, minutes_ago=60 * 24 * 2)
+    _mk_fill(db, order_id="A2", trade_id="2", symbol="BTCUSDT.BN",
+             price=150.0, qty=1.0, is_buyer=False, minutes_ago=60 * 24)
+    _mk_run(db, SID, mode="paper", detail=_paper_detail("BUY", 1.0, 100.0), minutes_ago=90)
+
+    assert perf.daily_returns(SID, days=10)["basis"] == "live_fills"

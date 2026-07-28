@@ -10,6 +10,7 @@ from crypto_strategy import proposals as pr
 from crypto_strategy.service import crypto_strategy_service as svc
 from data_engine.storage.database import get_session
 from data_engine.storage.models import (
+    CryptoArenaSwitch,
     CryptoPendingOrder,
     CryptoStrategy,
     CryptoStrategyProposal,
@@ -46,8 +47,10 @@ def clean():
     yield
     s = get_session()
     try:
+        # ⚠️ `CryptoArenaSwitch` 必须一起清：冷却期是**全局**查最近一条切换，
+        # 留着会让下一个用例的冷却期从上一个用例的切换开始算 —— 用例之间串味。
         for m in (CryptoStrategyRun, CryptoPendingOrder, CryptoStrategyProposal,
-                  CryptoStrategy):
+                  CryptoArenaSwitch, CryptoStrategy):
             s.query(m).delete()
         s.commit()
     finally:

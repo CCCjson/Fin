@@ -368,6 +368,8 @@ module = [
   "common.trade_source",
   # S1 策略战绩内核：纯计算、只读库，算错就是给策略发假奖状，值得强检
   "crypto_strategy.performance",
+  # S3 竞技场判定：纯函数统计，算错就是换错策略
+  "crypto_strategy.arena",
   "net.clash",
   "net.env",
   "net.session",

@@ -82,18 +82,116 @@ def _family_filter(row):
                CryptoStrategy.strategy_id == family)
 
 
-def _supersede_siblings(session, row) -> list[str]:
-    """让同族其它在跑的版本退位。返回被退位的 strategy_id 列表。"""
+def _supersede_siblings(session, row, *, target_mode: str) -> list[str]:
+    """让位：返回被退位的 strategy_id 列表。
+
+    两条规则叠加：
+
+    1. **同族**其它在跑的版本一律退位 —— 同一条策略不该有两个版本同时跑。
+    2. 🔴 **上 live 时，全局其它跑实盘的也要退位**（裁决 7：同期只有一条 live）。
+       只按同族让位的话，「从甲家族换到乙家族」会留下**两条同时 live**，而且
+       `pending.has_open` 的去重是按 strategy_id 的，两条会对同一个币各排一张单。
+       这是复审实测出来的：arm 甲、再 arm 乙（不同族）→ 两条都是 armed+live+enabled。
+    """
     from data_engine.storage.models import CryptoStrategy
+    cond = _family_filter(row)
+    if target_mode == "live":
+        cond = or_(cond, CryptoStrategy.mode == "live")
     out = []
     for other in session.query(CryptoStrategy).filter(
-            _family_filter(row),
+            cond,
             CryptoStrategy.strategy_id != row.strategy_id,
             CryptoStrategy.status.in_(_LIVE_STATUSES)).all():
         other.status = "superseded"
         other.enabled = 0
         out.append(other.strategy_id)
     return out
+
+
+def _current_live(session, row) -> str | None:
+    """arm 之前，**全局**正在跑实盘的是哪一条（用来记「谁换了谁」）。
+
+    ⚠️ 不限同族：同期只有一条 live（裁决 7），换到另一个家族同样是一次切换 ——
+    按同族查会让跨家族切换查不到「被换下的人」，冷却期也就无从算起。
+    """
+    from data_engine.storage.models import CryptoStrategy
+    cur = session.query(CryptoStrategy).filter(
+        CryptoStrategy.strategy_id != row.strategy_id,
+        CryptoStrategy.enabled == 1,
+        CryptoStrategy.mode == "live",
+        CryptoStrategy.status.in_(_LIVE_STATUSES)).first()
+    return cur.strategy_id if cur else None
+
+
+def _challenger_count(session, row) -> int:
+    """切换那一刻有几个挑战者 —— 多重比较修正的输入，事后复盘要能还原当时的门槛高度。"""
+    from data_engine.storage.models import CryptoStrategy
+    return session.query(CryptoStrategy).filter(
+        CryptoStrategy.enabled == 1,
+        CryptoStrategy.strategy_id != row.strategy_id,
+        CryptoStrategy.is_benchmark != 1).count()
+
+
+def _record_switch(prev_live: str | None, out: dict, superseded: list[str],
+                   challenger_count: int) -> None:
+    """把这次上位记进 `crypto_arena_switches` —— **冷却期靠它算，事后复盘也只有它**。
+
+    ⚠️ 只在**真的把一条在跑实盘的策略换下来**时记。判据是 `prev_live` 而不是
+    「superseded 非空」：`enable_paper` 会把 status 设成 `armed`，于是首次 arm 一条
+    同族有 paper 兄弟的策略也会 supersede 到它 → 被当成一次切换 →
+    **14 天冷却期从第 0 天就开始倒计时**，把「刚建好想调一下」直接挡掉。
+    """
+    if not prev_live:
+        return
+    from data_engine.storage.database import get_session
+    from data_engine.storage.models import CryptoArenaSwitch
+    session = None
+    try:
+        # ⚠️ `get_session()` 也要在 try 里：它抛异常会让一个**已经 commit 成功**的
+        # arm 返回 500。
+        session = get_session()
+        session.add(CryptoArenaSwitch(
+            family_id=out.get("family_id"),
+            from_strategy_id=prev_live,
+            to_strategy_id=out["strategy_id"],
+            gates_snapshot=_gates_snapshot(prev_live, out["strategy_id"]),
+            challenger_count=challenger_count,
+            note=f"arm v{out.get('version')}；让位 {superseded or '无'}"))
+        session.commit()
+    except Exception as e:  # noqa: BLE001 — 留痕失败不该掀翻已经生效的 arm
+        logger.warning(f"策略切换留痕失败 {out.get('strategy_id')}: {e}")
+    finally:
+        if session is not None:
+            session.close()
+
+
+def _gates_snapshot(from_id: str, to_id: str) -> str | None:
+    """切换那一刻四道门槛各是多少 —— **事后复盘「这次换对了吗」的唯一依据**。
+
+    ⚠️ 尽力而为：算不出来就留空，绝不因此拖垮 arm。注意这里的判定是**回溯性的**
+    （新版本此刻已经是 armed 了），所以它记的是「换的时候两边的数据长什么样」，
+    不是「规则当时批准了这次切换」—— 切换本来也不需要规则批准（规则只给意见）。
+    """
+    try:
+        import json
+
+        from crypto_strategy.arena import evaluate_challenger
+        from crypto_strategy.performance import daily_returns
+        snaps = {}
+        for sid in (from_id, to_id):
+            dr = daily_returns(sid)
+            snaps[sid] = {"basis": dr.get("basis"), "returns": dr.get("returns") or [],
+                          "capital_basis": dr.get("capital_basis"),
+                          "days": dr.get("days") or 0,
+                          "trade_count": dr.get("trade_count") or 0,
+                          "open_positions": dr.get("open_positions") or {},
+                          "backtest_passed": True}
+        r = evaluate_challenger(snaps[to_id], snaps[from_id])
+        return json.dumps({"gates": r["gates"], "blocked_by": r["blocked_by"]},
+                          ensure_ascii=False, default=str)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"切换门槛快照算不出来 {from_id}→{to_id}: {e}")
+        return None
 
 
 def _assert_armable(row) -> None:
@@ -123,7 +221,7 @@ def row_summary(row) -> dict[str, Any]:
     return {
         "strategy_id": row.strategy_id, "name": row.name, "mode": row.mode,
         "family_id": row.family_id or row.strategy_id, "version": row.version or 1,
-        "forked_from": row.forked_from,
+        "forked_from": row.forked_from, "is_benchmark": bool(row.is_benchmark),
         "status": row.status, "enabled": bool(row.enabled),
         "strategy_kind": row.strategy_kind, "interval_minutes": row.interval_minutes,
         "backtest_passed": bool(row.backtest_passed),
@@ -313,7 +411,10 @@ class CryptoStrategyService:
         try:
             row = self._get_row(session, strategy_id)
             _assert_armable(row)
-            superseded = _supersede_siblings(session, row)
+            # ⚠️ 顺序不能反：先记下「谁在跑」，再让它退位。
+            prev_live = _current_live(session, row)
+            challengers = _challenger_count(session, row)
+            superseded = _supersede_siblings(session, row, target_mode="live")
             row.mode = "live"
             row.enabled = 1
             row.status = "armed"
@@ -321,9 +422,12 @@ class CryptoStrategyService:
             session.commit()
             out = row_summary(row)
             out["superseded"] = superseded
-            return out
         finally:
             session.close()
+        # 切换留痕（S3）：**冷却期靠它算**，事后复盘「这次换对了吗」也只有它。
+        # 放在 commit 之后、独立 session 里：留痕失败不该把已经生效的 arm 回滚掉。
+        _record_switch(prev_live, out, superseded, challengers)
+        return out
 
     def enable_paper(self, strategy_id: str) -> dict:
         """纸面启用（不需回测通过，纯模拟不动真钱）。
@@ -336,7 +440,7 @@ class CryptoStrategyService:
         try:
             row = self._get_row(session, strategy_id)
             _assert_armable(row)
-            superseded = _supersede_siblings(session, row)
+            superseded = _supersede_siblings(session, row, target_mode="paper")
             row.mode = "paper"
             row.enabled = 1
             row.status = "armed"
@@ -350,6 +454,22 @@ class CryptoStrategyService:
 
     def pause(self, strategy_id: str) -> dict:
         return self._set_state(strategy_id, enabled=0, status="draft")
+
+    def set_benchmark(self, strategy_id: str, is_benchmark: bool = True) -> dict:
+        """把一条策略标成**基准线**（裁决 8：Jason 手写的那条永久置顶当尺子）。
+
+        ⭐ **没有基准线的胜率是自说自话** —— 如果只有 AI 能写策略，就永远不知道 AI 有没有
+        价值。基准线不参与切换（永不被淘汰、也永不上位），只在排行里当尺子。
+        AI 长期输给随手写的双均线，这个数字最刺眼，也最该被看见。
+        """
+        session = self._session()
+        try:
+            row = self._get_row(session, strategy_id)
+            row.is_benchmark = 1 if is_benchmark else 0
+            session.commit()
+            return row_summary(row)
+        finally:
+            session.close()
 
     def retire(self, strategy_id: str) -> dict:
         """退役 = **停跑并归档**，🔴 2026-07-27（S2）从「彻底删除」改成软退役。

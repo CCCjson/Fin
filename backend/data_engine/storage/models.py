@@ -1486,6 +1486,10 @@ class CryptoStrategy(Base):
     family_id = Column(String(40), index=True)
     version = Column(Integer, default=1)
     forked_from = Column(String(40))                   # 从哪个版本 fork 出来的（血缘）
+    # ⭐ 裁决 8（S3）：Jason 手写的策略永久置顶当**基准线**。
+    # **没有基准线的胜率是自说自话** —— 只有 AI 能写策略的话，就永远不知道 AI 有没有价值。
+    # 基准线不参与切换（永不被淘汰、也永不上位），只在排行里当尺子。
+    is_benchmark = Column(Integer, default=0)
     name = Column(String(100), nullable=False)
     description_nl = Column(Text)                      # Jason 原始人话（审计留痕）
     enabled = Column(Integer, default=0, index=True)   # 默认 0，绝不建时自动武装
@@ -1531,6 +1535,32 @@ class CryptoStrategy(Base):
     def __repr__(self):
         return (f"<CryptoStrategy({self.strategy_id} {self.name} v{self.version} "
                 f"{self.mode}/{self.status})>")
+
+
+class CryptoArenaSwitch(Base):
+    """策略切换留痕（S3）—— **事后复盘「这次换对了吗」的唯一依据**。
+
+    切换那一刻四道门槛各是多少、挑战者当时有几个、判定用的是哪套阈值，全部冻结在这里。
+    不存的话，三个月后回头看只能看到「7 月 28 日换了一次」，而**换得对不对永远说不清** ——
+    那正好也是「AI 提议准不准」这个统计的一部分（`00-PLAN §4` 问题 2：样本本来就少）。
+
+    ⚠️ 这张表**只记发生过的切换**。规则的「建议切/建议不切」不落库 —— 那只是意见，
+    每次调用都能重算，存下来只会变成一堆过期结论。
+    """
+    __tablename__ = "crypto_arena_switches"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    family_id = Column(String(40), index=True)
+    from_strategy_id = Column(String(40))              # 被换下的（可能为空：首次上位）
+    to_strategy_id = Column(String(40), nullable=False)
+    # JSON：切换那一刻四道门槛的完整判定快照（含各自的实测值与阈值）
+    gates_snapshot = Column(Text)
+    challenger_count = Column(Integer)                 # 当时有几个挑战者（多重比较修正的输入）
+    note = Column(Text)
+    created_at = Column(DateTime, default=utc_now)     # naive UTC（见文件头）
+
+    def __repr__(self):
+        return f"<CryptoArenaSwitch({self.from_strategy_id} → {self.to_strategy_id})>"
 
 
 class CryptoStrategyProposal(Base):

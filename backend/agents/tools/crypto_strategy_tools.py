@@ -485,3 +485,79 @@ def list_strategy_proposals(family_id: str | None = None, status: str | None = N
     for r in rows:
         r["diff_text"] = pr.diff_text(r.get("diff") or [])
     return ToolEnvelope(data={"count": len(rows), "proposals": rows})
+
+
+# ──────────────────── 竞技场：该不该换策略（S3）────────────────────
+#
+# ⛔ 裁决 10：**规则判「切不切」，AI 判「为什么」和「下一条试什么」。**
+# 本工具返回的是规则的判定；AI 的位置是在结论旁边说话（解释失效原因、造新挑战者、
+# 对规则提异议），**不是去改判定结果**。
+
+class ArenaArgs(BaseModel):
+    days: int = Field(90, ge=7, le=365, description="用多长的历史算日收益率序列，默认 90 天")
+
+
+@tool(
+    name="evaluate_strategy_arena",
+    description="【crypto 半自动策略·竞技场】按四道硬门槛判定「现在该不该换掉正在跑的策略」："
+                "①观察期够长 ②优势显著（按日收益率序列算标准误，**挑战者越多门槛越高**）"
+                "③回测过闸 ④风险不劣化，外加冷却期。同时给出「卫冕者是不是正在变弱」。"
+                "用户问「该换策略了吗 / 哪条更好 / 我这条是不是不行了」时用。"
+                "⚠️ 这是**规则的判定，不是你的判定**——你的活是解释卫冕者为什么开始失效、"
+                "造新的挑战者、以及**对规则提出异议**（比如「数字上该切了，但这是财报季噪声，"
+                "建议再观察两周」）。⛔ 别推翻 should_switch，要有异议就在旁边说清楚理由。"
+                "⚠️ 本工具不写库不改状态：真要换仍要走 arm_crypto_strategy 的确认门。",
+    args_model=ArenaArgs,
+    category="crypto", group="crypto",
+)
+def evaluate_strategy_arena(days: int = 90) -> ToolEnvelope:
+    from crypto_strategy.arena import evaluate_arena
+
+    r = evaluate_arena(days=days)
+    if r.get("champion") is None:
+        return ToolEnvelope(business_result="negative", message=r["verdict"], data=r)
+    return ToolEnvelope(data=r, message=r["verdict"])
+
+
+def _benchmark_preview(args: dict) -> dict:
+    from crypto_strategy.service import StrategyError, crypto_strategy_service
+    sid = (args.get("strategy_id") or "").strip()
+    try:
+        s = crypto_strategy_service.get_strategy(sid)
+    except StrategyError as e:
+        return {"error": str(e)}
+    on = bool(args.get("is_benchmark", True))
+    return {
+        "strategy_id": sid, "name": s.get("name"), "version": f"v{s.get('version')}",
+        "动作": "设为基准线" if on else "取消基准线",
+        "note": ("基准线 = 你手写的那条尺子：它**永不参与切换**（不会被淘汰、也不会自动上位），"
+                 "只在排行里当参照。⭐ 没有基准线的胜率是自说自话 —— "
+                 "只有 AI 能写策略的话，就永远不知道 AI 有没有价值。"),
+    }
+
+
+class SetBenchmarkArgs(BaseModel):
+    strategy_id: str = Field(..., min_length=3, description="策略号")
+    is_benchmark: bool = Field(True, description="True=设为基准线，False=取消")
+
+
+@tool(
+    name="set_strategy_benchmark",
+    description="【crypto 半自动策略·基准线】把某条策略标记成**基准线**（Jason 手写的那条尺子）。"
+                "基准线永不参与切换，只在竞技场排行里当参照。"
+                "用户说「把这条当基准 / 拿它当尺子比」时用。会先让 Jason 确认——"
+                "⛔ 谁是基准线是 Jason 对「我自己写的那条」的认定，你不能自作主张给某条封基准线。",
+    args_model=SetBenchmarkArgs,
+    category="crypto", group="crypto",
+    requires_confirmation=True, preview_fn=_benchmark_preview,
+)
+def set_strategy_benchmark(strategy_id: str, is_benchmark: bool = True) -> ToolEnvelope:
+    from crypto_strategy.service import StrategyError, crypto_strategy_service
+    try:
+        r = crypto_strategy_service.set_benchmark(strategy_id, is_benchmark)
+    except StrategyError as e:
+        return ToolEnvelope(business_result="negative", message=str(e))
+    return ToolEnvelope(
+        data=r,
+        message=(f"{r['name']} v{r['version']} "
+                 f"{'已设为基准线' if is_benchmark else '已取消基准线'}。"))

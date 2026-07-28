@@ -80,7 +80,8 @@ _OPS = {"gt": ">", "gte": "≥", "lt": "<", "lte": "≤", "eq": "=",
 
 
 def _render_cond(c: dict[str, Any]) -> str:
-    op = _OPS.get(c.get("op"), c.get("op"))
+    raw_op = str(c.get("op") or "")
+    op = _OPS.get(raw_op, raw_op)
     v = c.get("value")
     if isinstance(v, list) and c.get("op") == "between" and len(v) == 2:
         v = f"{v[0]}~{v[1]}"

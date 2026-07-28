@@ -75,6 +75,7 @@ CONFIRMED_TOOL_KINDS: dict[str, str] = {
     # ⚠️ 但别因此觉得它们「不重要」：`arm_crypto_strategy` 是整条自动交易链路的开关。
     "apply_strategy_proposal": OPS,          # 把提案落成新版本（草稿，不上线）
     "arm_crypto_strategy": OPS,              # 让某个版本上 live（旧版本自动停跑）
+    "set_strategy_benchmark": OPS,           # 标记基准线，不动钱也不动策略内容
 }
 
 

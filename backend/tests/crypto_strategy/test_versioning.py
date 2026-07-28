@@ -17,6 +17,7 @@ from crypto_strategy.service import StrategyError
 from crypto_strategy.service import crypto_strategy_service as svc
 from data_engine.storage.database import get_session
 from data_engine.storage.models import (
+    CryptoArenaSwitch,
     CryptoPendingOrder,
     CryptoStrategy,
     CryptoStrategyProposal,
@@ -44,8 +45,10 @@ def clean():
     yield
     s = get_session()
     try:
+        # ⚠️ `CryptoArenaSwitch` 必须一起清：冷却期是**全局**查最近一条切换，
+        # 留着会让下一个用例的冷却期从上一个用例的切换开始算 —— 用例之间串味。
         for m in (CryptoStrategyRun, CryptoPendingOrder, CryptoStrategyProposal,
-                  CryptoStrategy):
+                  CryptoArenaSwitch, CryptoStrategy):
             s.query(m).delete()
         s.commit()
     finally:
@@ -135,13 +138,56 @@ def test_arming_v2_supersedes_v1(clean):
     assert [s["strategy_id"] for s in live] == [f["strategy_id"]]
 
 
-def test_arming_does_not_touch_other_families(clean):
+def test_arming_live_supersedes_across_families_too(clean):
+    """🔴 裁决 7「同期只有一条 live」是**全局**的，不是每族一条。
+
+    这条测试原本断言的是相反的行为（「arm 乙不影响甲」），而那正是复审实测出来的
+    bug：跨家族切换会留下**两条同时 armed+live+enabled**，
+    `pending.has_open` 的去重按 strategy_id，两条会对同一个币各排一张单。
+    """
+    a = _mk("甲")
+    b = _mk("乙")
+    svc.arm(a["strategy_id"])
+    res = svc.arm(b["strategy_id"])
+    assert res["superseded"] == [a["strategy_id"]]
+    assert svc.get_strategy(a["strategy_id"])["status"] == "superseded"
+    assert svc.get_strategy(b["strategy_id"])["status"] == "armed"
+    live = [s for s in svc.list_strategies(latest_only=False)
+            if s["enabled"] and s["mode"] == "live"]
+    assert len(live) == 1
+
+
+def test_enable_paper_does_not_touch_other_families(clean):
+    """反过来：paper 池是**多条并存**的挑战者池，enable_paper 只让同族让位。"""
+    a = _mk("甲")
+    b = _mk("乙")
+    svc.enable_paper(a["strategy_id"])
+    res = svc.enable_paper(b["strategy_id"])
+    assert res["superseded"] == []
+    assert svc.get_strategy(a["strategy_id"])["status"] == "armed"
+
+
+def test_cross_family_switch_is_recorded_for_cooldown(clean):
+    """🔴 冷却期建在切换留痕上 —— 跨家族切换**必须**留痕，否则「防反复横跳」形同虚设。
+
+    （AI 每次都能造一条全新家族的策略，跨族恰恰是最容易横跳的场景。）
+    """
+    from data_engine.storage.models import CryptoArenaSwitch
     a = _mk("甲")
     b = _mk("乙")
     svc.arm(a["strategy_id"])
     svc.arm(b["strategy_id"])
-    assert svc.get_strategy(a["strategy_id"])["status"] == "armed"
-    assert svc.get_strategy(b["strategy_id"])["status"] == "armed"
+    s = get_session()
+    try:
+        rows = s.query(CryptoArenaSwitch).all()
+        assert len(rows) == 1
+        assert (rows[0].from_strategy_id, rows[0].to_strategy_id) == \
+            (a["strategy_id"], b["strategy_id"])
+    finally:
+        s.close()
+
+    from crypto_strategy.arena import _days_since_last_switch
+    assert _days_since_last_switch() == 0        # 不再是 None → 冷却期真的生效
 
 
 def test_paused_by_guardrail_version_also_gives_way(clean):
