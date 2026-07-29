@@ -65,12 +65,17 @@ SOURCES: dict[str, dict[str, Any]] = {
     # ── 既成事实（不进胜率分母）──
     "moneybill": {
         # confirm_gate 的留痕：下单 → execution，加自选股/建预警/编策略 → ops
-        "label": "MoneyBill 对话操作回执（下单 / 加自选 / 建预警…）",
+        # ⚠️ **对话里下的 crypto 单也在这里**（S4 双重留痕收口之后）：那条路径走确认门，
+        # 由 confirm_gate 记一条信息更全的，执行层不再重复记 `source="crypto"`。
+        "label": "MoneyBill 对话操作回执（下单含 crypto / 加自选 / 建预警…）",
         "kinds": frozenset({EXECUTION, OPS}),
         "advice_hint": "moneybill_recommend",
     },
     "crypto": {
-        "label": "币安现货订单回执（成交 / 挂单）",
+        # 🔴 S4 收口后语义收窄了：这里**只剩自动策略引擎排的单**（`crypto_strategy/
+        # pending.py`，它不走确认门）。对话里下的 crypto 单在 `moneybill` 下 ——
+        # 查「我下过哪些币单」只看这个 source 会**静默少报**。
+        "label": "币安现货订单回执（**仅自动策略引擎**；对话下的单在 moneybill）",
         "kinds": frozenset({EXECUTION}),
         "advice_hint": "crypto_cockpit",
     },

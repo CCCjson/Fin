@@ -218,6 +218,14 @@ def to_dict(row) -> dict[str, Any]:
         "diff": json.loads(row.diff) if row.diff else [],
         "status": row.status, "applied_strategy_id": row.applied_strategy_id,
         "decision_note": row.decision_note,
+        # 后验（S4）：断言兑现了吗。判定在 `crypto_strategy/proposal_outcome.py`。
+        "outcome": row.outcome, "unable_reason": row.unable_reason,
+        # ⚠️ `outcome_basis` 必须跟着 outcome 一起读：paper_simulated 是理想撮合的
+        # 模拟账，**不等于真钱兑现**。
+        "outcome_basis": row.outcome_basis,
+        "actual_return_pct": row.actual_return_pct,
+        "actual_win_rate": row.actual_win_rate,
+        "evaluated_at": utc_iso(row.evaluated_at),
         "created_at": utc_iso(row.created_at), "decided_at": utc_iso(row.decided_at),
     }
 

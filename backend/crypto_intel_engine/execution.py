@@ -357,7 +357,8 @@ def record_earn_sweep(asset: str, amount: float) -> None:
 
 def record_crypto_trade(symbol: str, action: str, price: float, qty: float,
                         order_id: str, commission: float = 0.0, *,
-                        source_kind: str, source_ref: str | None = None) -> None:
+                        source_kind: str, source_ref: str | None = None,
+                        log_decision: bool = True) -> str:
     """**真实成交**留痕：成交台账 + 业务事件 + DecisionLog(source=crypto)。吞异常不坏主流程。
 
     只在 filled_quantity > 0 时调用（qty 为已成交量）。台账（CryptoTrade）喂连亏风控回放；
@@ -369,7 +370,18 @@ def record_crypto_trade(symbol: str, action: str, price: float, qty: float,
             某条策略的战绩里凭空多/少一笔钱。门禁 `tests/test_trade_source.py` 会咬。
         source_ref: `strategy` → 策略号 `CS-…`（**必填**，不然只知道「来自某条策略」
             却不知道哪条 = 等于没归因）；`ai_advice` → decision_id（S4 接，现在留空）。
+        log_decision: 要不要写 DecisionLog。**双重留痕收口用的**（S4）——
+            走 `confirm_gate` 的那条路径（`crypto_tools.place_crypto_order`）会由确认门
+            再记一条，而那条**信息更全**（带 session_id / turn_start_idx / model_id /
+            data_quality / 完整 input_snapshot），所以那边传 `False`。
+            ⛔ `crypto_strategy/pending.py` 必须保持 `True` —— 它**不走 confirm_gate**，
+            关掉就是半自动引擎的下单留痕直接断线。
+
+    Returns:
+        那句人话（成交摘要）。调用方关掉 `log_decision` 时，**必须把它放进自己的返回里**
+        （见 `place_crypto_order` 的 `exec_note`），否则收口就是拿可读性换整洁，不划算。
     """
+    note = f"币安现货成交 order={order_id} {qty:g} @ ${price:,.4f}"
     kind = normalize_trade_source(source_kind)
     if needs_trade_ref(kind) and not source_ref:
         # 不抛异常（留痕绝不能坏主流程），但降级成 unknown 并吼一声：
@@ -405,22 +417,25 @@ def record_crypto_trade(symbol: str, action: str, price: float, qty: float,
                       amount=round(price * qty, 2))
     except Exception:  # noqa: BLE001
         pass
-    # ③ 决策留痕
-    try:
-        from common.decision_kind import EXECUTION
-        from decision_log import record_decision
-        # ⛔ entry_kind=EXECUTION 不可省（P0-4）：这里的 entry_price 是**成交价**，
-        # 不是建议入场价。当成建议去评，等于问「这笔成交的准确率是多少」——
-        # 而当成交价是脏的（曾有 39 条 entry=100 的 BTC）就会被评成 +64900% 的 win。
-        record_decision(source="crypto", entry_kind=EXECUTION, symbol=symbol, action=action,
-                        entry_price=price, executed=True, risk_passed=True,
-                        output_text=f"币安现货成交 order={order_id} {qty:g} @ ${price:,.4f}")
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"crypto 决策留痕失败: {e}")
+    # ③ 决策留痕（走确认门的路径会由 confirm_gate 记一条更全的，这里就不重复记）
+    if log_decision:
+        try:
+            from common.decision_kind import EXECUTION
+            from decision_log import record_decision
+            # ⛔ entry_kind=EXECUTION 不可省（P0-4）：这里的 entry_price 是**成交价**，
+            # 不是建议入场价。当成建议去评，等于问「这笔成交的准确率是多少」——
+            # 而当成交价是脏的（曾有 39 条 entry=100 的 BTC）就会被评成 +64900% 的 win。
+            record_decision(source="crypto", entry_kind=EXECUTION, symbol=symbol,
+                            action=action, entry_price=price, executed=True,
+                            risk_passed=True, output_text=note)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"crypto 决策留痕失败: {e}")
+    return note
 
 
 def record_crypto_resting(symbol: str, action: str, price: float | None, order_id: str,
-                          order_type: str = "LIMIT") -> None:
+                          order_type: str = "LIMIT", *,
+                          log_decision: bool = True) -> str:
     """订单已受理但**零成交**的留痕：只写 DecisionLog(executed=False)。
 
     不发 ORDER_FILLED、不落成交台账 —— 未成交不是成交，成交后自然由 record_crypto_trade 记。
@@ -429,15 +444,22 @@ def record_crypto_resting(symbol: str, action: str, price: float | None, order_i
         order_type: `LIMIT` = 限价单挂在盘口等撮合（正常状态）；`MARKET` = **市价单却零成交**，
             这不正常（薄盘/交易对暂停/被撮合引擎拒），文案必须区分开——否则待确认单路径下的
             市价单会被记成「限价单挂出，等待撮合」，Jason 按这句话去等一张根本不存在的挂单。
+        log_decision: 同 `record_crypto_trade` —— 走确认门那条路径传 `False`（S4 收口）。
+
+    Returns:
+        那句人话。关掉留痕的调用方**必须把它带进自己的返回**（`exec_note`）。
     """
     note = ("币安限价单挂出（未成交，盘口等待撮合）" if order_type.upper() == "LIMIT"
             else "币安市价单零成交（异常：薄盘/交易对暂停/被拒），请去币安核对")
-    try:
-        from common.decision_kind import EXECUTION
-        from decision_log import record_decision
-        # 同上：挂单价是**已挂出的价**，不是可证伪的断言（P0-4）。
-        record_decision(source="crypto", entry_kind=EXECUTION, symbol=symbol, action=action,
-                        entry_price=price, executed=False, risk_passed=True,
-                        output_text=f"{note} order={order_id}")
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"crypto 挂单留痕失败: {e}")
+    full = f"{note} order={order_id}"
+    if log_decision:
+        try:
+            from common.decision_kind import EXECUTION
+            from decision_log import record_decision
+            # 同上：挂单价是**已挂出的价**，不是可证伪的断言（P0-4）。
+            record_decision(source="crypto", entry_kind=EXECUTION, symbol=symbol,
+                            action=action, entry_price=price, executed=False,
+                            risk_passed=True, output_text=full)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"crypto 挂单留痕失败: {e}")
+    return full

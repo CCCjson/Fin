@@ -184,6 +184,9 @@ def _live_block(strategy_id: str, since: datetime | None,
         "basis": "live_fills",
         "realized_pnl": round(sum(c["pnl"] for c in closed), 4),
         "closed_legs": len(closed),
+        # 逐笔平仓盈亏 —— 提案后验的**胜率**要数正负（S4）。只给数量的话，
+        # 「赚 1000 亏 1」和「赚 1 亏 1000」在下游看起来一样。
+        "closed_leg_pnls": [round(c["pnl"], 6) for c in closed],
         # ⚠️ 这是**策略子账本**的虚拟持仓，不是账户实际持仓：策略买了 1 BTC、Jason 手动
         # 卖掉的话，这里仍显示持有 1 BTC。真实持仓看币安账户。
         "book_positions": {s: {"quantity": round(st["quantity"], 8),
@@ -232,22 +235,32 @@ def _taker_fee(row: Any) -> float:
         return _DEFAULT_TAKER_FEE
 
 
-def _pair(legs: list[dict], fee_pct: float) -> dict[str, Any]:
+def _pair(legs: list[dict], fee_pct: float, *,
+          since: datetime | None = None) -> dict[str, Any]:
     """加权平均成本法配对，**与 `cost_basis.replay()` 同口径**（含「卖多于已知买入」的处理）。
 
     这里没有复用 `replay()` 本体，因为那个函数绑死在 `crypto_fills` 的行形状上；
     但两处的**规则必须一致**，否则 paper 和 live 的数字连口径都不同，S3 更没法比。
+
+    Args:
+        since: 传了就**只统计这之后的平仓**，更早的腿仅用于累积成本 ——
+            否则窗口外的买入腿会被切掉，收益系统性低估（见 `strategy_pnl` 的注释）。
     """
     state: dict[str, dict[str, float]] = {}
     realized = 0.0
     fees = 0.0
     closed = 0
+    leg_pnls: list[float] = []
     uncosted = False
     for lg in legs:
         st = state.setdefault(lg["symbol"], {"qty": 0.0, "cost": 0.0, "avg": 0.0})
         gross = lg["qty"] * lg["price"]
         fee = gross * fee_pct
-        fees += fee
+        # ⭐ `since` 之前的腿**只用来累成本，不计入本窗口的收益/费用**（与 live 侧
+        # 「成本从全历史累、窗口只切平仓日」完全同一个口径）。
+        in_window = since is None or lg.get("at") is None or lg["at"] >= since
+        if in_window:
+            fees += fee
         if lg["side"] == "BUY":
             st["cost"] += gross + fee
             st["qty"] += lg["qty"]
@@ -257,8 +270,11 @@ def _pair(legs: list[dict], fee_pct: float) -> dict[str, Any]:
             if costed < sold:
                 uncosted = True          # 卖的比已知买入多 → 超出部分成本未知，不按 0 算
             if costed > 0:
-                realized += (gross - fee) * (costed / sold) - st["avg"] * costed
-                closed += 1
+                leg = (gross - fee) * (costed / sold) - st["avg"] * costed
+                if in_window:
+                    realized += leg
+                    leg_pnls.append(round(leg, 6))
+                    closed += 1
             st["qty"] = max(0.0, st["qty"] - sold)
             st["cost"] = st["avg"] * st["qty"]
         st["avg"] = (st["cost"] / st["qty"]) if st["qty"] > 0 else 0.0
@@ -266,6 +282,7 @@ def _pair(legs: list[dict], fee_pct: float) -> dict[str, Any]:
         "realized_pnl": round(realized, 4),
         "fees": round(fees, 6),
         "closed_legs": closed,
+        "closed_leg_pnls": leg_pnls,     # 提案后验的胜率要数正负（S4）
         "open_positions": {s: {"quantity": round(v["qty"], 8),
                                "avg_cost": round(v["avg"], 6)}
                            for s, v in state.items() if v["qty"] > 0},
@@ -298,11 +315,16 @@ def strategy_pnl(strategy_id: str, *, since: datetime | None = None,
 
     mode = (row.mode or "paper").lower()
     live = _live_block(strategy_id, since, until)
-    legs = _paper_legs(_runs(strategy_id, since, until))
+    # 🔴 **成本基础必须从全历史累，窗口只切平仓日** —— 与 `_live_order_ids` 同一个道理，
+    # paper 侧原本没有这道保护：按 `since` 筛 run 会把**窗口外的买入腿**切掉，
+    # `costed = min(sold, 0) = 0` → 那笔平仓不记 → 收益**系统性低估**
+    # （实测窗口外买 1@100 + 窗口内买 1@100 + 窗口内卖 2@200：真实 +199.4，算出 +99.7）。
+    # 偏差方向恒为低估 → 会把提案的 hit 判成 miss。
+    legs = _paper_legs(_runs(strategy_id, None, until))
     paper = None
     if legs:
         paper = {"basis": "paper_simulated", "simulated_legs": len(legs),
-                 **_pair(legs, _taker_fee(row)),
+                 **_pair(legs, _taker_fee(row), since=since),
                  "note": ("⚠️ 模拟账：按决策价理想撮合（挂单必成、零冲击、零排队），"
                           "手续费按策略 cost_model 计。"
                           "**不可与 live 的数字直接比大小。**")}
@@ -331,8 +353,17 @@ def strategy_pnl(strategy_id: str, *, since: datetime | None = None,
             "coverage": {"attributed_trades": 0, "unknown_source_trades": unknown}}
 
 
-def daily_returns(strategy_id: str, *, days: int = 90) -> dict[str, Any]:
-    """这条策略的**日收益率序列** —— S3 四道门槛全靠它。
+def daily_returns(strategy_id: str, *, days: int = 90,
+                  since: datetime | None = None,
+                  until: datetime | None = None) -> dict[str, Any]:
+    """这条策略的**日收益率序列** —— S3 四道门槛 + S4 提案后验都靠它。
+
+    Args:
+        days: 从**现在**往回数多少天（默认口径，竞技场用这个）。
+        since / until: 显式窗口。🔴 **算历史窗口必须传这两个**：
+            只传 `days` 的话窗口永远贴着「现在」，而一份 60 天前批准、兑现窗口 30 天的
+            提案要看的是 `[T-60, T-30]` —— 拿 `days=30` 去取会取到 `[T-30, T]`，
+            **完全错误的时段**，而且不会有任何报错。
 
     口径（五条都要一起读）：
 
@@ -360,9 +391,9 @@ def daily_returns(strategy_id: str, *, days: int = 90) -> dict[str, Any]:
     if row is None:
         return {"basis": "none", "reason": f"没有 {strategy_id} 这条策略"}
 
-    until = utc_now()
-    window = max(1, int(days))
-    since = until - timedelta(days=window)
+    until = until or utc_now()
+    since = since or (until - timedelta(days=max(1, int(days))))
+    window = max(1, (until - since).days)
     capital = _capital_basis(row)
     if capital <= 0:
         # ⛔ 分母兜底成 1.0 会让「日收益率」变成**美元金额**（一天赚 500 → r=500），
@@ -393,14 +424,25 @@ def daily_returns(strategy_id: str, *, days: int = 90) -> dict[str, Any]:
                                            "avg_cost": round(st["avg_cost"], 6)}
 
     if basis == "none":
-        legs = _paper_legs(_runs(strategy_id, since, until))
+        # 同 live 侧：**成本从全历史累**（`_runs(..., None, until)`），窗口只切平仓日 ——
+        # 按 since 筛 run 会把窗口外的买入腿切掉，收益系统性低估。
+        legs = _paper_legs(_runs(strategy_id, None, until))
         if legs:
-            basis = "paper_simulated"
+            lo_key = market_day_of(since, CRYPTO).isoformat()
             for d, pnl in _paper_daily_pnl(legs, _taker_fee(row)):
+                if d < lo_key:
+                    continue                    # 窗口外的平仓只贡献成本，不进序列
+                basis = "paper_simulated"
                 daily[d] = daily.get(d, 0.0) + pnl
                 trade_count += 1
-            pos = _pair(legs, _taker_fee(row)).get("open_positions") or {}
-            open_positions = dict(pos)
+            if basis == "none" and any(
+                    lg.get("at") and market_day_of(lg["at"], CRYPTO).isoformat() >= lo_key
+                    for lg in legs):
+                basis = "paper_simulated"       # 窗口内有腿但都还没平仓
+            if basis != "none":
+                pos = _pair(legs, _taker_fee(row),
+                            since=since).get("open_positions") or {}
+                open_positions = dict(pos)
 
     if basis == "none":
         return {"basis": "none",

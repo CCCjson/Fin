@@ -389,8 +389,14 @@ def place_crypto_order(symbol: str, side: str, quantity=None,
                                 data={"executed": False, "reason": order.error_msg or "执行失败"})
         # 已受理（affirmative）但**未成交**：不发成交事件、不落台账，
         # executed=False/resting=True 把「挂单≠成交」如实传出去。
-        _record_crypto_resting(symbol, action, price, order.order_id,
-                               order_type="LIMIT" if price else "MARKET")
+        # ⛔ `log_decision=False`（S4 双重留痕收口）：本工具走 confirm_gate，确认门会
+        # 再记一条**信息更全**的（带 session_id/turn_start_idx/model_id/data_quality/
+        # 完整 input_snapshot）。两条记的是同一张单，留一条就够。
+        # ⚠️ 但那句人话不能跟着丢 —— 塞进 `exec_note`，confirm_gate 记 output_summary
+        # 时自然带走。不补这一步就是拿可读性换整洁，不划算。
+        exec_note = _record_crypto_resting(symbol, action, price, order.order_id,
+                                           order_type="LIMIT" if price else "MARKET",
+                                           log_decision=False)
         msg = (f"限价单已挂出（order={order.order_id}），当前未成交，挂在盘口等待撮合。"
                f"成交后才会计入台账与盈亏。" if price else
                f"市价单已提交（order={order.order_id}）但**零成交**——通常是盘口太薄或该交易对"
@@ -398,7 +404,8 @@ def place_crypto_order(symbol: str, side: str, quantity=None,
         return ToolEnvelope(
             data={"executed": False, "resting": True, "symbol": symbol, "action": action,
                   "order_id": order.order_id, "status": order.status.value,
-                  "price": round(price, 4) if price else None, "quantity": qty},
+                  "price": round(price, 4) if price else None, "quantity": qty,
+                  "exec_note": exec_note},
             message=msg,
         )
 
@@ -408,9 +415,10 @@ def place_crypto_order(symbol: str, side: str, quantity=None,
     # 归因（S1）：经 MoneyBill 对话下的单。⚠️ `ai_advice` 说的是**渠道**（AI 在环）
     # 不是「AI 拍的板」—— 确认键是 Jason 按的。`source_ref` 现在留空：`confirm_gate`
     # 在本工具**返回之后**才写 DecisionLog，下单这一刻还没有 decision_id，接它属于 S4。
-    _record_crypto_trade(symbol, action, fill_price, filled_qty, order.order_id,
-                         commission=order.commission or 0.0,
-                         source_kind=TRADE_AI_ADVICE)
+    # `log_decision=False` 同上（S4 收口）：确认门那条更全，这条人话走 exec_note。
+    exec_note = _record_crypto_trade(symbol, action, fill_price, filled_qty, order.order_id,
+                                     commission=order.commission or 0.0,
+                                     source_kind=TRADE_AI_ADVICE, log_decision=False)
 
     # 卖出成交 → 闲置 USDT 全自动扫进最优活期理财（吃收益，不弹确认）
     if action == "SELL":
@@ -427,6 +435,7 @@ def place_crypto_order(symbol: str, side: str, quantity=None,
         data={"executed": True, "partial": partial, "symbol": symbol, "action": action,
               "order_id": order.order_id, "price": round(fill_price, 4),
               "quantity": filled_qty, "ordered_quantity": qty,
-              "amount_usdt": round(fill_price * filled_qty, 2), "status": order.status.value},
+              "amount_usdt": round(fill_price * filled_qty, 2), "status": order.status.value,
+              "exec_note": exec_note},
         widget=widget,
     )

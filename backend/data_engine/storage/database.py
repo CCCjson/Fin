@@ -305,6 +305,31 @@ def init_db():
         if _fam:
             print(f"✓ crypto_strategies 已回填 family_id/version: {_fam} 行")
 
+    # 自动迁移：crypto_strategy_proposals 的后验列（S4）。
+    # 刻意**不回填 outcome**：该判 pending 还是 unable 是判定内核的事（要看窗口满没满、
+    # 新版本被没被 arm），写进 SQL 等于把内核复制一份，`engine_version` 也没法戳。
+    # 留 NULL 让首次回填自然分流 —— 与 P0-1 那批 outcome 列同一个道理。
+    if "crypto_strategy_proposals" in insp.get_table_names():
+        _pp_cols = {c["name"] for c in insp.get_columns("crypto_strategy_proposals")}
+        _pp_new = [("actual_return_pct", "FLOAT"), ("actual_win_rate", "FLOAT"),
+                   ("outcome", "VARCHAR(12)"), ("outcome_basis", "VARCHAR(20)"),
+                   ("unable_reason", "VARCHAR(40)"),
+                   ("evaluated_at", "DATETIME"), ("engine_version", "VARCHAR(32)")]
+        _pp_added = [c for c, _ in _pp_new if c not in _pp_cols]
+        if _pp_added:
+            with engine.begin() as conn:
+                for _col, _typ in _pp_new:
+                    if _col not in _pp_cols:
+                        conn.execute(text(
+                            f"ALTER TABLE crypto_strategy_proposals ADD COLUMN {_col} {_typ}"))
+            print(f"✓ crypto_strategy_proposals 表已添加后验列: {_pp_added}")
+        # ⚠️ 索引名要与模型里 `Column(..., index=True)` 自动生成的一致
+        # （`ix_<表>_<列>`），否则全新库和迁移库会各有一条**功能重复但名字不同**的索引。
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_crypto_strategy_proposals_outcome "
+                "ON crypto_strategy_proposals (outcome)"))
+
     # 自动迁移：回填 stock_info 表的 stock_type 和 exchange
     if "stock_info" in insp.get_table_names():
         with engine.begin() as conn:

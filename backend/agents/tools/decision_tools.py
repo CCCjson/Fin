@@ -134,10 +134,9 @@ def _derive_exec_state(d: dict[str, Any]) -> str:
 def _derive_order_id(d: dict[str, Any]) -> Optional[str]:
     """交易所订单号 —— **去重的唯一依据**。
 
-    同一张单现在会留两条痕：`crypto_intel_engine/execution.py` 记一条（人话在
-    output_text 里），`agents/confirm_gate.py` 再记一条（结构化在 output_summary 里）。
-    收口这件事属于 S4（要动写入点），在那之前**至少别让计数撒谎**：
-    `distinct_orders` 才是真实单数。
+    ✅ S4 已收口：同一张单现在只留一条痕（走确认门的路径由 `confirm_gate` 记，
+    执行层传 `log_decision=False`）。`distinct_orders` 因此在新数据上恒等于行数 ——
+    **但去重逻辑要留着**：库里还有 S4 之前的历史行是成对的，删了它们会被重复计数。
     """
     s = _summary_dict(d)
     oid = s.get("order_id")
@@ -185,8 +184,8 @@ def _exec_overview(rows: list[dict[str, Any]], total: int) -> Optional[dict[str,
         "counts": counts,
         "distinct_orders": len(order_ids),
         "note": (
-            "同一张单目前有两条留痕（币安执行层 + 对话确认门），"
-            "**distinct_orders 才是真实单数**；blocked = 根本没到交易所（钱没动）；"
+            "**distinct_orders 才是真实单数**（S4 之前的历史行同一张单有两条留痕，"
+            "S4 收口后新数据一单一行）；blocked = 根本没到交易所（钱没动）；"
             "unknown = 状态不明，**可能已成交**，得去交易所核对。"
         ),
     }

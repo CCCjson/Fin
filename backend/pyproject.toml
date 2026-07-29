@@ -370,6 +370,8 @@ module = [
   "crypto_strategy.performance",
   # S3 竞技场判定：纯函数统计，算错就是换错策略
   "crypto_strategy.arena",
+  # S4 提案后验：拿真实盈亏给 AI 的断言打分，算错就是用错误信号训练自己
+  "crypto_strategy.proposal_outcome",
   "net.clash",
   "net.env",
   "net.session",

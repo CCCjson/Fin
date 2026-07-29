@@ -561,3 +561,54 @@ def set_strategy_benchmark(strategy_id: str, is_benchmark: bool = True) -> ToolE
         data=r,
         message=(f"{r['name']} v{r['version']} "
                  f"{'已设为基准线' if is_benchmark else '已取消基准线'}。"))
+
+
+# ──────────────────── 提案后验：拿真实盈亏给断言打分（S4）────────────────────
+
+class ProposalScorecardArgs(BaseModel):
+    days: int = Field(365, ge=7, le=1095, description="统计多长时间内的提案，默认一年")
+    refresh: bool = Field(True, description="先跑一遍回填再统计（默认开）")
+
+
+@tool(
+    name="get_proposal_scorecard",
+    description="【crypto 半自动策略·提案战绩】你之前提的策略变更，**兑现了几次、落空了几次**。"
+                "每份提案都带「预期收益/预期胜率/多少天内兑现」，这里拿真实盈亏去证伪它们。"
+                "用户问「你提的那些改法靠谱吗 / 你的建议准不准」时用。"
+                "⚠️ **只有计数没有胜率百分比，这是刻意的**：策略变更一个月才 1-2 次，"
+                "样本量要 2-3 年才有统计意义，现在报百分比等于给噪声盖权威章。"
+                "⚠️ `unable/never_armed` 是「Jason 没让它上线」，**不算你判断失误**，别往自己身上揽。",
+    args_model=ProposalScorecardArgs,
+    category="crypto", group="crypto",
+)
+def get_proposal_scorecard(days: int = 365, refresh: bool = True) -> ToolEnvelope:
+    from crypto_strategy import proposal_outcome as po
+
+    filled = po.backfill_outcomes() if refresh else None
+    card = po.scorecard(days=days)
+    if not card["proposals"]:
+        return ToolEnvelope(business_result="negative",
+                            message="这段时间里一份策略变更提案都没有。",
+                            data=card)
+    if filled:
+        card["backfill"] = filled
+    return ToolEnvelope(data=card, message=_scorecard_line(card))
+
+
+def _scorecard_line(card: dict) -> str:
+    """⛔ **这个函数里永远不许出现百分号**（`test_scorecard_line_never_formats_a_rate`
+    会咬）。一年 12-24 条提案，任何比率都是噪声，摆出来只会被当成结论引用。
+    """
+    c = card.get("by_outcome") or {}
+    hit, miss = c.get("hit", 0), c.get("miss", 0)
+    parts = [f"{card['proposals']} 份提案：兑现 {hit}、落空 {miss}、"
+             f"待观察 {c.get('pending', 0)}、没法评 {c.get('unable', 0)}、"
+             f"还没走到评估 {c.get('unevaluated', 0)}。"]
+    if hit + miss == 0:
+        parts.append("还没有一份走完兑现窗口 —— 现在下任何结论都太早。")
+    else:
+        real = card.get("decided_with_real_money", 0)
+        parts.append(f"其中真金白银定论的只有 {real} 条"
+                     f"（其余是纸面模拟，**不算真钱兑现**）。"
+                     f"样本远不足以下统计结论，当定性参考看。")
+    return " ".join(parts)

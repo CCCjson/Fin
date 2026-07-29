@@ -1608,6 +1608,23 @@ class CryptoStrategyProposal(Base):
     decided_at = Column(DateTime)
     decision_note = Column(Text)                     # Jason 拒绝/批准时的一句话
 
+    # ── 后验：断言兑现了吗（S4）──
+    # ⛔ **不复用 `common/outcome_eval.py`**：那个内核评的是「一条建议的入场价 vs 未来
+    # 价」，而提案没有 symbol、没有 entry_price、没有 bar，窗口也是自然日不是交易日。
+    # 硬塞进去只会把已经被 P0-4 焊过两遍的内核再撬开一次。判定在
+    # `crypto_strategy/proposal_outcome.py`，版本号独立。
+    actual_return_pct = Column(Float)                # 窗口内实际收益（小数）
+    actual_win_rate = Column(Float)                  # 窗口内实际胜率（0-1）
+    outcome = Column(String(12), index=True)         # hit | miss | pending | unable
+    # 🔴 **证据的成色**：live_fills=真金白银 / paper_simulated=理想撮合的模拟账。
+    # 不存这一列的话，「纸面跑出来的 hit」和「真钱赚出来的 hit」在库里、在
+    # `list_strategy_proposals`、在 scorecard 的分桶里**长得一模一样** ——
+    # 而项目自己的铁律是「`basis` 一定要跟着数字一起读」。
+    outcome_basis = Column(String(20))
+    unable_reason = Column(String(40))               # 算不出来时的原因
+    evaluated_at = Column(DateTime)
+    engine_version = Column(String(32))              # 判定口径版本，改判定必须 bump
+
     # naive UTC（见文件头）
     created_at = Column(DateTime, default=utc_now)
 
