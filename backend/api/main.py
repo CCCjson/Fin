@@ -133,6 +133,34 @@ async def health_check():
 @app.on_event("startup")
 async def startup_event():
     """应用启动事件"""
+    # ⚠️ **第二次** apply_proxy_env（第一次在文件头，import 之前）。
+    #
+    # 两次都必须有，缺一不可：
+    #   - 文件头那次：必须赶在 transformers/huggingface_hub 首次 import 之前，
+    #     否则 HF 校验会走死代理把 http client 搞坏。
+    #   - 这一次：**因为文件头之后的 import 会把代理 env 踩回来**。
+    #     `from api.routes import ...` 链式拉起 `acquisition/config.py`，那里有
+    #     `load_dotenv(override=True)`（全项目六七处），于是 `.env` 里的
+    #     `HTTP_PROXY=http://127.0.0.1:7897` 又回到 os.environ。
+    #
+    # 后果实测过（2026-07-27~31）：Clash 没开时整个进程带着一个指向**死端口**的
+    # 代理，所有读 env 的 HTTP 库（yfinance 的 curl_cffi、requests、akshare…）
+    # 默认都往那儿发 → **港美股日线连着 4 天一条都没更新**，报错还是
+    # `'NoneType' object is not subscriptable`（yfinance 拿到空响应），
+    # 看上去完全不像代理问题。
+    #
+    # 这与 `tests/conftest.py` 里记的 DATABASE_URL 泄漏是**同一个机理**
+    # （那份文档也明写「这样的 override 全项目有六七处」）。
+    #
+    # ⛔ 不违反代理铁律：`apply_proxy_env` 只在 `resolve_proxy()` 判直连时才清，
+    # 而它是自适应的（Clash 活着就返 Clash URL，不清）。国内抓取走快代理
+    # `ProxyManager` 显式传 `proxies=`，压根不读这些 env。
+    try:
+        from net import apply_proxy_env as _reapply
+        _reapply()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"启动期代理 env 同步失败（不影响主服务）: {e}")
+
     # 内存泄漏追踪器（默认关闭；FIN_MEMTRACE=1 才启动，零成本）。放最前面尽早取基线。
     try:
         from memtrace import maybe_start_memtrace

@@ -27,12 +27,20 @@ router = APIRouter(prefix="/data-monitor", tags=["数据监控"])
 
 
 def _asset_realtime(session) -> dict:
-    """实时快照资产状态：最新快照时间 + 该快照条数。"""
+    """实时快照资产状态：最新快照时间 + 该快照条数。
+
+    ⚠️ **条数必须用子查询在 SQL 里比，不能把 max() 取回 Python 再绑回去过滤。**
+    `snapshot_time` 是 DateTime，SQLite 存 `'2026-07-07 05:07:37'`；取回来是
+    `datetime(...)`，再绑回去 SQLAlchemy 渲染成 `'2026-07-07 05:07:37.000000'`
+    —— 带微秒，字符串比不上，**count 恒为 0**。
+    实测：库里明明有 6594 行，这张卡一直显示 0 只。（2026-07-27 修）
+    """
     latest = session.query(func.max(RealtimeSnapshot.snapshot_time)).scalar()
     count = 0
     if latest:
+        newest = session.query(func.max(RealtimeSnapshot.snapshot_time)).scalar_subquery()
         count = session.query(func.count(RealtimeSnapshot.id)).filter(
-            RealtimeSnapshot.snapshot_time == latest
+            RealtimeSnapshot.snapshot_time == newest
         ).scalar() or 0
     return {
         "latest_snapshot": utc_iso(latest),
@@ -95,9 +103,15 @@ def _asset_valuation(session) -> dict:
 
 
 def _asset_news(session) -> dict:
-    """新闻资产状态：总量 + 近 7 天量 + 最新发布时间。"""
+    """新闻资产状态：总量 + 近 7 天量 + 最新发布时间。
+
+    ⚠️ cutoff 必须用 `utc_now()`。`NewsArticle.published_at` 存的是 **naive UTC**
+    （`news_engine/fetcher.py` 写的是 `utc_now()`），拿本地 UTC+8 的
+    `datetime.now()` 当 cutoff 会让窗口右移 8 小时 → **近 7 天条数系统性少算**。
+    时区统一工程（`common/market_time`）的漏网之鱼，2026-07-27 补上。
+    """
     total = session.query(func.count(NewsArticle.id)).scalar() or 0
-    week_ago = datetime.now() - timedelta(days=7)
+    week_ago = utc_now() - timedelta(days=7)
     last_7d = session.query(func.count(NewsArticle.id)).filter(
         NewsArticle.published_at >= week_ago
     ).scalar() or 0
@@ -287,6 +301,153 @@ async def toggle_scheduler(request: SchedulerToggleRequest):
         return daily_pipeline_scheduler.set_enabled(request.enabled)
     except Exception as e:  # noqa: BLE001
         logger.error(f"切换自动更新开关失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ======================================================================
+# 资产注册表 / 运行 / 缺口 / 调度器 —— 数据积累重构新增（doc16）
+#
+# 老端点（/data/update-daily/stream 等）**保留不删**，别处还在用；新面板走这里。
+# ======================================================================
+
+
+@router.get("/assets", summary="数据资产矩阵（注册表快照 + 各自当前状态）")
+async def get_assets():
+    """前端「资产矩阵」的数据源：有哪些资产、各自更新到哪天、健不健康。"""
+    def _work():
+        from data_engine.asset_status import asset_matrix
+        session = get_session()
+        try:
+            return asset_matrix(session)
+        finally:
+            session.close()
+    try:
+        return await asyncio.to_thread(_work)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"资产矩阵查询失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RunRequest(BaseModel):
+    # 资产 key 列表；省略 = 注册表里所有 in_update_all=True 的
+    scope: Optional[list[str]] = None
+    mode: str = "incremental"      # incremental | gap_fill
+
+
+@router.post("/runs", summary="发起一次数据更新（后台任务，关页面不断）")
+async def start_run(request: RunRequest):
+    """「一键更新全部」的入口。立即返回，进度轮询 `/runs/current`。"""
+    from data_engine.update_all_job import update_all_job
+    if request.mode not in ("incremental", "gap_fill"):
+        raise HTTPException(status_code=400, detail=f"未知 mode: {request.mode}")
+    return update_all_job.start(scope=request.scope, mode=request.mode)
+
+
+@router.get("/runs/current", summary="当前/最近一次更新的进度快照")
+async def get_current_run():
+    from data_engine.update_all_job import update_all_job
+    return update_all_job.snapshot()
+
+
+@router.post("/runs/stop", summary="停止当前更新（协作式，跑完当前资产再停）")
+async def stop_run():
+    from data_engine.update_all_job import update_all_job
+    return update_all_job.stop()
+
+
+@router.get("/gaps", summary="数据缺口列表（哪几天本该有数据但没有）")
+async def get_gaps(status: Optional[str] = None, market: Optional[str] = None):
+    def _work():
+        from data_engine.gap_engine import gap_summary, list_gaps
+        session = get_session()
+        try:
+            return {
+                "gaps": list_gaps(session, status=status, market=market),
+                "summary": gap_summary(session),
+            }
+        finally:
+            session.close()
+    try:
+        return await asyncio.to_thread(_work)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"缺口查询失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class GapFillRequest(BaseModel):
+    scan_only: bool = False
+    asset_key: Optional[str] = None
+    lookback_days: Optional[int] = None
+
+
+@router.post("/gaps/scan", summary="扫描 + 自动补齐数据缺口（后台任务）")
+async def scan_and_fill_gaps(request: GapFillRequest):
+    """⛔ 只会自动补 `certain`（基准指数自证）的缺口；`suspected` 的只扫不补。"""
+    from data_engine.gap_job import gap_fill_job
+    return gap_fill_job.start(
+        scan_only=request.scan_only,
+        asset_key=request.asset_key,
+        lookback_days=request.lookback_days,
+    )
+
+
+@router.get("/gaps/job", summary="缺口补齐任务的进度快照")
+async def get_gap_job():
+    from data_engine.gap_job import gap_fill_job
+    return gap_fill_job.snapshot()
+
+
+@router.post("/gaps/job/stop", summary="停止缺口补齐任务")
+async def stop_gap_job():
+    from data_engine.gap_job import gap_fill_job
+    return gap_fill_job.stop()
+
+
+@router.get("/schedulers", summary="全部定时调度器的统一状态")
+async def get_schedulers():
+    """4 个调度器（A股主链 / 港美股 / crypto / 新闻）一次看全。
+
+    此前只有 A 股主链在前端可见可关 —— 港美股 job 明明有独立 cron，
+    界面上既看不到也关不掉。
+    """
+    def _work():
+        from data_engine.scheduler_registry import all_scheduler_status
+        return all_scheduler_status()
+    try:
+        return await asyncio.to_thread(_work)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"调度器状态查询失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/schedulers/{scheduler_id}/toggle", summary="逐个开关调度器")
+async def toggle_one_scheduler(scheduler_id: str, request: SchedulerToggleRequest):
+    from data_engine.scheduler_registry import set_scheduler_enabled
+    try:
+        return await asyncio.to_thread(
+            set_scheduler_enabled, scheduler_id, request.enabled,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"未知调度器: {scheduler_id}")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"切换调度器 {scheduler_id} 失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/calendar", summary="各市场交易日历的建设情况")
+async def get_calendar_status():
+    """判缺口的前提。日历没建起来 → 缺口只能标 suspected，不会自动补。"""
+    def _work():
+        from data_engine.trading_calendar import calendar_status
+        session = get_session()
+        try:
+            return calendar_status(session)
+        finally:
+            session.close()
+    try:
+        return await asyncio.to_thread(_work)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"交易日历状态查询失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -126,6 +126,11 @@ def test_proxy_pool_is_never_a_throwaway_local():
         "data_engine/daily_updater.py",        # 一个 job 一个池（~12min）
         "acquisition/markets/financial.py",    # 同上
         "data_engine/deep_history/a_share_job.py",
+        # 一个补洞 run 一个池，活满整个 run（5200 只 × 一段区间，实测十几分钟），
+        # 所有 worker 共用，在 finally 里 release —— 与 a_share_job 同一个形态。
+        # ⛔ 不是「每请求一个」：`fill_a_share_days` 里 ProxyPool 在 worker 循环
+        # **之外**构造，worker 拿 slot 用完还回去，不是各自新建。
+        "data_engine/gap_fill.py",
     }
     found = set()
     for rel, src in _production_sources():

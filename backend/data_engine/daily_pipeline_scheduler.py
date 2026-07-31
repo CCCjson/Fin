@@ -27,7 +27,6 @@ DailyPipelineScheduler — 每日收盘后自动更新数据链（开机自启�
 """
 import os
 import asyncio
-import json
 from datetime import date, datetime, timedelta
 from typing import List, Dict, Optional
 
@@ -51,6 +50,20 @@ _AUTO_MINUTE = int(os.getenv("DAILY_AUTO_UPDATE_MINUTE", "35"))
 JOB_ID = "daily_data_pipeline"
 CATCHUP_JOB_ID = "daily_data_pipeline_catchup"
 OVERSEAS_JOB_ID = "overseas_daily_update"
+GAP_JOB_ID = "data_gap_autofill"
+
+# ── 缺口自动补齐（2026-07-27 新增，doc16）─────────────────────────────
+#
+# `_catchup_job` 管的是**尾部落后**（最近该有的那天没有）。它对**中间的洞**
+# 结构性失明：07-10~07-15 全空、07-16 跑了一次，覆盖率就满分了，那 4 个交易日
+# 永久是洞而且无声无息。这个 job 专补中间的洞。
+#
+# 启动后延迟多久跑第一次。默认 420s = 7 分钟，**刻意排在 `_CATCHUP_DELAY_SEC`
+# （180s）之后**：尾部补跑可能要跑几分钟，两个都在抢代理池 / Yahoo 锁，串开跑。
+_GAP_STARTUP_DELAY_SEC = int(os.getenv("GAP_AUTOFILL_STARTUP_DELAY", "420"))
+# 之后每隔多少小时再扫补一次。6 小时：一天四次，够快地发现新洞，又不至于把
+# 代理额度耗在反复空扫上（没洞时一次扫描只是几条 SQL，很便宜）。
+_GAP_INTERVAL_HOURS = int(os.getenv("GAP_AUTOFILL_INTERVAL_HOURS", "6"))
 
 # ── 港美股：独立 job、独立时点（2026-07-17 Jason 拍板）─────────────────────
 # **为什么不并进主链**，两个理由：
@@ -154,6 +167,8 @@ class DailyPipelineScheduler:
         self._chain_valuation = _env_bool("DAILY_AUTO_UPDATE_CHAIN_VALUATION", True)
         self._chain_decision_outcome = _env_bool("DAILY_AUTO_UPDATE_CHAIN_DECISION_OUTCOME", True)
         self._overseas_enabled = _env_bool("OVERSEAS_AUTO_UPDATE_ENABLED", True)
+        # 缺口自动补齐（Jason 2026-07-27：「中间有空的天数就自动补齐」）
+        self._gap_autofill_enabled = _env_bool("GAP_AUTOFILL_ENABLED", True)
         self._overseas_last_run: Optional[Dict] = None
         self._overseas_updating = False   # 防重入（定时 + 补跑同时触发）
         # 最近一次链条运行的结果快照（供前端展示）
@@ -198,6 +213,9 @@ class DailyPipelineScheduler:
             "overseas_cron": f"{_OVERSEAS_MINUTE} {_OVERSEAS_HOUR} * * 1-5",
             "overseas_is_updating": self._overseas_updating,
             "overseas_last_run": self._overseas_last_run,
+            # 缺口自动补齐（管中间的洞；尾部落后归 catchup 管，两者分工不重叠）
+            "gap_autofill_enabled": self._gap_autofill_enabled,
+            "gap_autofill_interval_hours": _GAP_INTERVAL_HOURS,
             "next_run": next_run,
             "jobs": jobs,
             "last_run": self._last_run,
@@ -239,6 +257,9 @@ class DailyPipelineScheduler:
         # 只要 A 股/港美股任一开着就要挂 —— 它内部各自判 enabled。
         if self._enabled or self._overseas_enabled:
             self._add_catchup_job(scheduler)
+        # 缺口自动补齐：管**中间的洞**，与 catchup（管尾部）分工不重叠
+        if self._gap_autofill_enabled:
+            self._add_gap_job(scheduler)
         scheduler.start()
         self._running = True
         if self._enabled:
@@ -285,6 +306,31 @@ class DailyPipelineScheduler:
             coalesce=True,
         )
 
+    @staticmethod
+    def _run_overseas_sync() -> Dict:
+        """港美股侧走注册表编排：日历 + 两个市场的日线。
+
+        日历（`calendar.hk_stock` / `calendar.us_stock`）挂在这条链而不是 A 股主链，
+        因为它俩要联网拉 ^HSI / ^GSPC，跟港美股日线是同一批网络条件、同一个时点。
+
+        两个市场共抢一次 Yahoo 锁 —— 深历史回补也在打 Yahoo，同时跑等于双倍请求量，
+        两边都可能被限速（沿用 `update_overseas_daily` 的既有行为）。
+        """
+        from acquisition.markets.yf_batch import yahoo_job_lock
+        from data_engine.orchestrator import run_assets
+        from data_engine.registry import assets_for
+
+        scope = {"calendar.hk_stock", "calendar.us_stock",
+                 "daily.hk_stock", "daily.us_stock"}
+        keys = [a.key for a in assets_for() if a.key in scope]
+        if not keys:
+            return {"skipped": "港美股资产已被 env 关闭"}
+
+        with yahoo_job_lock("港美股每日增量") as ok:
+            if not ok:
+                return {"skipped": "Yahoo 长任务互斥（深历史回补正在跑）"}
+            return run_assets(keys, mode="incremental")
+
     async def _overseas_job(self):
         """港美股增量入口：同步任务丢线程池，绝不阻塞事件循环。"""
         if self._overseas_updating:
@@ -293,8 +339,7 @@ class DailyPipelineScheduler:
         self._overseas_updating = True
         loop = asyncio.get_event_loop()
         try:
-            from data_engine.overseas_daily_updater import update_overseas_daily
-            result = await loop.run_in_executor(None, update_overseas_daily)
+            result = await loop.run_in_executor(None, self._run_overseas_sync)
             self._overseas_last_run = result
             logger.info(f"[港美股增量] 完成: {result}")
         except Exception as e:  # noqa: BLE001 — 定时任务绝不抛出
@@ -302,6 +347,65 @@ class DailyPipelineScheduler:
             self._overseas_last_run = {"ok": False, "error": str(e)}
         finally:
             self._overseas_updating = False
+
+    def _add_gap_job(self, scheduler):
+        """挂缺口自动补齐：启动后延迟一次 + 之后每 N 小时一次。
+
+        ⛔ **不用 cron**。缺口不是「每天某个时点才会出现」的东西 —— 它是历史遗留，
+        什么时候发现什么时候补。用 interval 还能让「开一会儿 App 就关」的用法也
+        有机会补上（cron 只在那一刻活着才触发，这正是当初连丢 6 个交易日的机理）。
+        """
+        from datetime import datetime as _dt
+
+        from apscheduler.triggers.interval import IntervalTrigger
+        scheduler.add_job(
+            self._gap_job,
+            IntervalTrigger(hours=_GAP_INTERVAL_HOURS),
+            id=GAP_JOB_ID,
+            name="数据缺口自动补齐",
+            # 启动即排一次（延迟 _GAP_STARTUP_DELAY_SEC），不等一整个 interval
+            next_run_time=_dt.now() + timedelta(seconds=_GAP_STARTUP_DELAY_SEC),
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            f"缺口自动补齐已挂载（{_GAP_STARTUP_DELAY_SEC}s 后首扫，"
+            f"之后每 {_GAP_INTERVAL_HOURS} 小时一次）"
+        )
+
+    async def _gap_job(self):
+        """扫描 + 自动补齐中间缺口。
+
+        真正的活交给 `gap_fill_job`（`BaseSingletonJob`，自带单例线程 + 可停止 +
+        进度快照）—— 这里只负责「到点了喊一声」，喊完立刻返回，绝不等它跑完。
+        job 自己有防重入（`_launch` 里判线程还活着就拒绝），所以重复触发无害。
+        """
+        if not self._gap_autofill_enabled:
+            return
+        try:
+            from data_engine.gap_job import gap_fill_job
+            result = gap_fill_job.start()
+            if result.get("ok"):
+                logger.info("[缺口自动补齐] 已启动一轮")
+            else:
+                logger.debug(f"[缺口自动补齐] 未启动: {result.get('message')}")
+        except Exception as e:  # noqa: BLE001 — 定时任务绝不抛出
+            logger.exception(f"[缺口自动补齐] 启动异常: {e}")
+
+    def set_gap_autofill_enabled(self, enabled: bool) -> Dict:
+        """运行时开关缺口自动补齐。"""
+        self._gap_autofill_enabled = enabled
+        if self._running and self._scheduler:
+            if enabled:
+                self._add_gap_job(self._scheduler)
+            else:
+                try:
+                    self._scheduler.remove_job(GAP_JOB_ID)
+                except Exception:  # noqa: BLE001
+                    pass
+                logger.info("缺口自动补齐已关闭")
+        return self.get_status()
 
     def _add_catchup_job(self, scheduler):
         """挂一个一次性的启动补跑检查（延迟执行）。"""
@@ -501,7 +605,10 @@ class DailyPipelineScheduler:
             logger.exception(f"[启动补跑] 检查异常: {e}")
 
     def set_enabled(self, enabled: bool) -> Dict:
-        """运行时开关自动更新：动态增删 job，无需改 .env / 重启。"""
+        """运行时开关 **A 股主链**：动态增删 job，无需改 .env / 重启。
+
+        ⚠️ 这只管 `JOB_ID`（A 股主链）。港美股是独立 job，走 `set_overseas_enabled`。
+        """
         self._enabled = enabled
         if self._running and self._scheduler:
             if enabled:
@@ -513,6 +620,27 @@ class DailyPipelineScheduler:
                 except Exception:  # noqa: BLE001 — job 不存在无所谓
                     pass
                 logger.info("自动更新已关闭")
+        return self.get_status()
+
+    def set_overseas_enabled(self, enabled: bool) -> Dict:
+        """运行时开关**港美股日线** job。
+
+        此前只有 `set_enabled`（管 A 股主链），港美股这个独立 job **在界面上既
+        看不到也关不掉** —— `get_status()` 明明返回了 `overseas_enabled` 等字段，
+        但没有任何入口能改它，只能改 .env 重启。补上这个方法后
+        `/data-monitor/schedulers/overseas_daily/toggle` 才有东西可调。
+        """
+        self._overseas_enabled = enabled
+        if self._running and self._scheduler:
+            if enabled:
+                self._add_overseas_job(self._scheduler)
+                logger.info(f"港美股日线已开启（cron={_OVERSEAS_MINUTE} {_OVERSEAS_HOUR} * * 1-5）")
+            else:
+                try:
+                    self._scheduler.remove_job(OVERSEAS_JOB_ID)
+                except Exception:  # noqa: BLE001 — job 不存在无所谓
+                    pass
+                logger.info("港美股日线已关闭")
         return self.get_status()
 
     # ---------- 任务本体 ----------
@@ -534,118 +662,80 @@ class DailyPipelineScheduler:
         finally:
             self._is_updating = False
 
+    def _chain_keys(self) -> List[str]:
+        """A 股主链要跑哪些资产 —— 从注册表取，不再硬编码 6 个步骤。
+
+        ⚠️ **不能直接用 `assets_for(cadence="daily_after_close")`**：那会把港美股
+        日线也捞进来，而它们是独立 job、独立 cron 16:30（港股 16:00 才收盘，
+        15:35 拉到的是没收盘的半截子）。所以这里显式列 A 股侧的 scope。
+
+        `enabled_env` 由注册表各资产自己声明（`DAILY_AUTO_UPDATE_CHAIN_*`），
+        `assets_for(only_enabled=True)` 会替我们过滤掉关掉的那些 —— 原来那六个
+        `if self._chain_xxx` 判断因此不再需要，开关语义完全一致。
+        """
+        from data_engine.registry import assets_for, topo_sort
+        scope = {
+            "calendar.a_share",     # 判缺口的前提，必须在日线之前
+            "daily.a_share",
+            "financial.a_share",    # 新纳入：此前财报**完全没有自动通道**，只能手点
+            "signals",
+            "tracking",
+            "limit_up.a_share",
+            "valuation.a_share",
+            "decision_outcome",
+        }
+        keys = [a.key for a in assets_for() if a.key in scope]
+        return topo_sort(keys)
+
     def _run_pipeline_sync(self) -> Dict:
-        """同步执行整条链（在线程池里跑）。每步独立 try，失败不中断后续。"""
+        """同步执行整条链（在线程池里跑）。
+
+        ## 从「硬编码 6 步」改成「注册表驱动」（2026-07-27）
+
+        原来这里是 6 段几乎逐字重复的 `try / for chunk / json.loads / 找 complete
+        事件 / except 记 warning`，每接一个新资产就要再抄一段，而且港美股/crypto/
+        新闻这三条链**根本进不来**（它们在别的 job 里）。
+
+        现在编排交给 `orchestrator.run_assets`：拓扑排序、逐个资产跑、单个失败不
+        中断后续、每个资产写一行 `DataUpdateLog`、跑完发业务事件 —— 全在那一处。
+        本方法只负责「A 股主链该跑哪些资产」这一个决定。
+
+        **行为保持不变的三点**（别在重构里悄悄改掉）：
+          1. 每步独立 try，失败只记 warning 不中断后续
+          2. `decision_outcome` 必须排在日线之后（靠 `depends_on` 保证）
+          3. 跑完发 `PIPELINE_DONE` 业务事件（在 orchestrator 里发）
+        """
         from datetime import datetime
-        summary: Dict = {"ok": True, "steps": {}, "started_at": datetime.now().isoformat()}
 
-        # 1) 更新全市场日线
+        from data_engine.orchestrator import run_assets
+
+        keys = self._chain_keys()
+        logger.info(f"[每日链] 本次将跑 {len(keys)} 个资产: {keys}")
+        started = datetime.now().isoformat()
+        result = run_assets(keys, mode="incremental")
+
+        # 兼容老的返回形状（`steps` 键被 get_status()/前端读着）
+        summary: Dict = {
+            "ok": result.get("ok", True),
+            "steps": result.get("assets", {}),
+            "started_at": started,
+            "completed_at": result.get("completed_at"),
+        }
+
+        # 链跑完顺手扫一遍缺口。**只扫不补** —— 主链已经占着线程池了，补洞可能再
+        # 花十几分钟，串在这儿会把 crypto/新闻那两个 interval job 一起拖慢。
+        # 真正的补齐由 `_gap_job`（独立触发）负责。
         try:
-            from data_engine.daily_updater import DailyUpdater
-            updater = DailyUpdater()
-            complete_event = None
-            for chunk in updater.update_stream():
-                try:
-                    evt = json.loads(chunk)
-                    if evt.get("event") == "complete":
-                        complete_event = evt
-                except (json.JSONDecodeError, TypeError):
-                    continue
-            summary["steps"]["daily"] = complete_event or {"note": "无 complete 事件"}
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[每日链] 日线更新失败: {e}")
-            summary["steps"]["daily"] = {"error": str(e)}
-            summary["ok"] = False
-
-        # 2) 回补缺失信号
-        #
-        # lookback 自适应：按下游标杆实际落后多少天算，而非写死 5 自然日 —— 停机多日后
-        # 5 天的窗口够不着老缺口（`detect_signal_gaps` 用自然日 cutoff）。钳在
-        # [MIN, MAX] 之间：表空/异常兜底用 MAX，防远古触发全历史回填。
-        if self._chain_signals:
+            from data_engine.storage.database import get_session
+            from data_engine.gap_engine import scan_all
+            session = get_session()
             try:
-                from strategy.signal_generator import SignalGenerator
-                # 下游标杆（Signal 表）以 A 股为主，按上海口径问「今天」
-                lookback = self._signal_backfill_lookback(
-                    self._downstream_frontier(), market_today(A_SHARE)
-                )
-                generator = SignalGenerator()
-                complete_event = None
-                for chunk in generator.backfill_signals_stream(
-                    lookback_days=lookback, save_to_db=True, db_only=True, limit=None
-                ):
-                    try:
-                        evt = json.loads(chunk)
-                        if evt.get("event") == "complete":
-                            complete_event = evt
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-                summary["steps"]["signals"] = complete_event or {"note": "无缺口或无 complete 事件"}
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"[每日链] 信号回补失败: {e}")
-                summary["steps"]["signals"] = {"error": str(e)}
-
-        # 3) 更新信号追踪
-        if self._chain_tracking:
-            tracker = None
-            try:
-                from analysis_engine.signal_tracker import SignalTracker
-                tracker = SignalTracker()
-                summary["steps"]["tracking"] = tracker.update_all()
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"[每日链] 信号追踪更新失败: {e}")
-                summary["steps"]["tracking"] = {"error": str(e)}
+                summary["gap_scan"] = scan_all(session)
             finally:
-                if tracker is not None:
-                    tracker.close()
-
-        # 4) 涨停池抓取 + 候选打分（涨停信号预测功能，独立于上面三步，失败不影响主链）
-        try:
-            from limit_up_engine.service import run_daily_prediction
-            summary["steps"]["limit_up"] = run_daily_prediction()
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[每日链] 涨停池抓取/打分失败: {e}")
-            summary["steps"]["limit_up"] = {"error": str(e)}
-
-        # 5) 刷新全市场估值快照（PE/PB/市值，供选股器 + 数据监控「估值」卡片用）
-        if self._chain_valuation:
-            try:
-                from scripts.backfill_valuation import refresh_all_valuations
-                summary["steps"]["valuation"] = refresh_all_valuations()
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"[每日链] 估值快照刷新失败: {e}")
-                summary["steps"]["valuation"] = {"error": str(e)}
-
-        # 6) 回填 AI 建议的后验结果（「上周说买茅台，对了吗」）
-        #
-        # ⚠️ **必须排在第 1 步「更新日线」之后** —— 回填读 DailyQuote 判建议日之后的
-        # 走势，放前面会永远少最新一根 bar。（实测过：库里行情停在 07-09 时，07-10 发的
-        # 建议全判 no_quotes；那是**可重试**的 unable，等日线更新完这一步就能评出来。）
-        #
-        # 不出网：直接 ORM 查 DailyQuote，不走 DataEngine.get_daily_data（那条路在库里
-        # 没数据时会自动联网拉）。
-        if self._chain_decision_outcome:
-            try:
-                from decision_log import backfill_outcomes
-                summary["steps"]["decision_outcome"] = backfill_outcomes()
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"[每日链] 决策后验回填失败: {e}")
-                summary["steps"]["decision_outcome"] = {"error": str(e)}
-
-        summary["completed_at"] = datetime.now().isoformat()
-
-        # 发业务事件（汇聚到总线，供 MoneyBill 读 / 前端活动流展示）
-        try:
-            from business_events import publish_event, PIPELINE_DONE
-            steps = summary.get("steps", {})
-            publish_event(
-                PIPELINE_DONE, source="scheduler",
-                severity=("warn" if not summary.get("ok") else "info"),
-                title=("每日数据更新链完成" if summary.get("ok") else "每日数据更新链完成（有步骤失败）"),
-                ok=summary.get("ok"), steps=list(steps.keys()),
-            )
-        except Exception:  # noqa: BLE001
-            pass
+                session.close()
+        except Exception as e:  # noqa: BLE001 — 扫描失败不该影响主链结论
+            logger.warning(f"[每日链] 缺口扫描失败: {e}")
+            summary["gap_scan"] = {"error": str(e)}
 
         return summary
 

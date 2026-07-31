@@ -82,6 +82,15 @@ export interface SchedulerStatus {
   next_run: string | null;
   jobs: { id: string; name: string; next_run: string | null }[];
   last_run: Record<string, any> | null;
+  /** 港美股是**独立 job**（独立 cron 16:30）。后端一直返回这些字段，
+   *  但此前前端既没声明也没渲染 —— 于是那个 job 在界面上不可见不可关。 */
+  overseas_enabled?: boolean;
+  overseas_cron?: string;
+  overseas_is_updating?: boolean;
+  overseas_last_run?: Record<string, any> | null;
+  /** 缺口自动补齐（管中间的洞；尾部落后归 catch_up 管） */
+  gap_autofill_enabled?: boolean;
+  gap_autofill_interval_hours?: number;
 }
 
 export interface CatchUpInfo {
@@ -100,6 +109,156 @@ export interface MonitorOverview {
   catch_up?: CatchUpInfo;
   server_time: string;
 }
+
+// ==================== 资产矩阵（doc16 新增）====================
+
+export type AssetHealth = 'ok' | 'warn' | 'stale' | 'unknown';
+
+export interface AssetCell {
+  key: string;
+  label: string;
+  group: 'calendar' | 'quote' | 'fundamental' | 'sentiment' | 'derived';
+  market: string | null;
+  cadence: 'daily_after_close' | 'interval' | 'on_demand';
+  enabled: boolean;
+  in_update_all: boolean;
+  supports_gap_fill: boolean;
+  hint: string;
+  latest_date: string | null;
+  count_at_latest: number | null;
+  detail: string;
+  behind_trading_days: number | null;
+  gaps_certain: number;
+  gaps_suspected: number;
+  health: AssetHealth;
+  health_reason: string;
+  last_run: {
+    status: string;
+    completed_at: string | null;
+    records: number | null;
+    duration_seconds: number | null;
+  } | null;
+}
+
+export interface AssetMatrix {
+  cells: AssetCell[];
+  overall_health: AssetHealth;
+  markets: string[];
+  groups: string[];
+  server_time: string;
+}
+
+// ==================== 运行进度（后台任务）====================
+
+export interface AssetProgress {
+  label: string;
+  market: string | null;
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'partial';
+  current: number;
+  total: number | null;
+  updated: number;
+  failed: number;
+  records: number;
+  fresh_skipped: number;
+  note: string;
+}
+
+export interface RunSnapshot {
+  /** idle / running / stopping / stopped / done */
+  status: string;
+  total_all: number;
+  done_total: number;
+  processed_this_run: number;
+  rate_per_min: number;
+  eta_seconds: number | null;
+  elapsed_seconds: number;
+  recent: { symbol: string; name: string; status: string; rows: number; at: string }[];
+  config: Record<string, any>;
+  mode: string;
+  planned: string[];
+  current_asset: string | null;
+  asset_progress: Record<string, AssetProgress>;
+  results: Record<string, Record<string, any>>;
+  /** start/stop 调用时附带 */
+  ok?: boolean;
+  message?: string;
+}
+
+// ==================== 缺口 ====================
+
+export interface GapRow {
+  id: number;
+  asset: string;
+  market: string;
+  date: string | null;
+  /** open=待补 / filling=补齐中 / filled=已补上 / permanent=实测认定为假期 / suspected=疑似（无日历） */
+  status: 'open' | 'filling' | 'filled' | 'permanent' | 'suspected';
+  /** certain=基准指数自证（可自动补）/ suspected=工作日启发式（只展示不补） */
+  confidence: 'certain' | 'suspected';
+  attempts: number;
+  observed_count: number | null;
+  expected_count: number | null;
+  note: string | null;
+}
+
+export interface GapSummary {
+  total: number;
+  fillable: number;
+  by_asset: {
+    asset: string;
+    market: string;
+    certain: number;
+    suspected: number;
+    dates: string[];
+  }[];
+}
+
+export interface GapsResponse {
+  gaps: GapRow[];
+  summary: GapSummary;
+}
+
+export interface GapJobSnapshot extends RunSnapshot {
+  phase: 'idle' | 'scanning' | 'filling';
+  current_asset: string | null;
+  gaps_found: number;
+  gaps_fillable: number;
+  days_filled: number;
+  days_permanent: number;
+  scan_result: Record<string, any> | null;
+  fills: Record<string, any>[];
+}
+
+// ==================== 调度器 ====================
+
+export interface SchedulerRow {
+  id: string;
+  label: string;
+  description?: string;
+  enabled: boolean | null;
+  running: boolean | null;
+  is_updating: boolean | null;
+  cron: string | null;
+  next_run: string | null;
+  last_run: Record<string, any> | null;
+  toggleable: boolean;
+  toggle_hint?: string;
+  error?: string;
+}
+
+// ==================== 交易日历 ====================
+
+export interface CalendarStatus {
+  [market: string]: {
+    benchmark: string | null;
+    days: number | null;
+    first_date: string | null;
+    latest_date: string | null;
+    note?: string;
+  };
+}
+
+// ==================== 涨停池 ====================
 
 export interface LimitUpBoardRow {
   symbol: string;
@@ -141,7 +300,7 @@ export interface FinancialBackfillBody {
   start_year?: string;
 }
 
-// 日线更新流式事件（复用 DailyUpdater.update_stream 的 NDJSON）
+// 日线更新流式事件（老端点用，保留）
 export interface BackfilledStock {
   symbol: string;
   name: string;
@@ -160,46 +319,38 @@ export interface UpdateStreamEvent {
   backfilled_count?: number;
   backfilled_stocks?: BackfilledStock[];
   message?: string;
-  /** 慢路径重入队重试累计次数（代理故障时会持续增长） */
   retries?: number;
-  /** 代理池熔断状态：closed=正常 / open=降级直连试探 / dead=直连也不可用 */
   proxy_state?: 'closed' | 'open' | 'dead';
-  /** 人读的当前状态说明，如「代理连接失败，重试中…」 */
   note?: string;
-  /** 时间驱动的心跳帧标记（计数可能与上一帧相同，仅用于告诉前端后端还活着） */
   heartbeat?: boolean;
-  /** complete 事件：本次任务是否因熔断/静默超时被中止 */
   aborted?: boolean;
-  /** complete 事件：中止原因 */
   abort_reason?: 'proxy_pool_dead' | 'stalled' | 'workers_exited' | string;
   [k: string]: any;
 }
 
-// 统一新鲜度接口 GET /data/freshness（按 market 分栏，含 crypto）
 export interface MarketFreshness {
   market: string;
-  reference_date: string | null;   // 该市场最近一个覆盖达标的交易日/自然日
+  reference_date: string | null;
   coverage_ratio_of_baseline: number | null;
-  is_stale: boolean;               // 落后 >= 阈值天数
+  is_stale: boolean;
   version?: string;
 }
 
 export interface FreshnessReport {
-  latest_date: string | null;      // ⚠️ 全局仅聚合股票三市场（不含 crypto）
+  latest_date: string | null;
   today: string;
-  is_stale: boolean;               // ⚠️ 同上，仅股票三市场
+  is_stale: boolean;
   is_weekday: boolean;
-  by_market: Record<string, MarketFreshness>;  // 含 a_share/hk_stock/us_stock/crypto
+  by_market: Record<string, MarketFreshness>;
   version?: string;
 }
 
-// 统一刷新流式事件 POST /data/refresh/stream（事件带 market 字段区分市场）
 export interface RefreshStreamEvent {
   event: 'plan' | 'start' | 'progress' | 'complete' | 'error' | 'skipped' | 'all_complete';
-  market?: string;                 // plan/all_complete 无 market；其余中途事件都带
-  markets?: string[];              // plan 事件
-  freshness?: FreshnessReport;     // plan 事件快照
-  summary?: Record<string, any>;   // all_complete 事件
+  market?: string;
+  markets?: string[];
+  freshness?: FreshnessReport;
+  summary?: Record<string, any>;
   total?: number;
   current?: number;
   symbol?: string;
@@ -214,11 +365,69 @@ export interface RefreshStreamEvent {
   [k: string]: any;
 }
 
+// ==================== NDJSON 流工具 ====================
+
+async function consumeNdjson(
+  url: string,
+  init: RequestInit,
+  onEvent: (event: any) => void,
+): Promise<void> {
+  const response = await authFetch(url, init);
+  if (!response.ok || !response.body) {
+    throw new Error(`请求失败: ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        onEvent(JSON.parse(line));
+      } catch (e) {
+        console.warn('解析流式事件失败:', line, e);
+      }
+    }
+  }
+}
+
 // ==================== 服务 ====================
 
 export const dataMonitorService = {
   getOverview: (): Promise<MonitorOverview> => api.get('/data-monitor/overview'),
 
+  // ---- 资产矩阵 ----
+  getAssets: (): Promise<AssetMatrix> => api.get('/data-monitor/assets'),
+
+  // ---- 一键更新全部（后台任务，关页面不断）----
+  startRun: (body: { scope?: string[]; mode?: 'incremental' | 'gap_fill' } = {}):
+    Promise<RunSnapshot> => api.post('/data-monitor/runs', body),
+  getRun: (): Promise<RunSnapshot> => api.get('/data-monitor/runs/current'),
+  stopRun: (): Promise<RunSnapshot> => api.post('/data-monitor/runs/stop'),
+
+  // ---- 缺口 ----
+  getGaps: (params?: { status?: string; market?: string }): Promise<GapsResponse> =>
+    api.get('/data-monitor/gaps', { params }),
+  scanGaps: (body: { scan_only?: boolean; asset_key?: string; lookback_days?: number } = {}):
+    Promise<GapJobSnapshot> => api.post('/data-monitor/gaps/scan', body),
+  getGapJob: (): Promise<GapJobSnapshot> => api.get('/data-monitor/gaps/job'),
+  stopGapJob: (): Promise<GapJobSnapshot> => api.post('/data-monitor/gaps/job/stop'),
+
+  // ---- 调度器（4 个，逐个开关）----
+  getSchedulers: (): Promise<{ schedulers: SchedulerRow[] }> =>
+    api.get('/data-monitor/schedulers'),
+  toggleScheduler2: (id: string, enabled: boolean): Promise<{ schedulers: SchedulerRow[] }> =>
+    api.post(`/data-monitor/schedulers/${id}/toggle`, { enabled }),
+
+  // ---- 交易日历 ----
+  getCalendar: (): Promise<CalendarStatus> => api.get('/data-monitor/calendar'),
+
+  // ---- 老端点（别处仍在用，保留）----
   toggleScheduler: (enabled: boolean): Promise<SchedulerStatus> =>
     api.post('/data-monitor/scheduler/toggle', { enabled }),
 
@@ -227,111 +436,49 @@ export const dataMonitorService = {
 
   getLimitUpDetail: (): Promise<LimitUpDetail> => api.get('/data-monitor/limit-up/detail'),
 
-  /** 三市场（+加密只读）新鲜度：更新到哪个交易日、是否落后。只读、不触发更新 */
   getFreshness: (): Promise<FreshnessReport> => api.get('/data/freshness'),
 
-  /** 统一流式刷新三市场行情（scope 省略=三股票市场全刷；crypto 不走这里，靠 7×24 调度器） */
-  refreshMarkets: async (
+  refreshMarkets: (
     scope: string[] | undefined,
     onEvent: (event: RefreshStreamEvent) => void,
     signal?: AbortSignal,
-  ): Promise<void> => {
-    const response = await authFetch(`${API_BASE}/data/refresh/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(scope && scope.length ? { scope } : {}),
-      signal,
-    });
-    if (!response.ok || !response.body) {
-      throw new Error(`刷新请求失败: ${response.status}`);
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          onEvent(JSON.parse(line));
-        } catch (e) {
-          console.warn('解析刷新事件失败:', line, e);
-        }
-      }
-    }
-  },
+  ): Promise<void> =>
+    consumeNdjson(
+      `${API_BASE}/data/refresh/stream`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(scope && scope.length ? { scope } : {}),
+        signal,
+      },
+      onEvent,
+    ),
 
-  /** 手动触发全市场日线更新，NDJSON 流式解析（复用 agentService 的 reader 循环） */
-  streamUpdate: async (
+  streamUpdate: (
     onEvent: (event: UpdateStreamEvent) => void,
     signal?: AbortSignal,
-  ): Promise<void> => {
-    const response = await authFetch(`${API_BASE}/data/update-daily/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal,
-    });
-    if (!response.ok || !response.body) {
-      throw new Error(`更新请求失败: ${response.status}`);
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          onEvent(JSON.parse(line));
-        } catch (e) {
-          console.warn('解析更新事件失败:', line, e);
-        }
-      }
-    }
-  },
+  ): Promise<void> =>
+    consumeNdjson(
+      `${API_BASE}/data/update-daily/stream`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal },
+      onEvent,
+    ),
 
-  /** 触发全市场财务数据回补，NDJSON 流式解析（协议同 streamUpdate） */
-  streamFinancialBackfill: async (
+  streamFinancialBackfill: (
     body: FinancialBackfillBody,
     onEvent: (event: UpdateStreamEvent) => void,
     signal?: AbortSignal,
-  ): Promise<void> => {
-    const response = await authFetch(`${API_BASE}/data/financial/backfill/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal,
-    });
-    if (!response.ok || !response.body) {
-      throw new Error(`财务回补请求失败: ${response.status}`);
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          onEvent(JSON.parse(line));
-        } catch (e) {
-          console.warn('解析财务回补事件失败:', line, e);
-        }
-      }
-    }
-  },
+  ): Promise<void> =>
+    consumeNdjson(
+      `${API_BASE}/data/financial/backfill/stream`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      },
+      onEvent,
+    ),
 };
 
 export default dataMonitorService;
