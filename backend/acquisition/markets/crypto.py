@@ -119,32 +119,65 @@ class CryptoFetcher(BaseFetcher):
 
         单个走 `?symbol=`，多个走 `?symbols=["A","B"]`（币安支持的紧凑 JSON 数组）。
         全市场拉取（几千对、几百 KB）在热报价路径上白烧带宽/延迟/代理额度。
+
+        🔴 **走 `/ticker/24hr` 而不是 `/ticker/price`**（S6）：后者只有 `price`，
+        **没有涨跌幅**。而 `price_alert_monitor` 的 `pct_change` 类型预警只看
+        `change_percent` —— 只给价的话，crypto 的涨跌幅预警会从「拿不到行情」
+        变成「拿到了但字段是 None」，**更隐蔽地恒不触发**。
+        24hr 一次调用把价和涨跌幅一起给了，不用发两次。
         """
         try:
             if not symbols:
                 return []
             bn_list = [to_binance_symbol(s) for s in symbols]
             if len(bn_list) == 1:
-                data = self._get("/api/v3/ticker/price", {"symbol": bn_list[0]})
+                data = self._get("/api/v3/ticker/24hr", {"symbol": bn_list[0]})
                 rows = [data] if isinstance(data, dict) else (data or [])
             else:
                 symbols_param = json.dumps(bn_list, separators=(",", ":"))
-                data = self._get("/api/v3/ticker/price", {"symbols": symbols_param})
+                data = self._get("/api/v3/ticker/24hr", {"symbols": symbols_param})
                 rows = data or []
-            out = []
-            for row in rows:
-                bn = row.get("symbol")
-                if not bn:
-                    continue
-                out.append({
-                    "symbol": f"{bn}.BN",
-                    "price": float(row.get("price", 0)),
-                    "market": CRYPTO,
-                })
-            return out
+            return [q for q in (self._quote_row(r) for r in rows) if q]
         except Exception as e:
             logger.error(f"获取实时行情失败: {e}")
             raise
+
+    @staticmethod
+    def _quote_row(row: dict) -> dict | None:
+        """币安 24hr 行 → 行情 dict。
+
+        ⛔ **缺字段留 None，不用 0 顶替**（同 `quote_router._canonical` 的口径）：
+        「今天平盘」与「源没给这个字段」在归一化的第一跳就必须可分辨，
+        否则 `0 >= 5%` 永远不触发，而且看不出来。
+        """
+        bn = row.get("symbol")
+        if not bn:
+            return None
+
+        def _f(key: str) -> float | None:
+            v = row.get(key)
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        return {
+            "symbol": f"{bn}.BN",
+            # ⛔ **只认 24hr 的 `lastPrice`**。此前还兼容 `/ticker/price` 的 `price`，
+            # 那纯粹是为了让旧测试继续绿 —— 代价是收到一个缺 `lastPrice` 的畸形回包时，
+            # 解析器会安静地去找一个 24hr 端点根本不存在的字段，
+            # 把「字段缺失」变成「值是 None」。为测试放宽生产解析器的容错面是反的。
+            "price": _f("lastPrice"),
+            "change": _f("priceChange"),
+            "change_percent": _f("priceChangePercent"),
+            "volume": _f("volume"),
+            "amount": _f("quoteVolume"),
+            "open": _f("openPrice"),
+            "high": _f("highPrice"),
+            "low": _f("lowPrice"),
+            "prev_close": _f("prevClosePrice"),
+            "market": CRYPTO,
+        }
 
     # ── 多周期 K 线（4h 确认用）────────────────────────────────────────
     def fetch_bars(self, symbol: str, interval: str = "4h", limit: int = 500) -> list[dict]:
@@ -165,6 +198,11 @@ class CryptoFetcher(BaseFetcher):
         """24 小时行情统计（流动性闸用 `quote_volume`，即 24h 成交额 USDT）。"""
         bn = to_binance_symbol(symbol)
         d = self._get("/api/v3/ticker/24hr", {"symbol": bn}) or {}
+        # ⚠️ 这里的 `or 0` 是**流动性闸**专用的口径：那道闸问的是「成交额够不够大」，
+        # 缺字段当 0 = 保守地不放行，是安全方向。
+        # ⛔ 别把这个口径抄去做行情：那边缺字段必须留 None（见 `_quote_row`），
+        # 否则 `change_percent=0` 会让涨跌幅预警恒不触发。同一个端点、两种口径，
+        # 是因为**两处对「缺失」的安全方向相反**。
         return {
             "symbol": f"{bn}.BN",
             "quote_volume": float(d.get("quoteVolume") or 0),

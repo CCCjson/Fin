@@ -1,6 +1,10 @@
-"""点/批量 A股实时行情的多源故障转移收口。
+"""点/批量实时行情的**跨市场**统一出口（S6 之前只管 A 股）。
 
-`fetch_quotes(symbols)` 按优先级链逐级取数、**逐 symbol 补缺口**，拿全即收工：
+`fetch_quotes(symbols)` 按 symbol 推市场分发：沪深走下面这条多源链，
+港股/美股/crypto 走各自 fetcher 的 `fetch_realtime`，输出归一到同一个形状。
+`fetch_quotes_detailed` 额外给出**缺失清单**（取不到 ≠ 闭市没取，两者分开报）。
+
+沪深链按优先级逐级取数、**逐 symbol 补缺口**，拿全即收工：
 
     1. 腾讯 qt.gtimg   —— 批量 ~500/请求，字段最全，实测最稳
     2. 新浪 hq.sinajs  —— 批量 ~800/请求，缺 PE/PB/市值
@@ -38,6 +42,7 @@ from acquisition.markets.china_batch_quotes import (
     _parse_tencent_line,
     _to_prefixed,
 )
+from common.market import A_SHARE
 from net import ProxyExhaustedError, domestic_rotate, make_domestic_session
 
 # 源执行体：收 (symbols, proxies) 返回 canonical 行；单参闭包给 domestic_rotate。
@@ -244,14 +249,117 @@ def _dispatch(runner: SourceRunner, want: list[str]) -> _Batch:
 
 
 def fetch_quotes(symbols: list[str]) -> list[dict[str, Any]]:
-    """按 symbols 取 A股/指数实时行情，多源逐级补缺口。
+    """按 symbols 取**四个市场**的实时行情，归一到同一个 canonical 形状。
 
-    只处理沪深标的（`.SH`/`.SZ`）；HK/US 忽略，交由各自 fetcher。指数靠 secid /
-    sh-sz 前缀天然消歧（000001.SH 上证指数 vs 000001.SZ 平安银行 不串号）。
+    🔴 **S6 之前这个函数只认 `.SH/.SZ`**，其余 symbol 在第一行就被静默过滤掉。
+    而它是四个功能共用的取价出口，于是港股/美股/crypto 在这四处全部静默降级：
+
+    | 消费方 | 症状 |
+    |---|---|
+    | `price_alert_monitor` | 预警**不告警、不报错、不写日志** |
+    | `position_guardian` | **止损守护全瞎**（这是风控，比预警更严重） |
+    | `portfolio_tools` | 盘中持仓估值退回 EOD |
+    | `intraday_tools` | 盘中查价拿不到 |
+
+    每个市场其实都有 `fetch_realtime`，缺的**只是这个路由分发**。
 
     Returns:
-        canonical 形状的行情列表（`symbol` 唯一）。全源皆失败时返回已拿到的部分
-        （可能为空）——调用方按「空=稍后重试」处理，与旧行为一致。
+        canonical 形状的行情列表（`symbol` 唯一）。
+        ⚠️ **取不到的 symbol 不会静默消失**：走 `fetch_quotes_detailed` 能拿到
+        缺失清单。这个函数保持只返回列表，是为了不动四个既有调用方的签名。
+    """
+    return fetch_quotes_detailed(symbols)["quotes"]
+
+
+def fetch_quotes_detailed(symbols: list[str]) -> dict[str, Any]:
+    """同 `fetch_quotes`，但**把缺失说出来**。
+
+    ⛔ 「少一行」是这一整张卡要消灭的东西：四个消费方现在的 `continue` /
+    `if not quote` 全是在替静默缺失兜底，而兜底的结果就是 P1-4 记录的
+    「不告警、不报错、不写日志」。
+
+    Returns:
+        `{quotes, missing, skipped_closed, by_market}`
+        —— `skipped_closed` = 因为市场闭市**刻意没去取**的（不是失败）。
+    """
+    from common.market import infer_market_from_symbol
+
+    # ⚠️ 惰性 import 是**测试依赖的**：`tests/acquisition/test_quote_router_multimarket.py`
+    # patch 的是 `common.market_session.is_open`。改成模块级 `from ... import is_open`
+    # 会让那些 patch 静默失效，测试转而读真实时钟 → 变成看日期的 flaky。
+    from common.market_session import is_open
+
+    buckets: dict[str, list[str]] = {}
+    for s in symbols or []:
+        # 去重：同一只票传两次不该发两次请求、也不该在计数里翻倍
+        # （`_fetch_a_share` 内部用 dict 天然去重，非 A 股路径没有）。
+        m = infer_market_from_symbol(s)
+        if s not in buckets.setdefault(m, []):
+            buckets[m].append(s)
+
+    quotes: list[dict[str, Any]] = []
+    missing: list[str] = []
+    skipped: list[str] = []
+    by_market: dict[str, int] = {}
+    for market, syms in buckets.items():
+        # ⭐ **闭市判定对 A 股同样适用**：周末/盘后每次调用照打腾讯→新浪→百度三源，
+        # 而且「A 股休市」会被报成「取不到行情、本轮没有被检查」—— 那句话是错的。
+        if not is_open(market):
+            logger.debug(f"实时行情：{market} 闭市，跳过 {len(syms)} 只（不是失败）")
+            skipped.extend(syms)
+            by_market[market] = 0
+            continue
+        got = _fetch_a_share(syms) if market == A_SHARE else _fetch_via_fetcher(market, syms)
+        quotes.extend(got)
+        by_market[market] = len(got)
+        done = {q.get("symbol") for q in got}
+        missing.extend(s for s in syms if s not in done)
+    if missing:
+        logger.warning(f"实时行情：{len(missing)} 只没取到（例 {sorted(missing)[:5]}）")
+    return {"quotes": quotes, "missing": sorted(missing),
+            "skipped_closed": sorted(skipped), "by_market": by_market}
+
+
+def _fetch_via_fetcher(market: str, symbols: list[str]) -> list[dict]:
+    """非 A 股走各市场自己的 `fetch_realtime`，并归一到 canonical。
+
+    ⚠️ 闭市判定在调用方（`fetch_quotes_detailed`）统一做 —— 四个市场一视同仁，
+    别在这里再来一份。
+    """
+    try:
+        # 同层取 fetcher（`acquisition.markets.factory`），⛔ 别去 import
+        # `data_engine` —— 那是反向依赖（`engines → acquisition → common/net`）。
+        from acquisition.markets.factory import FetcherFactory
+        rows = FetcherFactory.create(market).fetch_realtime(symbols) or []
+    except ProxyExhaustedError as e:
+        # 代理耗尽 ≠ 抓取失败：一个请求都没发出去，重试也没用（铁律：绝不降级直连）。
+        logger.warning(f"实时行情/{market}：代理耗尽，{len(symbols)} 只未取到: {e}")
+        return []
+    except Exception as e:  # noqa: BLE001 — 一个市场取不到不该掀翻其它市场
+        logger.warning(f"实时行情/{market} 取价失败: {e}")
+        return []
+    out = []
+    for r in rows:
+        sym = r.get("symbol")
+        if not sym:
+            continue
+        out.append(_canonical(
+            sym, name=r.get("name"), price=r.get("price"),
+            change=r.get("change"),
+            # yfinance 那条链用的是 `change_percent`，crypto 也统一成它；
+            # 但历史上还有 `change_pct` 的写法，两个都认，别让下游拿到 None。
+            change_percent=r.get("change_percent", r.get("change_pct")),
+            volume=r.get("volume"), amount=r.get("amount"),
+            open_=r.get("open"), high=r.get("high"), low=r.get("low"),
+            prev_close=r.get("prev_close"),
+            source=market, as_of=r.get("as_of")))
+    return out
+
+
+def _fetch_a_share(symbols: list[str]) -> list[dict[str, Any]]:
+    """沪深链：腾讯→新浪→东财→百度，逐 symbol 补缺口。**这条链一个字没动。**
+
+    指数靠 secid / sh-sz 前缀天然消歧（000001.SH 上证指数 vs 000001.SZ 平安银行 不串号）。
     """
     targets = [s for s in symbols if _to_prefixed(s)]
     if not targets:

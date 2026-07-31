@@ -292,11 +292,35 @@ def test_proxy_exhausted_falls_through_to_next_source(monkeypatch):
     assert out[0]["price"] == 1       # 来自新浪，腾讯那轮被跳过
 
 
-def test_non_a_share_symbols_ignored(monkeypatch):
-    """HK/US 不归本 router 管。"""
+def test_non_a_share_symbols_no_longer_touch_the_a_share_chain(monkeypatch):
+    """🔴 这条测试原本断言 `fetch_quotes(["00700.HK","AAPL"]) == []`（「HK/US 不归本
+    router 管」）—— **S6 之后那个前提没了**，港美股现在会被真的路由出去。
+
+    而且它当时只是**碰巧绿**：跑在港股开市时段 + 网络通的机器上，它会真的去调
+    yfinance（日志里能看到 `query2.finance.yahoo.com`），靠 Yahoo 抛异常被兜住才
+    返回 `[]`。⛔ 单元测试不许对外发真实网络请求。
+
+    现在改成断言真正该守的东西：**沪深那条链不会被非沪深标的污染**。
+    """
+    seen = {}
     monkeypatch.setattr(qr, "domestic_rotate", _fake_rotate_direct)
-    monkeypatch.setattr(qr, "_SOURCES", [("腾讯", lambda syms, px: [])])
-    assert qr.fetch_quotes(["00700.HK", "AAPL"]) == []
+    monkeypatch.setattr(qr, "_SOURCES", [
+        ("腾讯", lambda syms, px: seen.setdefault("syms", list(syms)) and [])])
+    monkeypatch.setattr("acquisition.markets.factory.FetcherFactory.create",
+                        lambda market, config=None: _NeverCalled(market))
+    out = qr.fetch_quotes_detailed(["600519.SH", "00700.HK", "AAPL"])
+    assert seen.get("syms") == ["600519.SH"]     # A 股链只看到沪深
+    assert out["by_market"].get("a_share", 0) == 0
+
+
+class _NeverCalled:
+    """非 A 股的 fetcher 在本条测试里不该被调到（闭市或被 patch 掉都算通过）。"""
+
+    def __init__(self, market):
+        self.market = market
+
+    def fetch_realtime(self, symbols):
+        return []
 
 
 def test_every_source_goes_through_domestic_rotate(monkeypatch):

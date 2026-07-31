@@ -43,6 +43,18 @@ def get_intraday_check(symbol: str) -> ToolEnvelope:
     from agents.tools.recommend_tools import _session_phase, _now_sh
     from agents.widgets import metric_cards_widget
 
+    # 🔴 **这个工具整条链路都是 A 股专用的**（S6 复审发现）：
+    #   `_session_phase` 写死上海 9:30-15:00、量比公式的分母 240 是 A 股全天分钟数
+    #   （港股 330、crypto 1440）、分钟线走 pytdx（对港美股必空）。
+    # S6 之前非沪深标的取不到价、工具诚实地拒绝；现在取得到了，**不拦就会出一份
+    # 用 A 股模型算出来的、看起来很自信的错报告**。宁可拒绝。
+    from common.market import A_SHARE, infer_market_from_symbol
+    if infer_market_from_symbol(symbol) != A_SHARE:
+        return ToolEnvelope(business_result="negative", message=(
+            f"盘中体检目前只支持 A 股（{symbol} 不是）。它的量比/涨速/分钟线全都按"
+            f"沪深交易时段和数据源算，套到港美股/crypto 上会给出**系统性错误**的数字。"
+            f"这只票请用 get_cockpit_score 或 analyze_crypto。"))
+
     phase = _session_phase()
     if phase != "intraday":
         return ToolEnvelope(business_result="negative", message=(

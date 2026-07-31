@@ -78,8 +78,15 @@ def build_guard_status() -> Dict[str, Any]:
     if not held:
         return {"positions": [], "note": "当前无持仓"}
 
-    from acquisition.markets.realtime import fetch_quotes_by_symbols
-    quotes = {q["symbol"]: q for q in fetch_quotes_by_symbols([p["symbol"] for p in held])}
+    from acquisition.markets.quote_router import fetch_quotes_detailed
+    _detail = fetch_quotes_detailed([p["symbol"] for p in held])
+    quotes = {q["symbol"]: q for q in _detail["quotes"]}
+    # 🔴 **止损守护拿不到价 = 这只票本轮没有被守护**（S6）。S6 之前这个出口只认
+    # `.SH/.SZ`，港股/美股/crypto 持仓在这里**全瞎**：`price` 退回 EOD、`realtime`
+    # 恒 False、`day_pnl` 恒 None，而且一句日志都没有。这是风控，不能静默。
+    if _detail["missing"]:
+        logger.warning(f"止损守护：{len(_detail['missing'])} 只取不到实时价，"
+                       f"本轮按最近收盘价判（{_detail['missing'][:5]}）")
     stop_pct, tp_pct = _risk_thresholds()
 
     rows = []
@@ -138,6 +145,10 @@ def build_guard_status() -> Dict[str, Any]:
         "stop_loss_pct": -stop_pct * 100,
         "take_profit_pct": tp_pct * 100,
         "guard_running": _is_trading_hours(),
+        # 🔴 取不到实时价的票 = **本轮没有被守护**，必须跟着结果一起说（S6 §1.4）。
+        # 只写 logger 的话，调用方看到的是一份「看起来完整」的持仓风险表。
+        "not_guarded": _detail["missing"],
+        "skipped_closed": _detail["skipped_closed"],
     }
 
 
@@ -155,9 +166,16 @@ def _scan_once() -> List[Dict[str, Any]]:
     if not held:
         return []
 
-    from acquisition.markets.realtime import fetch_quotes_by_symbols
+    from acquisition.markets.quote_router import fetch_quotes_detailed
     symbols = [p["symbol"] for p in held]
-    quotes = {q["symbol"]: q for q in fetch_quotes_by_symbols(symbols)}
+    detail = fetch_quotes_detailed(symbols)
+    quotes = {q["symbol"]: q for q in detail["quotes"]}
+    # 🔴 **这才是产止损/急跌事件的热路径**（`build_guard_status` 只是给 agent 看的）。
+    # 下面那句 `if not q or not q.get("price"): continue` 正是 S6 要消灭的静默：
+    # 一只港股持仓取不到价 → 不产事件、不写日志，与「它今天很安全」完全无法区分。
+    if detail["missing"]:
+        logger.warning(f"止损守护：{len(detail['missing'])} 只取不到实时价，"
+                       f"**本轮没有被守护**（{detail['missing'][:5]}）")
     if not quotes:
         return []
     prev_vols = _prev_day_volumes(symbols)

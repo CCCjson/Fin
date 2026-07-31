@@ -714,29 +714,83 @@ class TestRealtimeOnDemand:
         calls = {}
 
         def fake_get(self, path, params):
-            calls["params"] = params
-            return {"symbol": "BTCUSDT", "price": "50000"}
+            calls["path"], calls["params"] = path, params
+            return {"symbol": "BTCUSDT", "lastPrice": "50000",
+                    "priceChangePercent": "2.5"}
 
         monkeypatch.setattr(CryptoFetcher, "_get", fake_get)
         out = CryptoFetcher().fetch_realtime(["BTCUSDT.BN"])
         assert calls["params"] == {"symbol": "BTCUSDT"}   # 不是空参
+        # 🔴 端点必须是 24hr：/ticker/price **没有涨跌幅**，而 pct_change 类型的
+        # 预警只看 change_percent —— 退回去会让 crypto 涨跌幅预警恒不触发且看不出来。
+        assert calls["path"] == "/api/v3/ticker/24hr"
         assert out[0]["symbol"] == "BTCUSDT.BN"
         assert out[0]["price"] == 50000.0
+        assert out[0]["change_percent"] == 2.5
 
     def test_multi_symbol_uses_symbols_param(self, monkeypatch):
         from acquisition.markets.crypto import CryptoFetcher
         calls = {}
 
         def fake_get(self, path, params):
-            calls["params"] = params
-            return [{"symbol": "BTCUSDT", "price": "50000"},
-                    {"symbol": "ETHUSDT", "price": "3000"}]
+            calls["path"], calls["params"] = path, params
+            return [{"symbol": "BTCUSDT", "lastPrice": "50000",
+                     "priceChangePercent": "2.5"},
+                    {"symbol": "ETHUSDT", "lastPrice": "3000",
+                     "priceChangePercent": "-1.2"}]
 
         monkeypatch.setattr(CryptoFetcher, "_get", fake_get)
         out = CryptoFetcher().fetch_realtime(["BTCUSDT.BN", "ETHUSDT.BN"])
         assert "symbols" in calls["params"]               # 批量走 symbols=[...]
         assert calls["params"]["symbols"] == '["BTCUSDT","ETHUSDT"]'
+        assert calls["path"] == "/api/v3/ticker/24hr"
         assert len(out) == 2
+        assert [q["change_percent"] for q in out] == [2.5, -1.2]
+
+    def test_all_24hr_fields_are_mapped(self, monkeypatch):
+        """逐字段钉死映射 —— 键名写错在生产上表现为「字段安静地变成 None」。"""
+        from acquisition.markets.crypto import CryptoFetcher
+        raw = {"symbol": "BTCUSDT", "lastPrice": "65000", "priceChange": "1500",
+               "priceChangePercent": "2.36", "volume": "1234.5",
+               "quoteVolume": "80000000", "openPrice": "63500",
+               "highPrice": "65500", "lowPrice": "63000",
+               "prevClosePrice": "63500"}
+        monkeypatch.setattr(CryptoFetcher, "_get", lambda s, p, q: raw)
+        q = CryptoFetcher().fetch_realtime(["BTCUSDT.BN"])[0]
+        assert q["price"] == 65000.0
+        assert q["change"] == 1500.0
+        assert q["change_percent"] == 2.36
+        assert q["volume"] == 1234.5
+        assert q["amount"] == 80000000.0
+        assert (q["open"], q["high"], q["low"]) == (63500.0, 65500.0, 63000.0)
+        assert q["prev_close"] == 63500.0
+
+    def test_missing_fields_stay_none_never_zero(self, monkeypatch):
+        """⛔ 缺字段留 None 不用 0 顶替 —— 「今天平盘」与「源没给」必须可分辨，
+        否则 `0 >= 5%` 永远不触发而且看不出来。"""
+        from acquisition.markets.crypto import CryptoFetcher
+        monkeypatch.setattr(CryptoFetcher, "_get",
+                            lambda s, p, q: {"symbol": "BTCUSDT", "lastPrice": "65000"})
+        q = CryptoFetcher().fetch_realtime(["BTCUSDT.BN"])[0]
+        assert q["price"] == 65000.0
+        for k in ("change", "change_percent", "volume", "amount",
+                  "open", "high", "low", "prev_close"):
+            assert q[k] is None, f"{k} 被 0 顶替了"
+
+    def test_unparseable_number_becomes_none_not_zero(self, monkeypatch):
+        from acquisition.markets.crypto import CryptoFetcher
+        monkeypatch.setattr(CryptoFetcher, "_get",
+                            lambda s, p, q: {"symbol": "BTCUSDT", "lastPrice": "65000",
+                                             "priceChangePercent": "n/a"})
+        assert CryptoFetcher().fetch_realtime(["BTCUSDT.BN"])[0]["change_percent"] is None
+
+    def test_row_without_symbol_is_dropped(self, monkeypatch):
+        from acquisition.markets.crypto import CryptoFetcher
+        monkeypatch.setattr(CryptoFetcher, "_get",
+                            lambda s, p, q: [{"lastPrice": "1"},
+                                             {"symbol": "ETHUSDT", "lastPrice": "3000"}])
+        out = CryptoFetcher().fetch_realtime(["BTCUSDT.BN", "ETHUSDT.BN"])
+        assert [q["symbol"] for q in out] == ["ETHUSDT.BN"]
 
     def test_empty_returns_empty(self, monkeypatch):
         from acquisition.markets.crypto import CryptoFetcher

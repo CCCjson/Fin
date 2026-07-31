@@ -81,13 +81,26 @@ class CheckPriceAlertsArgs(BaseModel):
 def check_price_alerts() -> ToolEnvelope:
     """按需扫描。以前靠 automation/price_alert_monitor 盘中每 30s 常驻轮询，
     没有开关也没人看，白烧快代理额度（Jason 2026-07-10 拍板改按需）。"""
-    from automation.price_alert_monitor import _scan_once
+    from automation.price_alert_monitor import scan_with_coverage
 
-    events = _scan_once()
+    r = scan_with_coverage()
+    events = r["events"]
+    # 🔴 **覆盖情况必须跟着结果一起说**（S6 §1.4）：只说「没有预警触发」而不说
+    # 「其中 5 只根本没被检查」，等于把 P1-4 记录的静默失效原样搬到工具层。
+    cover: dict = {"checked": r["checked"]}
+    tail = ""
+    if r["missing"]:
+        cover["not_checked"] = r["missing"]
+        tail += f"⚠️ 其中 {len(r['missing'])} 只**取不到行情、本轮没有被检查**：{r['missing'][:5]}。"
+    if r["skipped_closed"]:
+        cover["skipped_closed"] = r["skipped_closed"]
+        tail += f"另有 {len(r['skipped_closed'])} 只所在市场闭市（不是失败）。"
+
     if not events:
         return ToolEnvelope(
             business_result="negative",
-            message="检查完毕，当前没有预警触发（或没有 active 预警）。")
+            message="检查完毕，当前没有预警触发（或没有 active 预警）。" + tail,
+            data={"triggered_count": 0, "triggered": [], "coverage": cover})
     hits = [{
         "symbol": e["data"]["symbol"], "name": e["data"].get("name"),
         "alert_type": e["data"].get("alert_type"),
@@ -95,7 +108,9 @@ def check_price_alerts() -> ToolEnvelope:
         "price": e["data"].get("price"),
         "message": e["data"].get("message"),
     } for e in events]
-    return ToolEnvelope(data={"triggered_count": len(hits), "triggered": hits})
+    return ToolEnvelope(data={"triggered_count": len(hits), "triggered": hits,
+                              "coverage": cover},
+                        message=(f"{len(hits)} 条预警触发。" + tail) if tail else None)
 
 
 def preview_create_alert(args: dict) -> dict:

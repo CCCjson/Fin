@@ -359,6 +359,8 @@ module = [
   "common.market_freshness",
   # 时间口径真源：纯逻辑、零 DB、零第三方，天生该在强检域里
   "common.market_time",
+  # S6 会话判定：纯逻辑零依赖，判错就是白打接口/漏掉预警
+  "common.market_session",
   "common.outcome_eval",
   # P0-4 留痕分类真源：同上，纯逻辑零依赖
   "common.decision_kind",

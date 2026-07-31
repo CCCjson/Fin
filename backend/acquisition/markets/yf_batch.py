@@ -75,26 +75,36 @@ def configure_yf_proxy() -> None:
 
 
 def _row_from_closes(symbol: str, closes, volumes) -> Dict:
-    """由最近两根日线收盘价计算行情行"""
+    """由最近两根日线收盘价计算行情行。
+
+    🔴 **缺数据留 None，不用 0 顶替**（S6 复审）。此前 `change`/`change_percent`/
+    `volume` 在算不出来时一律写 0，而 S6 之后这些行会直接喂给 `price_alert_monitor`
+    和 `position_guardian` —— 一个看起来像真数据的 `change_percent=0` 会让
+    `pct_change` 预警**恒不触发且看不出来**，比返回 None（下游还能判）更坏。
+    同 `quote_router._canonical` 的口径，那里的 docstring 讲的是同一件事。
+    """
     price = float(closes.iloc[-1])
     if len(closes) >= 2:
         prev = float(closes.iloc[-2])
         change = round(price - prev, 4)
-        change_percent = round((price - prev) / prev * 100, 4) if prev else 0
+        change_percent = round((price - prev) / prev * 100, 4) if prev else None
+        prev_close: float | None = round(prev, 4)
     else:
-        change = 0
-        change_percent = 0
-    volume = 0
+        change = None
+        change_percent = None
+        prev_close = None
+    volume = None
     if volumes is not None and len(volumes):
         try:
             volume = int(volumes.iloc[-1])
         except (TypeError, ValueError):
-            volume = 0
+            volume = None
     return {
         "symbol": symbol,
         "price": round(price, 4),
         "change": change,
         "change_percent": change_percent,
+        "prev_close": prev_close,
         "volume": volume,
         "timestamp": datetime.now().isoformat(),
     }
@@ -107,17 +117,19 @@ def _fast_info_fallback(symbol: str) -> Dict:
     fi = yf.Ticker(symbol).fast_info
     price = float(fi["last_price"])
     prev = float(fi["previous_close"] or 0)
-    change = round(price - prev, 4) if prev else 0
-    change_percent = round((price - prev) / prev * 100, 4) if prev else 0
+    # 同 `_row_from_closes`：拿不到昨收就是拿不到，⛔ 不许写 0 装作「今天平盘」。
+    change = round(price - prev, 4) if prev else None
+    change_percent = round((price - prev) / prev * 100, 4) if prev else None
     try:
         volume = int(fi["last_volume"] or 0)
     except (KeyError, TypeError, ValueError):
-        volume = 0
+        volume = None
     return {
         "symbol": symbol,
         "price": round(price, 4),
         "change": change,
         "change_percent": change_percent,
+        "prev_close": round(prev, 4) if prev else None,
         "volume": volume,
         "timestamp": datetime.now().isoformat(),
     }
@@ -186,6 +198,24 @@ def download_daily_history(yf_symbols: List[str], start: str):
     configure_yf_proxy()
     return yf.download(
         tickers=yf_symbols, start=start, interval="1d",
+        group_by="ticker", threads=True, auto_adjust=False, progress=False,
+    )
+
+
+def download_daily_range(yf_symbols: List[str], start: str, end: str):
+    """批量下载海外日线的**指定区间**（补洞用），返回原始 DataFrame。
+
+    与 `download_daily_history` 的区别只有一个 `end`，但这个区别很值钱：增量场景
+    永远拉到今天，所以那个函数不接右边界；**补洞不接右边界就会白拉一大段** ——
+    补一个 3 周前的洞，每批都会顺带把 3 周到今天全下一遍 × 上万只票。
+
+    ⚠️ yfinance 的 `end` 是**左闭右开**的，要拿到 end 当天那根必须传 end+1 天。
+    这个 +1 由调用方负责（`data_engine/gap_fill.py` 里做了），本函数原样透传。
+    """
+    import yfinance as yf
+    configure_yf_proxy()
+    return yf.download(
+        tickers=yf_symbols, start=start, end=end, interval="1d",
         group_by="ticker", threads=True, auto_adjust=False, progress=False,
     )
 
