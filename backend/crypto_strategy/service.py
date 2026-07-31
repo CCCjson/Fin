@@ -201,17 +201,37 @@ def _assert_armable(row) -> None:
             f"{row.strategy_id} 已退役，不能直接上线。要重新启用请先基于它 fork 一个新版本。")
 
 
-def _apply_backtest(row, bt: dict[str, Any]) -> None:
-    """把回测结果写进策略行 —— `compile_and_persist` 与 `fork_version` 共用一份。"""
-    row.last_backtest_at = utc_now()
-    row.backtest_net_return = bt.get("net_return")
-    row.backtest_metrics = json.dumps(
+def backtest_metrics_json(bt: dict[str, Any]) -> str:
+    """回测结果 → `backtest_metrics` 列的 JSON。**只此一处**，别再抄第二份。
+
+    🔴 **`basis` / `engine_version` 必须落库**（2026-07-31 补）。
+
+    S8 把 `net_return` 的口径从「各币独立收益的算术平均」换成了「组合收益
+    （共享一份资金）」，两者**不可比**。第一版只把这两个标记放在返回值里，
+    落库那层一个字都没留 —— 于是库里 S8 前后的行**结构上无法区分**：
+    同一列 `backtest_net_return`、同一个 JSON、含义已换。
+    谁要是把新旧数字拉出来比大小，会得到一个完全错误的结论而且看不出来。
+    """
+    return json.dumps(
         {"metrics": bt.get("metrics"), "degraded": bt.get("degraded"),
          "degraded_reasons": bt.get("degraded_reasons"),
          # caveats 与 degraded 正交：规则回放了，但数字本身的含义比看上去弱
          # （费率口径对不上 / 大量日子结构上不可能开仓）
          "caveats": bt.get("caveats"),
+         # ⭐ 口径标记：没有它，历史行与新行就分不出来了
+         "basis": bt.get("basis"),
+         "engine_version": bt.get("engine_version"),
+         # 组合口径特有：几天被现金/仓位上限卡住（币数越多越紧）
+         "cash_contention": bt.get("cash_contention"),
+         "cap_contention": bt.get("cap_contention"),
          "per_symbol": bt.get("per_symbol")}, ensure_ascii=False)
+
+
+def _apply_backtest(row, bt: dict[str, Any]) -> None:
+    """把回测结果写进策略行 —— `compile_and_persist` 与 `fork_version` 共用一份。"""
+    row.last_backtest_at = utc_now()
+    row.backtest_net_return = bt.get("net_return")
+    row.backtest_metrics = backtest_metrics_json(bt)
     row.backtest_passed = 1 if bt.get("passed") else 0
     row.status = "backtested"
 
@@ -541,11 +561,9 @@ class CryptoStrategyService:
             bt = self.backtest(spec)
             row.last_backtest_at = utc_now()
             row.backtest_net_return = bt.get("net_return")
-            row.backtest_metrics = json.dumps(
-                {"metrics": bt.get("metrics"), "degraded": bt.get("degraded"),
-                 "degraded_reasons": bt.get("degraded_reasons"),
-                 "caveats": bt.get("caveats"),
-                 "per_symbol": bt.get("per_symbol")}, ensure_ascii=False)
+            # ⚠️ 与 `_apply_backtest` 共用同一个序列化器 —— 这两处从前各抄一份，
+            #    加字段时很容易只改一边（`basis`/`engine_version` 就差点这样漏掉）
+            row.backtest_metrics = backtest_metrics_json(bt)
             row.backtest_passed = 1 if bt.get("passed") else 0
             if row.status in ("draft",):
                 row.status = "backtested"

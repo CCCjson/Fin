@@ -28,7 +28,7 @@ DSL 条件引用的是 `analyze_crypto_symbol` 的 cockpit 聚合量（composite
 from collections.abc import Callable
 from typing import Any
 
-from crypto_intel_engine.backtest import run_crypto_backtest
+from crypto_intel_engine.backtest import run_crypto_portfolio_backtest
 from crypto_intel_engine.dsl import CryptoStrategySpec, round_trip_cost
 from crypto_strategy.replay import METRIC_BACKED_FIELDS
 
@@ -117,20 +117,28 @@ _ENGINE_TAKER_PCT = 0.001
 # 回放覆盖度低于此值就提醒：net_return 被大量「结构上不可能开仓」的日子稀释了
 _MIN_REPLAY_COVERAGE = 0.5
 
+# 🔒 回测里的总仓位上限 = 实盘那条硬风控（必须留 20% 现金）。
+# ⛔ 别为了「让回测数字好看一点」把它调高 —— 那等于让回测承诺一个实盘做不到的收益。
+_MAX_TOTAL_POSITION_PCT = 0.8
+
 
 def run_backtest_gate(
     spec: CryptoStrategySpec,
     bars_by_symbol: dict[str, list[dict[str, Any]]],
     *,
     initial_capital: float = 100000.0,
-    run_bt: Callable = run_crypto_backtest,
+    run_pf: Callable = run_crypto_portfolio_backtest,
     collect: Callable | None = None,
     _matured: set[str] | None = None,
 ) -> dict[str, Any]:
     """对 universe 每个币逐日回放 DSL（成熟原语真评估 + 代理补缺），聚合净费回报。
 
     返回 {passed, net_return, metrics, degraded, degraded_reasons, replay, per_symbol}。
-    passed = 平均净费回报 > 0。run_bt/collect/_matured 可注入以便单测（避开 C++/大数据/查库）。
+    🔴 **口径已于 S8 变更**：从「每个币各发一份完整本金独立跑再把收益率平均」
+    改成**一次组合回测（所有币共享同一份资金）**。`net_return` 因此是**组合收益**，
+    与历史上那个「各币独立收益的平均」**不可比**。见返回里的 `basis`。
+
+    passed = 组合净费回报 > 0。run_pf/collect/_matured 可注入以便单测（避开 C++/大数据/查库）。
     """
     if collect is None:
         from alpha_lab.signal_runner import collect_signals
@@ -144,9 +152,19 @@ def run_backtest_gate(
     cm = spec.cost_model
     proxy_on_bar = _ma_cross_on_bar()
     # C++ 引擎侧强制止损（AI/DSL 的 on_bar 无状态）；滑点走策略假设
-    risk_config = {"enabled": True, "stop_loss_pct": 0.08}
+    # 🔒 `max_total_position_pct=0.8` = **回测里也必须留 20% 现金**（Jason 2026-07-31 拍板：
+    #    回测口径必须跟实盘风控一致）。此前回测能满仓，于是「回测过闸的策略上实盘后
+    #    收益系统性低于预期」—— 高估在先。
+    #    ⚠️ 它与单币上限是**两条独立约束取更严**，引擎里不是 max（见 risk_manager.h）。
+    #    ⚠️ 单币上限走 DSL 的 `per_symbol_exposure_cap_pct`：组合口径下它**第一次真正生效**
+    #    （逐币独立回测时每个币都有完整一份本金，这条约束等于不存在）。
+    risk_config = {
+        "enabled": True,
+        "stop_loss_pct": 0.08,
+        "max_total_position_pct": _MAX_TOTAL_POSITION_PCT,
+        "max_position_pct": spec.position_policy.per_symbol_exposure_cap_pct,
+    }
     per_symbol: list[dict[str, Any]] = []
-    returns: list[float] = []
 
     # 库里已攒够历史的原语算「可回放」——**必须先算**，它决定 on_bar 的形态（代理 vs 真 DSL）
     if _matured is not None:
@@ -161,6 +179,9 @@ def run_backtest_gate(
     evaluated = sorted(used_fields & replayable)
     proxy_used = bool(used_fields - replayable)
 
+    # ── 逐币生成信号（这一步与从前完全一样）──
+    signals_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    usable_bars: dict[str, list[dict[str, Any]]] = {}
     for symbol, bars in bars_by_symbol.items():
         if not bars or len(bars) < _SLOW + 2:
             per_symbol.append({"symbol": symbol, "skipped": "历史不足", "net_return": None})
@@ -172,20 +193,49 @@ def run_backtest_gate(
         frames = _frames_for(symbol, dates, used_fields & matured,
                              load_metric_maps, build_frames)
         on_bar = dsl_on_bar(spec, frames, replayable, proxy_on_bar, date_of=_date_str)
-        signals = collect(on_bar, df)
-        res = run_bt(bars, signals, initial_capital=initial_capital, symbol=symbol,
-                     slippage_pct=cm.slippage_pct, risk_config=risk_config)
-        metrics = (res or {}).get("metrics", res or {})
-        net = _safe(metrics.get("total_return"))
-        per_symbol.append({"symbol": symbol, "net_return": net,
-                           "num_trades": metrics.get("total_trades") or metrics.get("num_trades"),
-                           "sharpe": _safe(metrics.get("sharpe_ratio")),
+        signals_by_symbol[symbol] = collect(on_bar, df)
+        usable_bars[symbol] = bars
+        per_symbol.append({"symbol": symbol,
                            # 这个币有几天真的取到了指标帧（0 = 全靠代理）
                            "replay_days": sum(1 for f in frames.values() if f)})
-        if net is not None:
-            returns.append(net)
 
-    net_return = round(sum(returns) / len(returns), 6) if returns else None
+    # ── 一次组合回测：所有币**共享同一份资金**（S8）──
+    #
+    # 🔴 **这是口径变更，不是优化。**
+    # 从前是「每个币各发一份完整本金独立跑，再把收益率平均」——那样没有资金竞争，
+    # 「A 占了钱 B 就买不了」不会发生，DSL 里的 `per_symbol_exposure_cap_pct`
+    # 也**从来没被验证过**（每个币都能满仓）。现在这些约束第一次真正生效。
+    #
+    # ⚠️ 新旧 `net_return` **不可比**：旧的是「各币独立收益的算术平均」，
+    #    新的是「一个组合的总收益」。历史数字会变，多半变小。
+    #    返回里的 `basis` / `engine_version` 就是给这件事留的标记。
+    portfolio: dict[str, Any] = {}
+    net_return = None
+    if usable_bars:
+        portfolio = run_pf(usable_bars, signals_by_symbol,
+                           initial_capital=initial_capital,
+                           slippage_pct=cm.slippage_pct,
+                           risk_config=risk_config) or {}
+        pm = portfolio.get("metrics") or {}
+        net_return = _safe(pm.get("total_return"))
+        if net_return is not None:
+            net_return = round(net_return, 6)
+        # 逐币成交数从组合结果里回填（组合口径下**没有**逐币收益率这回事：
+        # 一份共享现金拆不出「这个币赚了百分之几」，硬拆出来的数会骗人）
+        fills: dict[str, int] = {}
+        for t in portfolio.get("trades") or []:
+            fills[t.get("symbol")] = fills.get(t.get("symbol"), 0) + 1
+        coverage = portfolio.get("bar_coverage") or {}
+        for row in per_symbol:
+            if row.get("skipped"):
+                continue
+            # ⚠️ **单位变了**：旧口径这里是 `metrics.total_trades`（配对后的
+            #    **回合数**），组合口径下是**成交笔数**（BUY/SELL 各算一笔），
+            #    闭合回合大约翻一倍。同名同位置，别拿新旧值比大小。
+            row["num_trades"] = fills.get(row["symbol"], 0)
+            row["bar_days"] = coverage.get(row["symbol"])
+            # ⛔ 刻意**不给** per-symbol 的 net_return：见上面那段
+            row["net_return"] = None
     degraded_fields = _non_replayable_fields(spec, matured)
     mode = "proxy" if proxy_used and not evaluated else ("hybrid" if proxy_used else "dsl")
     # `degraded` 专指「你的规则没能被逐日回放」（原语不可回放 → 用了双均线代理）。
@@ -217,10 +267,50 @@ def run_backtest_gate(
             f"只有 {coverage:.0%} 的回测日有真实指标帧，其余日子进场条件结构上恒为 False"
             f"（指标历史还没攒够）——net_return 被大量「不可能开仓」的日子稀释，仅供参考")
 
+    # ③ 组合口径特有的诊断，全部**不静默**
+    contention = portfolio.get("cash_contention") or {}
+    cap_contention = portfolio.get("cap_contention") or {}
+    if contention.get("days"):
+        caveats.append(
+            f"有 {contention['days']} 天出现资金竞争（多个币同日抢同一份现金，"
+            f"按名义额等比缩减，累计削掉 {contention.get('trimmed_notional', 0):,.0f} 名义额）"
+            f"——这正是组合口径与「各币独立满仓」最大的差别所在")
+    # ⚠️ 仓位上限竞争与资金竞争是**两件事**：额度卡住时账上现金还剩着，
+    #    上面那条一天都不会记。第一版漏了它，于是「后几个币一单都买不到」全程静默。
+    if cap_contention.get("days"):
+        caveats.append(
+            f"有 {cap_contention['days']} 天被仓位上限卡住（单币上限 "
+            f"{spec.position_policy.per_symbol_exposure_cap_pct:.0%} / 总仓位 "
+            f"{_MAX_TOTAL_POSITION_PCT:.0%}，额度按名义额等比分摊，累计削掉 "
+            f"{cap_contention.get('trimmed_notional', 0):,.0f} 名义额）"
+            f"——币数越多这个约束越紧，net_return 会被它系统性压低")
+    # ⛔ 一单都没下的币要点名。价格缩放失真、信号全空、历史太短都会导致它，
+    #    而在组合里它只表现为「收益率略低」——看不出是哪个币出了问题。
+    silent = [r["symbol"] for r in per_symbol
+              if not r.get("skipped") and not r.get("num_trades")]
+    if silent:
+        caveats.append(
+            f"这些币在整个回测期内**一单都没下**：{'、'.join(silent)} —— "
+            f"它们对组合收益的贡献是 0，先确认是「策略确实没信号」还是数据有问题")
+    if portfolio.get("duplicate_dates"):
+        caveats.append(
+            f"输入数据里有 {portfolio['duplicate_dates']} 根 bar 的日期与同币另一根重复"
+            f"（日线不该有重复日期）——每天只保留了最后一根，数据源要查")
+    if portfolio.get("dropped_stale_orders"):
+        caveats.append(
+            f"{portfolio['dropped_stale_orders']} 笔挂单因所属币的数据半途断了而从未成交")
+
     return {
         "passed": bool(net_return is not None and net_return > 0),
         "net_return": net_return,
-        "metrics": {"avg_net_return": net_return, "symbols_tested": len(returns),
+        # 🔴 **口径标记**：S8 之前这个数是「各币独立收益的算术平均」（每个币各发一份
+        #    完整本金），之后是「一个组合的总收益」（共享一份资金）。两者**不可比**，
+        #    拿新数字跟库里的历史值比大小是没有意义的。S3 竞技场读的就是它。
+        "basis": "portfolio_shared_capital",
+        "engine_version": portfolio.get("engine_version"),
+        "cash_contention": contention,
+        "cap_contention": cap_contention,
+        "metrics": {"portfolio_net_return": net_return, "symbols_tested": len(usable_bars),
                     "round_trip_cost": round(round_trip_cost(cm), 6),
                     "matured_fields": sorted(matured),
                     # 本次真正需要查 crypto_metrics 的字段。空 = replay_coverage 无意义

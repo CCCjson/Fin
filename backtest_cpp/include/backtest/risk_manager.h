@@ -61,7 +61,12 @@ public:
      *    账户结构约束。绑在一起的后果是 `enabled=false`（服务端默认）时
      *    20% 现金保护配了等于没配，且看不出来。
      *
-     * 🔴 调用方在**同一天连发多个买单**时，必须把已放行的名义额**累加进
+     * ⚠️ 这是**下单闸门**，不是**再平衡器**：它只管「不让你买到上限以上」。
+     *    买完之后行情涨上去、持仓占比漂过上限，**不会**触发强制卖出 ——
+     *    那样会在牛市里不停砍掉赢利仓位白交手续费，而且等于规则替人做减仓决策。
+     *    ⛔ 看到「持仓 85% > 80%」先别断定闸门漏了，先看是不是涨出来的。
+     *
+     * 🔴 调用方在**同一天连发多个买单**时，必须把已放行的名义额**累加进**
      *    `total_position_value` 再调下一次** —— 本函数无状态，不会替你扣额度。
      *    否则 N 个买单各自都在 80% 以内、合计却穿到 100%。（踩过）
      *
@@ -76,6 +81,22 @@ public:
         double symbol_position_value = 0.0,
         double total_position_value = 0.0) const;
 
+    /*
+     * 只过 ①（单标的上限）。
+     *
+     * ⭐ 拆出来是因为**两条上限的分配性质完全不同**：
+     *   ① 单标的上限是每个标的自己的事，逐单独立判，顺序无关；
+     *   ② 总仓位上限是**一份公共额度**，同一天多个买单必须**等比分配** ——
+     *      逐单先到先得的话，谁买得到由 std::map 的字母序决定
+     *      （BTC 永远赢、SOL 永远饿死），而且现金没花完时资金竞争那条路
+     *      根本不触发 → 全程静默。这个坑踩过，见 engine.cpp 的 (2b) 段。
+     */
+    int filter_symbol_quantity(
+        int requested_qty,
+        double price,
+        double total_value,
+        double symbol_position_value = 0.0) const;
+
     /* Reset tracking state (call when position is fully closed). */
     void reset_tracking(const std::string& symbol);
 
@@ -85,6 +106,9 @@ public:
     bool has_position_caps() const {
         return config_.max_position_pct < 1.0 || config_.max_total_position_pct < 1.0;
     }
+
+    /* 有没有配总仓位上限（= 有没有现金底线要守）。 */
+    bool has_total_cap() const { return config_.max_total_position_pct < 1.0; }
 
     const RiskConfig& config() const { return config_; }
 

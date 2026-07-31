@@ -567,3 +567,69 @@ TEST(PortfolioEngineTest, ExplicitOddLotSurvivesWhenNoCapReducesIt) {
     ASSERT_EQ(r.trades.size(), 1u);
     EXPECT_EQ(r.trades[0].quantity, 137) << "没有任何上限削它，不该被顺手取整";
 }
+
+// ── 7. 🔴 总仓位额度必须等比分配，不能字母序先到先得 ──────────────────────
+
+TEST(PortfolioEngineTest, TotalCapHeadroomIsSharedProportionallyNotAlphabetically) {
+    /*
+     * 🔴 **审查挖出的 blocker，而且是卡片 §2.1 明令要避免的那件事。**
+     *
+     * 第一版把总仓位额度写成「逐单先到先得」：每放行一单就把名义额累加进
+     * total_pos_now，下一单看到的额度就少了。于是谁买得到**由 std::map 的
+     * 字母序决定** —— 真实 universe 里 BTCUSDT.BN < ETHUSDT.BN < SOLUSDT.BN，
+     * BTC 永远赢、SOL 永远被饿死。
+     *
+     * 实测 8 个币同日各请求 95%（15% 单币 / 80% 总仓）：
+     *   前五个各拿 15%、第六个拿 5%、**最后两个一单都没买到**。
+     *
+     * 更糟的是它能把回测结论翻号：把赢家改个名排到字母表前面，
+     * net_return 从 −2.71% 变 +3.88%，`passed` 跟着从 false 翻 true。
+     */
+    RiskConfig risk;
+    risk.enabled = true;
+    risk.max_position_pct = 0.15;
+    risk.max_total_position_pct = 0.80;
+
+    auto engine = crypto_engine(100000.0, risk);
+    std::map<std::string, std::map<std::string, SignalEntry>> sigs;
+    for (const char* sym : {"AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG", "HHH"}) {
+        engine.load_data(sym, flat_bars(DATES, 10.0));
+        sigs[sym] = {{"2026-01-05", buy(0.95)}};
+    }
+    engine.set_strategy(std::make_unique<PortfolioSignalStrategy>(std::move(sigs)));
+
+    auto r = engine.run();
+
+    std::map<std::string, double> got;
+    for (const auto& f : r.trades) got[f.symbol] += f.price * f.quantity;
+    EXPECT_EQ(got.size(), 8u) << "有币被字母序饿死了（一单都没买到）";
+
+    // 8 个币平分 80% 额度 → 每个约 10%，差异只该来自取整
+    double lo = 1e18, hi = 0.0;
+    for (const auto& [sym, v] : got) { lo = std::min(lo, v); hi = std::max(hi, v); }
+    EXPECT_LT(hi - lo, hi * 0.05) << "分配不均 —— 排在前面的币多吃了";
+}
+
+TEST(PortfolioEngineTest, PositionCapContentionIsReportedSeparatelyFromCash) {
+    /*
+     * ⛔ **额度卡住时账上现金还剩着**，所以 `cash_contention` 一天都不会记。
+     * 第一版就是这样：后几个币一单买不到，而唯一的诊断字段是 0 ——
+     * 整件事全程静默。必须单独一个计数。
+     */
+    RiskConfig risk;
+    risk.enabled = true;
+    risk.max_total_position_pct = 0.5;
+
+    auto engine = crypto_engine(100000.0, risk);
+    std::map<std::string, std::map<std::string, SignalEntry>> sigs;
+    for (const char* sym : {"AAA", "BBB"}) {
+        engine.load_data(sym, flat_bars(DATES, 10.0));
+        sigs[sym] = {{"2026-01-05", buy(0.45)}};   // 合计 90% > 50% 额度
+    }
+    engine.set_strategy(std::make_unique<PortfolioSignalStrategy>(std::move(sigs)));
+
+    auto r = engine.run();
+    EXPECT_GE(r.cap_contention_days, 1) << "被仓位上限削了单，必须记一笔";
+    EXPECT_GT(r.cap_contention_trimmed, 0.0);
+    EXPECT_EQ(r.cash_contention_days, 0) << "现金还剩着，别混成资金竞争";
+}

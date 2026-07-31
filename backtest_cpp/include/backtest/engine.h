@@ -100,6 +100,16 @@ struct BacktestResult {
     double cash_contention_trimmed = 0.0;           // 被削掉的名义额合计
 
     /*
+     * **仓位上限竞争**：总仓位上限的额度不够、多个买单等比分摊的情况。
+     *
+     * 🔴 与上面的资金竞争是**两件事**，必须分开报：额度卡住时账上现金还剩着，
+     * `cash_contention` 一天都不会记 —— 第一版就是这样，于是「后几个币一单都
+     * 买不到」全程静默，还能把回测结论翻号。
+     */
+    int cap_contention_days = 0;
+    double cap_contention_trimmed = 0.0;
+
+    /*
      * 同一标的同一天出现多根 bar 的次数（日线不该有重复日期 = 数据坏了）。
      * ⛔ 引擎只能保留一根，但不静默 —— 按 bar 下标推进的旧实现看不见这件事。
      */

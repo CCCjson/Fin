@@ -107,6 +107,19 @@ int RiskManager::filter_buy_quantity(
  * 直接 static_cast<int> 在 x86 上是 UB → 变成 INT_MIN → 被 max(0,…) 吃成
  * **静默零成交**。crypto 组合回测不做价格缩放时真的会走到这个量级。
  */
+int RiskManager::filter_symbol_quantity(
+    int requested_qty,
+    double price,
+    double total_value,
+    double symbol_position_value) const
+{
+    if (price <= 0.0 || config_.max_position_pct >= 1.0) {
+        return requested_qty;
+    }
+    double headroom = total_value * config_.max_position_pct - symbol_position_value;
+    return std::max(0, std::min(requested_qty, _qty_from_headroom(headroom, price)));
+}
+
 int RiskManager::_qty_from_headroom(double headroom, double price) {
     if (!(headroom > 0.0) || !(price > 0.0)) return 0;
     double qty = headroom / price;

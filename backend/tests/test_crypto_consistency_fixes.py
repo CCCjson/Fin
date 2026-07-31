@@ -94,7 +94,9 @@ class TestBacktestHonesty:
                  "volume": 100.0} for i in range(bar_days)]
         return run_backtest_gate(
             spec, {"BTCUSDT.BN": bars},
-            run_bt=lambda bars, signals, **kw: {"metrics": {"total_return": 0.05}},
+            # S8：口径改成一次组合回测（共享资金池），注入点从 run_bt 变 run_pf
+            run_pf=lambda bars_by_symbol, signals_by_symbol, **kw: {
+                "metrics": {"total_return": 0.05}},
             collect=lambda on_bar, df: [], _matured=set(matured))
 
     def test_fee_mismatch_is_reported(self):

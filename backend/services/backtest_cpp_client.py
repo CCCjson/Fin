@@ -26,15 +26,41 @@ TIMEOUT = 10.0
 BATCH_TIMEOUT = 60.0  # 批量模式超时更长（C++ 服务可能排队）
 
 
+# 🔴 **本机服务绝不走代理**。
+#
+# `.env` 里有 `HTTP_PROXY=http://127.0.0.1:7897`（Clash）且**没有 NO_PROXY**，
+# 而 `load_dotenv(override=True)` 在这个项目里有六七处 —— 只要跑过任意一处，
+# `requests` 就会把 `http://localhost:8002` 也塞进代理。Clash 没开的时候整条
+# C++ 回测链路直接断，报的还是 `ProxyError: Unable to connect to proxy`，
+# 看上去完全不像「回测服务的问题」。
+#
+# ⛔ 这与「国内抓取只准换快代理 IP 重试、不许降级直连」那条铁律**不冲突**：
+#    那条管的是**出网**抓数据；8002 是本机进程间调用，压根没出网。
+_NO_PROXY = {"http": None, "https": None}
+
+
+def _no_proxy() -> dict:
+    """每次调用返回**一份新的** no-proxy 字典。
+
+    ⚠️ 不能直接把上面那个模块级常量传给 requests：
+    `Session.merge_environment_settings` 会对传进来的 dict 做
+    **原地 `setdefault`**，把环境里其它 scheme 的代理塞进去。
+    共用一个常量的话它会随着调用不断长大（实测跑完整套测试后多出了一个
+    `knowledge_overseas` 键）。http/https 仍是 None 所以功能上没坏，
+    但一个会被外部悄悄改写的「常量」迟早会咬人。
+    """
+    return dict(_NO_PROXY)
+
+
 def proxy_sync(method: str, path: str, body: dict | None = None, timeout: float | None = None) -> dict:
     """转发请求到 C++ 服务（同步版本，运行在线程池）"""
     url = f"{CPP_SERVICE_URL}{path}"
     _timeout = timeout or TIMEOUT
     try:
         if method == "GET":
-            resp = requests.get(url, timeout=_timeout)
+            resp = requests.get(url, timeout=_timeout, proxies=_no_proxy())
         elif method == "POST":
-            resp = requests.post(url, json=body or {}, timeout=_timeout)
+            resp = requests.post(url, json=body or {}, timeout=_timeout, proxies=_no_proxy())
         else:
             raise ValueError(f"Unsupported method: {method}")
 
@@ -110,6 +136,55 @@ def run_signals(
         body["risk_config"] = risk_config
 
     return proxy_sync("POST", "/api/backtest/run_signals", body, timeout=timeout or BATCH_TIMEOUT)
+
+
+def run_portfolio(
+    legs: List[Dict[str, Any]],
+    initial_capital: float = 100000.0,
+    market: str = "a_share",
+    start_date: str = "",
+    end_date: str = "",
+    slippage_pct: float | None = None,
+    risk_config: dict | None = None,
+    timeout: float | None = None,
+) -> Dict[str, Any]:
+    """组合回测：N 个标的**共享同一份资金**跑一遍（S8）。
+
+    与 `run_signals` 的区别只有一个，但那一个是本质的：
+    `run_signals` 一次只能跑一个标的，多标的只能各跑一遍再把收益率平均 ——
+    那样**没有资金竞争**，「A 占了钱 B 就买不了」不会发生，
+    于是带权重的组合策略回测出来的数字**跟权重毫无关系**。
+
+    Args:
+        legs: `[{"symbol": ..., "bars": [...], "signals": [...]}, ...]`
+            ⚠️ 某条腿只给 bars 不给 signals 是合法的 —— 那个标的只当行情背景
+            （比如配对交易的另一条腿），不产生订单。
+            ⛔ symbol 重复、bars 为空、signals 不是数组，服务端一律 400
+            （静默跳过会让「10 个币的组合」悄悄变成 3 个币，而收益率看上去正常）。
+        risk_config: 建议带上 `max_total_position_pct`（0.8 = 必须留 20% 现金）。
+            🔒 它与 `max_position_pct` 是**两条独立约束取更严**，引擎里不是 max。
+
+    Returns:
+        C++ 原始结果，比 `run_signals` 多出 `symbols` / `bar_coverage` /
+        `cash_contention` / `duplicate_dates` / `dropped_stale_orders` /
+        `engine_version`。
+    """
+    from common.market import to_cpp_market
+
+    body: Dict[str, Any] = {
+        "legs": legs,
+        "initial_capital": initial_capital,
+        "market": to_cpp_market(market),
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    if slippage_pct is not None:
+        body["slippage_pct"] = slippage_pct
+    if risk_config is not None:
+        body["risk_config"] = risk_config
+
+    return proxy_sync("POST", "/api/backtest/run_portfolio", body,
+                      timeout=timeout or BATCH_TIMEOUT)
 
 
 def safe_float(val: Any, default: float = 0.0) -> float:

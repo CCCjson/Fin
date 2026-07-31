@@ -83,7 +83,12 @@ _CPP_WIRE = {A_SHARE: "a_share", HK_STOCK: "hk", US_STOCK: "us", CRYPTO: "crypto
 
 
 def to_cpp_market(raw: str | None) -> str:
-    """把任意市场写法翻成 C++ 回测服务认的 wire 写法（us/hk/a_share）。"""
+    """把任意市场写法翻成 C++ 回测服务认的 wire 写法（a_share/hk/us/**crypto**）。
+
+    ⚠️ 别漏了 crypto：C++ 侧按它选**费率**（taker 0.1%、无印花税/无最低佣金）
+    **和交易单位**（一手 1 股，而 A 股是 100 股）。传错的话 BTC 那种高价币会
+    因为「凑不满一手」直接零成交。
+    """
     return _CPP_WIRE.get(normalize_market(raw), "a_share")
 
 

@@ -130,6 +130,8 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
     std::vector<Order> pending;   // 昨天产生、等今天开盘成交的订单（策略单与止损单共用）
     int cash_contention_days = 0;
     double cash_contention_trimmed = 0.0;
+    int cap_contention_days = 0;
+    double cap_contention_trimmed = 0.0;
 
     for (size_t di = 0; di < dates.size(); ++di) {
         const std::string& today = dates[di];
@@ -198,35 +200,81 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
         }
         double total_value_now = portfolio.get_cash() + total_pos_now;
 
+        int lot = market_rules_.lot_size > 0 ? market_rules_.lot_size : 1;
+
+        /*
+         * ── (2a) 单标的上限：**逐个独立判**，标的之间不争 ──
+         * 「本标的持仓不得超过总资产 X%」是每个标的自己的事，没有竞争关系，
+         * 所以这一步可以逐单直接裁，顺序无关。
+         */
+        for (auto& order : buys) {
+            const Bar* b = open_of(order.symbol);
+            if (!risk_mgr.has_position_caps()) break;
+            const Position* p = portfolio.get_position(order.symbol);
+            double sym_val = p ? p->quantity * b->open : 0.0;
+            // 只过 ① 这一条：总仓位上限留到 (2b) 统一分配
+            int adjusted = risk_mgr.filter_symbol_quantity(
+                order.quantity, b->open, total_value_now, sym_val);
+            /*
+             * ⚠️ 只在**被削减时**才取整到手。
+             * 无条件取整会顺手改掉一件无关的事：策略显式下 137 股、又没配
+             * 任何上限时，旧引擎原样放行，无条件取整会砍成 100 ——
+             * 那不是风控该管的，交易单位归策略层（ctx.lot_floor）管。
+             */
+            if (adjusted < order.quantity) adjusted = (adjusted / lot) * lot;
+            order.quantity = std::max(0, adjusted);
+        }
+
+        /*
+         * ── (2b) 🔴 总仓位上限：**这是一份公共额度，必须等比分配** ──
+         *
+         * 这里踩过一个很隐蔽的坑：第一版把总仓位额度写成「逐单先到先得」
+         * （每放行一单就把名义额累加进 total_pos_now，下一单看到的额度就少了）。
+         * 那样谁买得到**由 std::map 的字母序决定** —— 真实 universe 里
+         * `BTCUSDT.BN < ETHUSDT.BN < SOLUSDT.BN`，**BTC 永远赢，SOL 永远被饿死**。
+         *
+         * 实测 8 个币同日各请求 95%（上限 15% 单币 / 80% 总仓）：
+         *   前五个各拿 15%、第六个拿 5%、最后两个**一单都没买到**。
+         * 而下面那段资金竞争**完全不会触发**（现金还剩着，卡住的是仓位不是钱），
+         * 于是 `cash_contention.days = 0` —— 整件事**全程静默**。
+         * 更糟的是它能把回测结论翻号：同一份数据，把赢家改个名排到字母表前面，
+         * net_return 从 −2.71% 变成 +3.88%，`passed` 跟着从 false 翻成 true。
+         *
+         * ⛔ 别再改回逐单累加。额度不够时**按请求名义额等比缩减**，并如实上报。
+         */
+        double cap_trimmed = 0.0;
+        int buys_before_cap = 0;
+        for (const auto& o : buys) if (o.quantity > 0) ++buys_before_cap;
+        if (risk_mgr.has_total_cap()) {
+            double want = 0.0;
+            for (const auto& o : buys) {
+                if (o.quantity <= 0) continue;
+                want += o.quantity * open_of(o.symbol)->open;
+            }
+            double headroom = std::max(
+                0.0, total_value_now * risk_mgr.config().max_total_position_pct - total_pos_now);
+            if (want > headroom && want > 0.0) {
+                double scale = headroom / want;
+                for (auto& o : buys) {
+                    if (o.quantity <= 0) continue;
+                    int before = o.quantity;
+                    o.quantity = std::max(0, static_cast<int>(before * scale / lot) * lot);
+                    cap_trimmed += (before - o.quantity) * open_of(o.symbol)->open;
+                }
+            }
+        }
+        if (cap_trimmed > 0.0) {
+            cap_contention_days += 1;
+            cap_contention_trimmed += cap_trimmed;
+        }
+
+        // ── (2c) 现金：算成本、看够不够 ──
         double need = 0.0;
         std::vector<double> costs(buys.size(), 0.0);
-        int lot = market_rules_.lot_size > 0 ? market_rules_.lot_size : 1;
         for (size_t i = 0; i < buys.size(); ++i) {
             auto& order = buys[i];
-            const Bar* b = open_of(order.symbol);
-            if (risk_mgr.has_position_caps()) {
-                const Position* p = portfolio.get_position(order.symbol);
-                double sym_val = p ? p->quantity * b->open : 0.0;
-                int adjusted = risk_mgr.filter_buy_quantity(
-                    order.quantity, b->open, total_value_now, sym_val, total_pos_now);
-                /*
-                 * ⚠️ 只在**被削减时**才取整到手。
-                 * 无条件取整会顺手改掉一件无关的事：策略显式下 137 股、又没配
-                 * 任何上限时，旧引擎原样放行，无条件取整会砍成 100 ——
-                 * 那不是风控该管的，交易单位归策略层（ctx.lot_floor）管。
-                 */
-                if (adjusted < order.quantity) adjusted = (adjusted / lot) * lot;
-                order.quantity = std::max(0, adjusted);
-            }
             if (order.quantity <= 0) continue;
-            /*
-             * 🔴 **逐单递减额度**。闸门是无状态的，不会替我们扣。
-             * 不累加的话，同一天 N 个买单**各自**都在 80% 以内、**合计**能顶到
-             * 100% —— 实测三个标的各 35% 就把现金打到 0.1 块。
-             * （踩过，是审查挖出来的 blocker。）
-             */
-            total_pos_now += order.quantity * b->open;
-
+            const Bar* b = open_of(order.symbol);
             double px = commission_config_.apply_slippage(b->open, true);
             double gross = px * order.quantity;
             costs[i] = gross + commission_config_.calculate(gross, false);
@@ -395,6 +443,8 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
     }
     result.cash_contention_days = cash_contention_days;
     result.cash_contention_trimmed = cash_contention_trimmed;
+    result.cap_contention_days = cap_contention_days;
+    result.cap_contention_trimmed = cap_contention_trimmed;
     result.duplicate_dates = duplicate_dates;
     if (duplicate_dates > 0) {
         std::cerr << "[backtest] 输入数据有 " << duplicate_dates

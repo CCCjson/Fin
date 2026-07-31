@@ -36,9 +36,17 @@ class TestBacktestScaling:
     """价格缩放是经济等价变换：把高价币缩到 $10 量级让整数股 math 成立。"""
 
     def test_pick_scale_targets_ten_dollars(self):
-        bars = [{"close": 64000.0}, {"close": 65000.0}]
+        """⚠️ 按**中位数**缩，不是首根 —— 首根定 k 会被一根脏 bar 毁掉整个币
+        （`close=1e-8` 打头 → k=1e9 → 后续价格全爆 → 零成交且零日志）。"""
+        bars = [{"close": 64000.0}, {"close": 65000.0}, {"close": 66000.0}]
         k = _pick_scale(bars)
-        assert abs(64000.0 * k - 10.0) < 1e-9   # 首根缩到 $10
+        assert abs(65000.0 * k - 10.0) < 1e-9   # 中位数缩到 $10
+
+    def test_pick_scale_ignores_a_dirty_outlier_bar(self):
+        """一根离谱的 bar 不该把整个币的缩放带偏。"""
+        bars = [{"close": 1e-8}] + [{"close": 64000.0}] * 20
+        k = _pick_scale(bars)
+        assert abs(64000.0 * k - 10.0) < 1e-6
 
     def test_pick_scale_fallback_when_empty(self):
         assert _pick_scale([]) == 1.0

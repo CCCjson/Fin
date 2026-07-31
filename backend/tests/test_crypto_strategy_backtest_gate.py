@@ -56,37 +56,105 @@ def _fake_collect(on_bar, df):
 # ── 回测闸 ──
 
 def test_gate_net_positive_passes():
-    def run_bt(bars, signals, **kw):
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
         return {"metrics": {"total_return": 0.12, "total_trades": 4, "sharpe_ratio": 1.1}}
-    r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars()}, run_bt=run_bt, collect=_fake_collect)
+    r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars()}, run_pf=run_pf, collect=_fake_collect)
     assert r["passed"] is True
     assert r["net_return"] == pytest.approx(0.12)
+    # 🔴 口径标记：这个数是**组合收益**，不是「各币独立收益的平均」
+    assert r["basis"] == "portfolio_shared_capital"
     assert r["degraded"] is True                       # 有原语回放不了 → 降级
     assert any("funding_rate" in x for x in r["degraded_reasons"])   # 非技术原语被点名
     assert r["replay"]["mode"] == "proxy"              # 库里没历史 → 纯代理（与改动前同）
 
 
 def test_gate_net_negative_blocked():
-    def run_bt(bars, signals, **kw):
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
         return {"metrics": {"total_return": -0.05, "total_trades": 30}}   # 毛赚净亏典型
-    r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars()}, run_bt=run_bt, collect=_fake_collect)
+    r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars()}, run_pf=run_pf, collect=_fake_collect)
     assert r["passed"] is False
 
 
 def test_gate_uses_strategy_slippage():
     seen = {}
-    def run_bt(bars, signals, **kw):
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
         seen.update(kw)
         return {"metrics": {"total_return": 0.01}}
     spec = _spec(cost_model=CostModel(slippage_pct=0.002))
-    run_backtest_gate(spec, {"BTCUSDT.BN": _bars()}, run_bt=run_bt, collect=_fake_collect)
+    run_backtest_gate(spec, {"BTCUSDT.BN": _bars()}, run_pf=run_pf, collect=_fake_collect)
     assert seen["slippage_pct"] == 0.002                # 策略自己的滑点被传进回测
 
 
+def test_gate_enforces_the_cash_floor_in_backtest_too():
+    """🔒 回测口径必须跟实盘风控一致：总仓位 ≤ 80%，留 20% 现金。
+
+    ⛔ 此前回测能满仓，于是「回测过闸的策略上实盘后收益系统性低于预期」——
+    高估在先。Jason 2026-07-31 拍板改成一致。
+    ⚠️ 单币上限走 DSL 的 `per_symbol_exposure_cap_pct`，组合口径下它**第一次真正生效**
+    （逐币独立回测时每个币都有完整一份本金，那条约束等于不存在）。
+    """
+    seen = {}
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
+        seen.update(kw)
+        return {"metrics": {"total_return": 0.01}}
+    spec = _spec()
+    run_backtest_gate(spec, {"BTCUSDT.BN": _bars()}, run_pf=run_pf, collect=_fake_collect)
+    rc = seen["risk_config"]
+    assert rc["max_total_position_pct"] == 0.8, "20% 现金底线没传下去"
+    assert rc["max_position_pct"] == spec.position_policy.per_symbol_exposure_cap_pct
+
+
+def test_gate_runs_one_portfolio_not_n_independent_backtests():
+    """⭐ **所有币必须在一次回测里共享同一份资金**。
+
+    逐币各跑一遍再平均 = 每个币都有完整一份本金，没有资金竞争，
+    带权重的组合策略回测出来的数字跟权重毫无关系。
+    """
+    calls = []
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
+        calls.append(sorted(bars_by_symbol))
+        return {"metrics": {"total_return": 0.03}}
+    r = run_backtest_gate(
+        _spec(), {"BTCUSDT.BN": _bars(), "ETHUSDT.BN": _bars(), "SOLUSDT.BN": _bars()},
+        run_pf=run_pf, collect=_fake_collect)
+    assert len(calls) == 1, "三个币应该在**一次**组合回测里跑，不是各跑一遍"
+    assert calls[0] == ["BTCUSDT.BN", "ETHUSDT.BN", "SOLUSDT.BN"]
+    assert r["metrics"]["symbols_tested"] == 3
+
+
+def test_gate_does_not_fabricate_per_symbol_returns():
+    """⛔ 组合口径下**没有**「这个币赚了百分之几」这回事。
+
+    一份共享现金拆不出逐币收益率（同一笔钱在不同币之间流动），
+    硬拆一个数出来会骗人。逐币只报「下了几单、有几天数据」。
+    """
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
+        return {"metrics": {"total_return": 0.05},
+                "trades": [{"symbol": "BTCUSDT.BN"}, {"symbol": "BTCUSDT.BN"}],
+                "bar_coverage": {"BTCUSDT.BN": 120}}
+    r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars()},
+                          run_pf=run_pf, collect=_fake_collect)
+    row = next(x for x in r["per_symbol"] if x["symbol"] == "BTCUSDT.BN")
+    assert row["net_return"] is None, "别编一个逐币收益率出来"
+    assert row["num_trades"] == 2
+    assert row["bar_days"] == 120
+
+
+def test_gate_reports_cash_contention_not_silently():
+    """⛔ 「多个币同日抢同一份现金」是组合口径与旧口径最大的差别，必须说出来。"""
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
+        return {"metrics": {"total_return": 0.05},
+                "cash_contention": {"days": 7, "trimmed_notional": 12345.0}}
+    r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars()},
+                          run_pf=run_pf, collect=_fake_collect)
+    assert r["cash_contention"]["days"] == 7
+    assert any("资金竞争" in c for c in r["caveats"])
+
+
 def test_gate_short_history_skipped():
-    def run_bt(bars, signals, **kw):  # 不该被调用
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):  # 不该被调用
         raise AssertionError("历史不足不应回测")
-    r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars(5)}, run_bt=run_bt, collect=_fake_collect)
+    r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars(5)}, run_pf=run_pf, collect=_fake_collect)
     assert r["net_return"] is None and r["passed"] is False
 
 
@@ -160,9 +228,9 @@ class TestReplay:
         on_bar = dsl_on_bar(spec, {}, {"funding_rate"}, proxy, date_of=lambda idx: str(idx)[:10])
         assert on_bar(df.iloc[:40]) is None          # 无帧 → 条件不满足，但代理没被碰
 
-        def run_bt(bars, signals, **kw):
+        def run_pf(bars_by_symbol, signals_by_symbol, **kw):
             return {"metrics": {"total_return": 0.05}}
-        r = run_backtest_gate(spec, {"BTCUSDT.BN": _bars()}, run_bt=run_bt,
+        r = run_backtest_gate(spec, {"BTCUSDT.BN": _bars()}, run_pf=run_pf,
                               collect=_fake_collect,
                               _matured={"funding_rate"})
         assert r["degraded"] is False and r["degraded_reasons"] == []

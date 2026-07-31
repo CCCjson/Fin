@@ -35,7 +35,7 @@ class _FakeFetcher:
 
 
 # 真正的开市判定 —— 少数几条要验「crypto 恒开市」的用例得用它，不能被下面钉死
-from common.market_session import is_open as _REAL_IS_OPEN  # noqa: E402
+from common.market_session import is_open as _real_is_open  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -140,7 +140,7 @@ def test_crypto_is_never_skipped_for_being_closed():
         # 周六凌晨三点：股票全休市
         # ⚠️ 这条必须用**真**的开市判定（autouse 把它钉成恒 True 了），
         # 否则「crypto 不因闭市被跳过」就成了废话
-        with patch("common.market_session.is_open", _REAL_IS_OPEN), \
+        with patch("common.market_session.is_open", _real_is_open), \
              patch("common.market_session.market_now",
                    lambda m: datetime.fromisoformat("2026-08-01T03:00:00")):
             out = qr.fetch_quotes_detailed(["BTCUSDT.BN"])

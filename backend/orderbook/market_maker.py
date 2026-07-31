@@ -75,6 +75,11 @@ class MarketMakerBot:
             base_url=self.CPP_URL,
             timeout=5.0,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            # 🔴 `trust_env=False`：不读 .env 里的 HTTP_PROXY。
+            # 本机 8001 走代理是纯粹的错误 —— Clash 没开时会报
+            # `ProxyError`，看上去完全不像订单簿服务的问题。
+            # ⛔ 别当样板删掉（有门禁 tests/test_localhost_bypasses_proxy.py）。
+            trust_env=False,
         )
         self._start_time = datetime.now()
         self.config.enabled = True

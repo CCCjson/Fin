@@ -228,6 +228,12 @@ static json result_to_json(const BacktestResult& result) {
         {"days", result.cash_contention_days},
         {"trimmed_notional", result.cash_contention_trimmed}
     };
+    // 仓位上限竞争：额度不够、多个买单等比分摊。⚠️ 与资金竞争是**两件事** ——
+    // 额度卡住时现金还剩着，cash_contention 一天都不会记。
+    j["cap_contention"] = {
+        {"days", result.cap_contention_days},
+        {"trimmed_notional", result.cap_contention_trimmed}
+    };
     // 输入里有多少根 bar 的日期与同标的另一根重复（>0 说明喂进来的数据坏了）
     j["duplicate_dates"] = result.duplicate_dates;
     // 某标的数据半途断了、挂单一路顺延到结束的数量（与「最后一 bar 丢弃」分开计）
