@@ -36,6 +36,56 @@ from services.backtest_cpp_client import (
 router = APIRouter(prefix="/backtest_cpp", tags=["C++回测引擎"])
 
 
+async def _load_bars_or_400(symbol: str, start_date: str | None,
+                            end_date: str | None, *, label: str) -> list[dict]:
+    """从 DataEngine 取日线；**取不到就 400，绝不让它退化成假数据**。
+
+    🔴 这个函数存在的唯一理由是堵死一条会撒谎的路：
+
+    C++ 那边 `run_signals` 必须显式给 bars（给空直接 400），但 `/api/backtest/run`
+    在**没有 bars 时会自己 `generate_sample_data()` 造一段随机游走**。而这里的旧写法是
+    「取不到就 `logger.warning(...将使用模拟数据)` 然后照样把请求发过去」——
+    于是 Jason 回测 600519.SH、库里恰好没数据时，拿到的是**一份贴着 600519.SH
+    标签的随机数回测结果**，HTTP 200，页面上一切正常。
+
+    ⛔ 别把这条改回「取不到就继续」。回测数字是要拿来做真钱决策的，
+    「没有数据」必须说出来，不能用一段看起来很像的曲线顶替。
+    （C++ 的 `generate_sample_data` 保留着 —— 它给 demo 用是正当的，
+    问题从来不在造假数据，而在**静默把假数据当真数据用**。）
+    """
+    def _fetch():
+        from data_engine import DataEngine
+        return DataEngine().get_daily_data(
+            symbol, start_date=start_date or None, end_date=end_date or None)
+
+    try:
+        df = await asyncio.to_thread(_fetch)
+    except Exception as e:  # noqa: BLE001 — 取数失败的原因原样带给调用方
+        logger.warning(f"[{label}] 取 {symbol} 日线失败: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"取不到 {symbol} 的日线数据（{e}）。回测不会用模拟数据顶替 —— "
+                   f"请先补齐这只标的的行情，或在请求里直接带上 bars。") from e
+
+    if df is None or df.empty:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{symbol} 在 {start_date or '不限'} ~ {end_date or '不限'} "
+                   f"区间内没有日线数据。回测不会用模拟数据顶替 —— "
+                   f"请先补齐这只标的的行情，或在请求里直接带上 bars。")
+
+    bars = [{
+        "date": str(row.get("date", idx))[:10],
+        "open": float(row["open"]),
+        "high": float(row["high"]),
+        "low": float(row["low"]),
+        "close": float(row["close"]),
+        "volume": float(row.get("volume", 0)),
+    } for idx, row in df.iterrows()]
+    logger.info(f"[{label}] 从 DataEngine 取到 {len(bars)} 根K线: {symbol}")
+    return bars
+
+
 # ── 请求模型 ──
 
 class RiskConfigModel(BaseModel):
@@ -75,33 +125,10 @@ async def run_backtest(req: BacktestRunRequest):
     body = req.model_dump(exclude_none=True)
     body["market"] = to_cpp_market(body.get("market"))  # canonical → C++ wire(us/hk/a_share)
 
-    # 如果前端没有传 bars，从 DataEngine 获取数据（在线程池中运行，避免阻塞事件循环）
+    # 前端没传 bars 就从 DataEngine 取；⛔ 取不到直接 400，不许退化成随机游走
     if not body.get("bars"):
-        try:
-            def _fetch_bars():
-                from data_engine import DataEngine
-                de = DataEngine()
-                return de.get_daily_data(
-                    req.symbol,
-                    start_date=req.start_date or None,
-                    end_date=req.end_date or None
-                )
-            df = await asyncio.to_thread(_fetch_bars)
-            if df is not None and not df.empty:
-                bars = []
-                for _, row in df.iterrows():
-                    bars.append({
-                        "date": str(row.get("date", row.name))[:10],
-                        "open": float(row["open"]),
-                        "high": float(row["high"]),
-                        "low": float(row["low"]),
-                        "close": float(row["close"]),
-                        "volume": float(row.get("volume", 0))
-                    })
-                body["bars"] = bars
-                logger.info(f"从 DataEngine 获取 {len(bars)} 根K线: {req.symbol}")
-        except Exception as e:
-            logger.warning(f"从 DataEngine 获取数据失败: {e}, 将使用模拟数据")
+        body["bars"] = await _load_bars_or_400(
+            req.symbol, req.start_date, req.end_date, label="C++ run")
 
     result = await _proxy("POST", "/api/backtest/run", body)
     return result
@@ -163,65 +190,21 @@ async def run_and_save(req: BacktestRunAndSaveRequest):
         body = req.model_dump(exclude={"name", "symbol2"}, exclude_none=True)
         body["market"] = to_cpp_market(body.get("market"))  # canonical → C++ wire(us/hk/a_share)
 
-        # 获取主股票的 K 线数据
+        # 主标的 K 线；⛔ 取不到直接 400，不许退化成随机游走
         if not body.get("bars"):
-            try:
-                def _fetch_bars():
-                    from data_engine import DataEngine
-                    de = DataEngine()
-                    return de.get_daily_data(
-                        req.symbol,
-                        start_date=req.start_date or None,
-                        end_date=req.end_date or None
-                    )
-                df = await asyncio.to_thread(_fetch_bars)
-                if df is not None and not df.empty:
-                    bars = []
-                    for _, row in df.iterrows():
-                        bars.append({
-                            "date": str(row.get("date", row.name))[:10],
-                            "open": float(row["open"]),
-                            "high": float(row["high"]),
-                            "low": float(row["low"]),
-                            "close": float(row["close"]),
-                            "volume": float(row.get("volume", 0))
-                        })
-                    body["bars"] = bars
-                    logger.info(f"[C++ run_and_save] 获取 {len(bars)} 根K线: {req.symbol}")
-            except Exception as e:
-                logger.warning(f"获取K线数据失败: {e}")
+            body["bars"] = await _load_bars_or_400(
+                req.symbol, req.start_date, req.end_date, label="C++ run_and_save")
 
-        # PAIRS 策略：获取第二只股票数据
+        # PAIRS 策略：第二条腿的数据
+        # ⛔ 同样不许静默跳过：拿不到 bars2 时 PairsStrategy 算不出 z-score，
+        #    会**一单不下**地跑完，返回一份「这个配对没机会」的假结论。
         if req.strategy == "PAIRS" and req.symbol2:
-            try:
-                def _fetch_bars2():
-                    from data_engine import DataEngine
-                    de = DataEngine()
-                    return de.get_daily_data(
-                        req.symbol2,
-                        start_date=req.start_date or None,
-                        end_date=req.end_date or None
-                    )
-                df2 = await asyncio.to_thread(_fetch_bars2)
-                if df2 is not None and not df2.empty:
-                    bars2 = []
-                    for _, row in df2.iterrows():
-                        bars2.append({
-                            "date": str(row.get("date", row.name))[:10],
-                            "open": float(row["open"]),
-                            "high": float(row["high"]),
-                            "low": float(row["low"]),
-                            "close": float(row["close"]),
-                            "volume": float(row.get("volume", 0))
-                        })
-                    # 把 bars2 放到 params 中传给 C++ 服务
-                    if "params" not in body:
-                        body["params"] = {}
-                    body["params"]["bars2"] = bars2
-                    body["params"]["symbol2"] = req.symbol2
-                    logger.info(f"[C++ run_and_save] 获取配对股票 {len(bars2)} 根K线: {req.symbol2}")
-            except Exception as e:
-                logger.warning(f"获取配对股票数据失败: {e}")
+            bars2 = await _load_bars_or_400(
+                req.symbol2, req.start_date, req.end_date,
+                label="C++ run_and_save/pairs")
+            body.setdefault("params", {})
+            body["params"]["bars2"] = bars2
+            body["params"]["symbol2"] = req.symbol2
 
         # 4. 调用 C++ 回测服务
         cpp_result = await _proxy("POST", "/api/backtest/run", body)
@@ -354,7 +337,17 @@ async def run_and_save(req: BacktestRunAndSaveRequest):
             result["benchmark"] = benchmark_data
         return result
 
-    except HTTPException:
+    except HTTPException as e:
+        # ⚠️ 也要把任务标成 failed。这条分支原本只关连接就 raise，于是任务行
+        # **永远卡在 running** —— 历史列表上看是「还在跑」，其实早就死了。
+        # 取不到日线现在会走这里（400），触发频率比从前高得多。
+        try:
+            if task_id:
+                fail_repo = HistoryRepository()
+                fail_repo.update_backtest_status(task_id, "failed", str(e.detail))
+                fail_repo.close()
+        except Exception:  # noqa: BLE001 — 标记失败本身失败了也不该盖住原始错误
+            pass
         if repo:
             try:
                 repo.close()
