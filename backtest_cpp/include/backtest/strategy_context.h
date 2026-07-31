@@ -48,10 +48,47 @@ struct StrategyContext {
     const std::vector<Bar>* history = nullptr;
 
     // ── 账户状态 ──
-    double cash = 0.0;                  // 可用现金
-    int position_quantity = 0;          // 当前持仓量（股数）
-    double position_avg_price = 0.0;    // 持仓平均成本价
-    double total_value = 0.0;           // 总资产 = 现金 + 持仓市值
+    /*
+     * ⚠️ 组合回测下 cash 是**全场共享的余额**（不是这个标的专属的钱）。
+     * 同一天先被调用的标的花掉的钱，后面的标的就看不到了 —— 这正是
+     * 「A 占了钱 B 就买不了」的资金竞争，逐票独立回测里不存在这回事。
+     */
+    double cash = 0.0;                  // 可用现金（全场共享）
+    int position_quantity = 0;          // **本标的**当前持仓量（股数）
+    double position_avg_price = 0.0;    // 本标的持仓平均成本价
+    double total_value = 0.0;           // 总资产 = 现金 + 全部持仓市值
+    double market_value = 0.0;          // 全部持仓市值（组合视角；单票时等于本标的市值）
+
+    // ── 交易单位 ──
+    /*
+     * 一手股数。⛔ **别再手写 `/100)*100`** —— 那是 A 股假设，
+     * 曾经被复制在 8 个策略里，对 crypto 直接失效（见 types.h::MarketRules）。
+     * 一律用下面的 lot_floor()，有门禁盯着。
+     */
+    int lot_size = 100;
+
+    /*
+     * lot_floor — 把「按现金算出来的理论股数」向下取整到整手。
+     * 不足一手返回 0（调用方据此不发单）。
+     */
+    int lot_floor(double raw_qty) const {
+        int lot = lot_size > 0 ? lot_size : 1;
+        if (!(raw_qty > 0.0)) return 0;
+        long long lots = static_cast<long long>(raw_qty / lot);
+        long long qty = lots * lot;
+        // 单票回测里 raw_qty 可能极大（价格缩放后），钳到 int 上界防溢出
+        if (qty > 2000000000LL) qty = 2000000000LL;
+        return static_cast<int>(qty);
+    }
+
+    /*
+     * afford — 用 weight 比例的可用现金能买多少（已取整到手）。
+     * 把「available/close 再取整」这套重复了 8 次的算法收在一处。
+     */
+    int afford(double weight, double price) const {
+        if (price <= 0.0) return 0;
+        return lot_floor(cash * weight / price);
+    }
 
     // ── 便捷方法（帮助策略快速计算常用指标） ──
 

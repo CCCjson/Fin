@@ -57,9 +57,10 @@ std::vector<Order> MomentumStrategy::on_bar(const StrategyContext& ctx) {
          * 表示趋势向上，追涨
          */
         double available = ctx.cash * position_pct_;
-        int qty = static_cast<int>(available / ctx.current_bar.close / 100) * 100;
+        // 一手股数由引擎按市场给（A股 100 / crypto 1）——⛔ 别再手写 100
+        int qty = ctx.lot_floor(available / ctx.current_bar.close);
 
-        if (qty >= 100) {
+        if (qty > 0) {
             orders.push_back(Order::market_buy(ctx.symbol, qty));
         }
     }

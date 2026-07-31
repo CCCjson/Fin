@@ -8,6 +8,21 @@ import pytest
 from acquisition.markets import quote_router as qr
 from net import ProxyExhaustedError
 
+
+@pytest.fixture(autouse=True)
+def _market_is_open():
+    """🔴 **把开市判定钉死，别让测试跟着墙上时钟走**。
+
+    `fetch_quotes` 会在市场闭市时**刻意跳过**（不发请求、不算失败）——这是对的行为，
+    但它让这一批测试变成**看时间才通过**：14 点跑全绿、15:32 再跑就 9 条红，
+    因为 A 股收盘了。踩过一次，别再踩。
+
+    需要验「闭市该跳过」的用例自己在 `with patch(...)` 里覆盖成 False。
+    """
+    from unittest.mock import patch as _patch
+    with _patch("common.market_session.is_open", lambda m, now=None: True):
+        yield
+
 # ---------------- canonical 形状 / 字段映射 ----------------
 
 CANONICAL_KEYS = {

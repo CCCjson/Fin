@@ -315,7 +315,41 @@ struct RiskConfig {
     double stop_loss_pct = 0.05;        // 固定止损比例（亏损 5% 平仓）
     bool   trailing_stop = false;       // 是否启用追踪止损
     double trailing_stop_pct = 0.08;    // 追踪止损：从最高点回撤 8% 平仓
-    double max_position_pct = 1.0;      // 单股最大仓位占总资产比例（1.0 = 不限制）
+    double max_position_pct = 1.0;      // 单标的最大仓位占总资产比例（1.0 = 不限制）
+
+    /*
+     * 总仓位上限：所有持仓市值合计占总资产的比例上限（1.0 = 不限制）。
+     * 0.8 = 必须始终留 20% 现金。
+     *
+     * 🔒 这与 max_position_pct 是【两条独立约束，必须同时成立】。
+     * ⛔ 绝对不许写成 max(总仓位上限, 单标的上限) —— 那会静默撤销现金保护：
+     *    单标的上限 0.95 会把总仓位上限 0.8 顶掉，20% 现金一分不剩。
+     *    这个 bug 在 Python 侧被复制过三份（adapter / position_sizing / cockpit），
+     *    三处都修了并加了 AST 门禁。C++ 这份从第一天起就写成「取更严的那个」。
+     */
+    double max_total_position_pct = 1.0;
+};
+
+/*
+ * MarketRules — 交易单位规则（与手续费无关，所以不塞进 CommissionConfig）
+ *
+ * 🔴 引擎全程用【整数股】。「一手 = 100 股」原本是硬编码在 8 个策略里的 A 股假设，
+ * 对加密货币直接失效（BTC 单价 6 万+，$10 万本金连 100 股都凑不齐 → 零成交）。
+ *
+ * crypto 现在靠 `crypto_intel_engine/backtest.py` 的价格缩放绕过（把 bar 价格
+ * × k 缩到 $10 量级）。⚠️ 但【共享资金池会把这个近似的误差放大】：
+ * $10 万本金 1 个币 = 1000 手（误差 0.1%），摊到 10 个币就只剩 10 手（误差 10%）。
+ * 所以组合回测必须让 crypto 的一手 = 1 股。
+ */
+struct MarketRules {
+    int lot_size = 100;                 // 一手股数（下单数量必须是它的整数倍）
+
+    static MarketRules a_share()  { return {100}; }
+    static MarketRules us_stock() { return {1};   }
+    // ⚠️ 港股每手股数**按标的不同**（100/500/1000/2000…），引擎拿不到那张表，
+    // v1 按 1 处理并在结果里标注 —— 宁可粒度偏细，也不要凭空按 100 把小额单打掉。
+    static MarketRules hk_stock() { return {1};   }
+    static MarketRules crypto()   { return {1};   }
 };
 
 }  // namespace backtest

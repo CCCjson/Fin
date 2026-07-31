@@ -180,15 +180,33 @@ std::vector<Bar> DataLoader::generate_sample_data(int days,
     double price = start_price;
 
     for (int i = 0; i < days; ++i) {
-        // 生成日期字符串：2025-01-01, 2025-01-02, ...
-        // 简化处理：直接递增天数（不考虑月份变化）
+        /*
+         * 生成日期字符串：2025-01-01, 2025-01-02, ...
+         *
+         * 🔴 旧实现按「每月 30 天」硬切再 `if (day > 28) day = 28;` 钳一下，
+         * 于是每个月的第 28/29/30 天**被压成同一个日期** —— 100 根 bar 只有
+         * 94 个不同的日期。按 bar 下标推进的引擎看不见这件事，但组合回测是
+         * **按日期**推进的（多个标的的日历要对齐），重复日期会直接把 bar 吞掉。
+         *
+         * 改成真的日历推进：每月按实际天数走，闰年也算对。
+         */
         char date_buf[16];
-        int year = 2025 + (i / 365);
-        int day_of_year = (i % 365) + 1;
-        int month = (day_of_year - 1) / 30 + 1;
-        int day = (day_of_year - 1) % 30 + 1;
-        if (month > 12) month = 12;
-        if (day > 28) day = 28;
+        int year = 2025, month = 1, day = 1;
+        {
+            int remaining = i;
+            auto days_in = [](int y, int m) {
+                static const int t[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+                if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) return 29;
+                return t[m - 1];
+            };
+            while (remaining > 0) {
+                int dim = days_in(year, month);
+                if (day + remaining <= dim) { day += remaining; break; }
+                remaining -= (dim - day + 1);
+                day = 1;
+                if (++month > 12) { month = 1; ++year; }
+            }
+        }
         /*
          * snprintf：格式化字符串到缓冲区
          * %04d：4 位数字，不足补 0（如 2025）

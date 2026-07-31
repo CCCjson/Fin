@@ -24,8 +24,8 @@ std::string ExternalSignalStrategy::description() const {
  * on_bar — 查当天有没有信号，有就翻译成 Order
  *
  * 数量口径与内置策略一致（见 ma_cross_strategy.cpp）：
- * - BUY：可用现金 × weight / 当前收盘价，向下取整到 100 股（A 股一手）；<100 不发单
- *        （天然处理"已满仓/现金不足"——此时算出的 qty < 100）
+ * - BUY：可用现金 × weight / 当前收盘价，向下取整到**一手**（股数由引擎按市场给，
+ *        A股 100 / crypto 1）；不足一手不发单（天然处理"已满仓/现金不足"）
  * - SELL：全平当前持仓（无持仓则 no-op）
  * 成交由引擎推迟到次日开盘（防未来函数），本函数只产订单不管撮合。
  */
@@ -44,9 +44,10 @@ std::vector<Order> ExternalSignalStrategy::on_bar(const StrategyContext& ctx) {
         if (close <= 0.0) {
             return orders;
         }
-        double available = ctx.cash * sig.weight;
-        int qty = static_cast<int>(available / close / 100) * 100;
-        if (qty >= 100) {
+        // 一手股数由引擎按市场给（A股 100 / crypto 1）——⛔ 别再手写 100。
+        // crypto 尤其重要：BTC 单价 6 万+，按 100 股一手算，$10 万本金零成交。
+        int qty = ctx.afford(sig.weight, close);
+        if (qty > 0) {
             if (sig.has_price) {
                 orders.push_back(Order::limit_buy(ctx.symbol, qty, sig.price));
             } else {

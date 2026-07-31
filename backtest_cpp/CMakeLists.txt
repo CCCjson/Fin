@@ -73,6 +73,7 @@ set(LIB_SOURCES
     src/strategies/combo_strategy.cpp
     src/strategies/pairs_strategy.cpp
     src/strategies/external_signal_strategy.cpp
+    src/strategies/portfolio_signal_strategy.cpp
 )
 
 # ── 主程序：backtest_server ──
@@ -97,6 +98,7 @@ set(TEST_SOURCES
     tests/test_engine.cpp
     tests/test_strategies.cpp
     tests/test_external_signal.cpp
+    tests/test_portfolio_engine.cpp
 )
 
 add_executable(backtest_tests
