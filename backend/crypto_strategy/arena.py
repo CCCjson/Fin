@@ -239,6 +239,10 @@ def _verdict(gates: dict[str, dict[str, Any]], *, extra: str | None = None) -> d
     should = bool(gates) and not blocked
     if extra:
         should = False
+    # ⭐ 每道门槛自带中文名，**别让调用方各抄一份**：交易终端抄过一次，措辞立刻
+    # 就和这里分叉了（「观察期够长」→「观察期」）。口径只准有一处。
+    for k, v in gates.items():
+        v.setdefault("label", GATE_LABELS.get(k, k))
     return {
         "should_switch": should,
         "gates": gates,
@@ -364,6 +368,44 @@ def _days_since_last_switch() -> int | None:
         if row is None or row.created_at is None:
             return None
         return int(max(0, (utc_now() - row.created_at).days))
+    finally:
+        session.close()
+
+
+def current_champion() -> dict[str, Any] | None:
+    """当前跑实盘那条的身份牌 —— **一次纯 SQL，不算任何战绩**。
+
+    ⭐ 存在的理由是省算力：`evaluate_arena` 会给**每条** enabled 策略跑一遍
+    `daily_returns`（内含 `cost_basis.replay`）。调用方只想知道「谁在跑」时
+    （比如交易终端的卫冕者面板要拿它去查体检报告），走全场判定等于白烧 O(N) 次回放。
+
+    ⚠️ 筛选条件必须与 `evaluate_arena` **逐字一致**，否则两个出口会指向不同的策略。
+    裁决 7 保证同期最多一条 live，所以不需要排序也不会有歧义；
+    `_LIVE_STATUSES` 含 `paused_by_guardrail` 的理由见 `evaluate_arena` 的坑 1。
+    有门禁 `test_current_champion_agrees_with_evaluate_arena` 钉住这件事。
+    """
+    from data_engine.storage.database import get_session
+    from data_engine.storage.models import CryptoStrategy
+
+    session = get_session()
+    try:
+        rows = session.query(CryptoStrategy).filter(
+            (CryptoStrategy.enabled == 1)
+            | (CryptoStrategy.status == "paused_by_guardrail")).all()
+        for r in rows:
+            if r.mode == "live" and r.status in _LIVE_STATUSES:
+                return {
+                    "strategy_id": str(r.strategy_id),
+                    "name": r.name,
+                    "version": r.version or 1,
+                    "family_id": r.family_id or r.strategy_id,
+                    "mode": r.mode,
+                    "status": r.status,
+                    "is_benchmark": bool(r.is_benchmark),
+                    # 与 `evaluate_arena` 的 `champion_halted` 同一判据
+                    "halted": r.status == "paused_by_guardrail",
+                }
+        return None
     finally:
         session.close()
 

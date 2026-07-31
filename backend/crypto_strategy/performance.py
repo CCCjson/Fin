@@ -692,21 +692,28 @@ def standings(*, days: int = 30, include_archived: bool = False) -> list[dict[st
             q = q.filter(CryptoStrategy.status.notin_(_ARCHIVED_STATUSES))
         # ⚠️ 带上 family/version：多版本同名（fork 默认继承名字），
         # 只给 name 的话 AI 和 Jason 都分不清哪条是哪版。
+        # ⭐ `is_benchmark` 一起带出来：调用方（交易终端要把基准线置顶、并给它挂个
+        # 徽章）否则只能逐条再查一次库 —— 那是 N+1，而且「哪条是尺子」这件事
+        # 不标出来，裁决 8 的价值（一眼看到 AI 有没有输给你手写那条）就没了。
         meta = [(r.strategy_id, r.name, r.mode, r.status, bool(r.enabled),
-                 r.family_id or r.strategy_id, r.version or 1)
+                 r.family_id or r.strategy_id, r.version or 1, bool(r.is_benchmark))
                 for r in q.order_by(CryptoStrategy.created_at.asc()).all()]
     finally:
         session.close()
 
     out = []
-    for sid, name, mode, status, enabled, family, version in meta:
+    for sid, name, mode, status, enabled, family, version, is_benchmark in meta:
         h = strategy_health(sid, days=days)
         out.append({
             "strategy_id": sid, "name": name, "version": version, "family_id": family,
             "mode": mode, "status": status, "enabled": enabled,
+            "is_benchmark": is_benchmark,
             "runs": h.get("runs", {}).get("total", 0) if h.get("ok") else 0,
             "orders_staged": h.get("orders_staged", 0) if h.get("ok") else 0,
             "pnl": h.get("pnl") if h.get("ok") else None,
+            # ⚠️ 盈亏是**这个窗口内**的，不是「开仓以来」。数字旁边不写窗口，
+            # 就会跟四道门槛（默认 90 天）的判定摆在同一行互相打架。
+            "window_days": days,
             "verdict": h.get("verdict") or h.get("reason"),
         })
     return out
