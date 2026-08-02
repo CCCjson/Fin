@@ -231,7 +231,11 @@ class PaperBroker(BaseBroker):
                 current_price=cur_price,
                 market_value=mkt_value,
                 unrealized_pnl=mkt_value - quantity * price,
-                available=quantity  # Paper Trading 没有 T+1 限制
+                # 🔴 T+1 市场（A 股）：当日买入**不可卖**，要等 `settle_t1()` 解冻。
+                #    此前这里无条件写 `available=quantity` 并注释「Paper Trading 没有
+                #    T+1 限制」—— 那让纸面成绩**系统性优于实盘**（纸面能当天来回做 T），
+                #    而「新策略先 paper 跑一段再上实盘」这条护栏正是靠纸面成绩判断的。
+                available=0 if self._is_t1(symbol) else quantity,
             )
         else:
             # 增加持仓
@@ -239,7 +243,9 @@ class PaperBroker(BaseBroker):
             total_cost = pos.quantity * pos.avg_cost + quantity * price
             pos.quantity += quantity
             pos.avg_cost = total_cost / pos.quantity
-            pos.available = pos.quantity
+            # T+1 下 available 不动（今天买的这部分仍冻结）；T+0 下跟上总量
+            if not self._is_t1(symbol):
+                pos.available = pos.quantity
             pos.current_price = self.market_prices.get(symbol, price)
             pos.market_value = pos.quantity * pos.current_price
             pos.unrealized_pnl = pos.market_value - (pos.quantity * pos.avg_cost)
@@ -252,7 +258,8 @@ class PaperBroker(BaseBroker):
 
         pos = self.positions[symbol]
         pos.quantity -= quantity
-        pos.available = pos.quantity
+        # 卖出后可卖量同步减少；T+1 下不能借此把冻结部分「洗」成可卖
+        pos.available = min(max(0, pos.available - quantity), pos.quantity)
 
         if pos.quantity == 0:
             # 清仓
@@ -262,6 +269,25 @@ class PaperBroker(BaseBroker):
             pos.current_price = self.market_prices.get(symbol, price)
             pos.market_value = pos.quantity * pos.current_price
             pos.unrealized_pnl = pos.market_value - (pos.quantity * pos.avg_cost)
+
+    @staticmethod
+    def _is_t1(symbol: str) -> bool:
+        """这个标的所在市场是不是 T+1。判据走全项目唯一的后缀推断 + 交易规则表。"""
+        from common.market import infer_market_from_symbol
+        from common.trading_rules import rules_for
+        try:
+            return rules_for(infer_market_from_symbol(symbol)).t_plus_one
+        except KeyError:
+            return False   # 认不出的市场按 T+0（宁可宽，也不要凭空冻住卖出）
+
+    def settle_t1(self):
+        """新交易日开盘：把昨日及更早买入的持仓解冻为可卖。
+
+        ⚠️ 调用方负责「一天一次」。⛔ 别在 tick 循环里每次都调 ——
+        那等于取消了 T+1，纸面成绩会重新变得比实盘好看。
+        """
+        for pos in self.positions.values():
+            pos.available = pos.quantity
 
     def cancel_order(self, order_id: str) -> bool:
         """撤销订单（模拟交易中订单立即成交，无法撤销）"""
