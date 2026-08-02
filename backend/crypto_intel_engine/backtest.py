@@ -114,6 +114,7 @@ def run_crypto_portfolio_backtest(
     end_date: str = "",
     slippage_pct: float | None = None,
     risk_config: dict | None = None,
+    market: str = "crypto",
 ) -> dict[str, Any]:
     """加密货币**组合**回测：N 个币共享同一份资金（S8）。
 
@@ -169,10 +170,15 @@ def run_crypto_portfolio_backtest(
             f"组合回测不会静默丢掉它们 —— 丢了的话「{len(bars_by_symbol) + len(missing)} "
             f"个币的组合」会悄悄变成 {len(bars_by_symbol)} 个币，而收益率看上去一切正常。")
 
+    # ⚠️ **只有 crypto 需要价格缩放**（绕开整数股粒度）。
+    #    股票本来就按股交易、价位也在合理量级，缩放纯属多余，
+    #    而且会让 `trades[].price` 变成一个没人看得懂的数。
+    scale_prices = market == "crypto"
+
     legs: list[dict[str, Any]] = []
     scales: dict[str, float] = {}
     for symbol, bars in bars_by_symbol.items():
-        k = _pick_scale(bars)
+        k = _pick_scale(bars) if scale_prices else 1.0
         scales[symbol] = k
         leg: dict[str, Any] = {"symbol": symbol, "bars": _scale_bars(bars, k)}
         sigs = signals_by_symbol.get(symbol)
@@ -183,7 +189,7 @@ def run_crypto_portfolio_backtest(
     res = run_portfolio(
         legs,
         initial_capital=initial_capital,
-        market="crypto",
+        market=market,
         start_date=start_date,
         end_date=end_date,
         slippage_pct=slippage_pct,

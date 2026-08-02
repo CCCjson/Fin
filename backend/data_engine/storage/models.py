@@ -1532,6 +1532,13 @@ class CryptoStrategy(Base):
     backtest_metrics = Column(Text)
     backtest_passed = Column(Integer, default=0)
 
+    # 这条策略跑哪个市场（S5）：crypto / a_share / us_stock。
+    # 🔴 **它决定用哪张字段表**（`common/strategy_fields`）。存量行留 NULL = crypto。
+    # ⛔ 别漏了落库：漏了的话「存进去是股票策略、读回来是 crypto」，
+    #    于是所有 DSL 条件都取不到值而**静默永不触发** —— 策略一单不下，
+    #    而每一层看上去都正常。（`sub_strategies` 差点栽在同一个坑上）
+    market = Column(String(16), default="crypto", index=True)
+
     # ── 组合策略：子策略 + 权重（S8 批次3，裁决 6）──
     # `[{name,weight,universe,entry_rules,exit_rules}, ...]` 的 JSON 串；单策略为 NULL。
     # ⚠️ 有它时 `entry_rules` / `exit_rules` 两列是 **NULL**（DSL 里两者互斥），

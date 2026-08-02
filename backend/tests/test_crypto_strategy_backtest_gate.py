@@ -437,3 +437,65 @@ def test_missing_cap_contention_is_called_out():
     r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars()},
                           run_pf=_old_engine, collect=_fake_collect)
     assert any("旧二进制" in c for c in r["caveats"]), "引擎没报这个字段，必须说出来"
+
+
+# ── 股票策略走同一条闸（S5 批次3）────────────────────────────────────────
+
+def test_gate_passes_the_market_down_to_the_engine():
+    """🔴 `market` 决定 C++ 侧的**费率**和**交易单位**。
+
+    ⛔ 写死 crypto 的话，股票策略拿 crypto 的费率（无印花税）和 1 股一手回测出来的
+    净收益是**假的** —— 而这个数字正是 arm 前的准入判据。
+    """
+    seen = {}
+
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
+        seen.update(kw)
+        return {"metrics": {"total_return": 0.03}}
+
+    # ⚠️ 规则里得用**股票的字段** —— 默认那套带 funding_rate，会被跨市场校验拦下
+    spec = _spec(market="a_share", universe=Universe(symbols=["600519.SH"]),
+                 entry_rules=EntryRules(when=ConditionGroup(
+                     all_of=[Condition(field="valuation.pe_ttm", op="lt", value=20)])))
+    run_backtest_gate(spec, {"600519.SH": _bars()}, run_pf=run_pf,
+                      collect=_fake_collect)
+    assert seen["market"] == "a_share", "股票策略被按 crypto 口径回测了"
+
+
+def test_crypto_still_gets_crypto():
+    seen = {}
+
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
+        seen.update(kw)
+        return {"metrics": {"total_return": 0.03}}
+
+    run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars()}, run_pf=run_pf,
+                      collect=_fake_collect)
+    assert seen["market"] == "crypto"
+
+
+def test_price_scaling_is_crypto_only():
+    """⚠️ 价格缩放是**绕开整数股粒度**的 crypto 专用手段。
+
+    股票本来就按股交易、价位也在合理量级，缩放纯属多余 ——
+    而且会让 `trades[].price` 变成一个没人看得懂的数。
+    """
+    from crypto_intel_engine.backtest import run_crypto_portfolio_backtest
+
+    sent = {}
+
+    def _fake_run_portfolio(legs, **kw):
+        sent["legs"] = legs
+        return {"metrics": {"total_return": 0.0}}
+
+    import crypto_intel_engine.backtest as bt
+    orig = bt.run_portfolio
+    bt.run_portfolio = _fake_run_portfolio
+    try:
+        bars = [{"date": "2026-01-05", "open": 1800.0, "high": 1800.0,
+                 "low": 1800.0, "close": 1800.0, "volume": 1}]
+        res = run_crypto_portfolio_backtest({"600519.SH": bars}, {}, market="a_share")
+        assert sent["legs"][0]["bars"][0]["close"] == 1800.0, "股票不该被缩放"
+        assert res["_price_scale"]["600519.SH"] == 1.0
+    finally:
+        bt.run_portfolio = orig

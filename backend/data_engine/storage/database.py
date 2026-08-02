@@ -285,7 +285,9 @@ def init_db():
         #    = 单策略，`rule_sets()` 会把它归一成一条 weight=1.0 的规则集，**无损**。
         _cs_new = [("family_id", "VARCHAR(40)"), ("version", "INTEGER"),
                    ("forked_from", "VARCHAR(40)"), ("is_benchmark", "INTEGER"),
-                   ("sub_strategies", "TEXT")]
+                   ("sub_strategies", "TEXT"),
+                   # S5：策略所属市场。存量行回填 crypto（此前只有 crypto 策略）
+                   ("market", "VARCHAR(16)")]
         _cs_added = [c for c, _ in _cs_new if c not in _cs_cols]
         if _cs_added:
             with engine.begin() as conn:
@@ -302,6 +304,9 @@ def init_db():
                 "UPDATE crypto_strategies SET version = 1 WHERE version IS NULL"))
             conn.execute(text(
                 "UPDATE crypto_strategies SET is_benchmark = 0 WHERE is_benchmark IS NULL"))
+            # S5：存量行全是 crypto 策略（股票策略是这张卡之后才有的），回填无损
+            conn.execute(text(
+                "UPDATE crypto_strategies SET market = 'crypto' WHERE market IS NULL"))
             # ⚠️ 同 crypto_trades 那条：ALTER 不建索引，create_all 对已存在的表整表跳过。
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_strategy_family_version "
                               "ON crypto_strategies (family_id, version)"))

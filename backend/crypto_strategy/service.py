@@ -34,6 +34,9 @@ def _spec_to_columns(spec: CryptoStrategySpec) -> dict[str, Any]:
         "name": spec.name, "strategy_kind": spec.strategy_kind,
         "interval_minutes": spec.interval_minutes,
         "capital_basis": spec.capital_basis, "mode": spec.mode,
+        # 🔴 `market` 必须落库：它决定用哪张字段表。漏了的话「存进去是股票策略、
+        #    读回来是 crypto」，所有 DSL 条件取不到值而**静默永不触发**。
+        "market": spec.market,
     }
     for key in _SUBOBJECTS:
         obj = getattr(spec, key)
@@ -54,6 +57,8 @@ def spec_from_row(row) -> CryptoStrategySpec:
         "name": row.name, "strategy_kind": row.strategy_kind,
         "interval_minutes": row.interval_minutes,
         "capital_basis": row.capital_basis, "mode": row.mode,
+        # 存量行没有这一列 → 缺省让 pydantic 用默认值 crypto
+        **({"market": row.market} if getattr(row, "market", None) else {}),
     }
     for key in _SUBOBJECTS:
         raw = getattr(row, key)

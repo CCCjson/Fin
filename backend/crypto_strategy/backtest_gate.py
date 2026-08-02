@@ -254,8 +254,13 @@ def run_backtest_gate(
     portfolio: dict[str, Any] = {}
     net_return = None
     if usable_bars:
+        # ⚠️ `market` 决定 C++ 侧的**费率**（A 股有印花税、crypto 没有）
+        #    **和交易单位**（A 股 100 股一手、crypto/美股 1）。
+        #    ⛔ 别写死 crypto —— 股票策略拿 crypto 的费率回测出来的净收益是假的，
+        #    而这个数字正是 arm 前的准入判据。
         portfolio = run_pf(usable_bars, signals_by_symbol,
                            initial_capital=initial_capital,
+                           market=spec.market,
                            slippage_pct=cm.slippage_pct,
                            risk_config=risk_config) or {}
         pm = portfolio.get("metrics") or {}

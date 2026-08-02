@@ -472,3 +472,36 @@ def test_combo_strategy_survives_a_round_trip_through_the_db(clean):
     assert [(x.name, x.weight) for x in back.rule_sets()] == [("趋势", 0.6), ("均值回归", 0.4)]
     assert back.entry_rules is None, "组合策略不该有顶层规则"
     assert back.owner_of("ETHUSDT.BN").name == "均值回归"
+
+
+def test_market_survives_a_round_trip_through_the_db(clean):
+    """🔴 `market` 必须落库 —— 跟 `sub_strategies` 是**同一个坑**。
+
+    漏了的话「存进去是股票策略、读回来是 crypto」，于是所有 DSL 条件都取不到值而
+    **静默永不触发**：策略一单不下，而每一层看上去都正常。
+    """
+    from crypto_intel_engine.dsl import CryptoStrategySpec
+    from crypto_strategy.service import crypto_strategy_service as svc
+    from crypto_strategy.service import spec_from_row
+
+    spec = CryptoStrategySpec(
+        name="A股策略", market="a_share",
+        universe={"symbols": ["600519.SH"]},
+        entry_rules={"when": {"all_of": [
+            {"field": "valuation.pe_ttm", "op": "lt", "value": 20}]}},
+        exit_rules={"when": {"all_of": [
+            {"field": "composite", "op": "lt", "value": 40}]}},
+        guardrails=_SPEC["guardrails"])
+    r = svc.compile_and_persist(spec, do_backtest=False)
+
+    s = get_session()
+    try:
+        row = s.query(CryptoStrategy).filter(
+            CryptoStrategy.strategy_id == r["strategy_id"]).first()
+        assert row.market == "a_share", "market 没落库"
+        back = spec_from_row(row)
+    finally:
+        s.close()
+    assert back.market == "a_share"
+    # 读回来之后字段表也要跟着对 —— 否则条件会静默取不到值
+    assert back.owner_of("600519.SH") is not None
