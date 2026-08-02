@@ -117,7 +117,13 @@ def run_signals(
             {"enabled": True, "stop_loss_pct": 0.08}
 
     Returns:
-        C++ 服务返回的原始 dict（metrics/equity_curve/trades/dropped_last_bar_orders）
+        C++ 服务返回的原始 dict（metrics/equity_curve/trades/dropped_last_bar_orders，
+        外加 `run_portfolio` docstring 里那七个 S8 字段）
+
+    Raises:
+        HTTPException(400): bars 为空，**或** `start_date`/`end_date` 划出的窗口里
+            一根 bar 都没有（S8 起）。⛔ 旧引擎遇到后者会**静默跑全量数据回 200**
+            —— 调用方以为自己测的是那个窗口，其实测的是全历史。
     """
     from common.market import to_cpp_market
 
@@ -165,9 +171,13 @@ def run_portfolio(
             🔒 它与 `max_position_pct` 是**两条独立约束取更严**，引擎里不是 max。
 
     Returns:
-        C++ 原始结果，比 `run_signals` 多出 `symbols` / `bar_coverage` /
-        `cash_contention` / `duplicate_dates` / `dropped_stale_orders` /
-        `engine_version`。
+        C++ 原始结果。⚠️ `symbols` / `bar_coverage` / `cash_contention` /
+        `cap_contention` / `duplicate_dates` / `dropped_stale_orders` /
+        `engine_version` 这七个字段**三个端点都有**（S8 起加在
+        `result_to_json` 里），单标的回测只是值退化——别按「组合专属」写消费方。
+        🔴 `cash_contention`（现金不够）与 `cap_contention`（仓位额度不够）是
+        **两件事**：额度卡住时账上现金还剩着，`cash_contention` 一天都不会记。
+        只读其中一个 = 「后几个标的一单都买不到」全程静默。
     """
     from common.market import to_cpp_market
 

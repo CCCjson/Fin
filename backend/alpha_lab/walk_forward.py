@@ -94,24 +94,37 @@ def _run_single_cpp_backtest(
         body["risk_config"] = risk_config
 
     # 获取 K 线数据
+    #
+    # 🔴 **取不到就抛，绝不「不带 bars 发过去」**（与 `api/routes/backtest_cpp.py::
+    #    _load_bars_or_400` 同一条规矩，门禁见 `tests/test_backtest_no_fake_data.py`）。
+    #    C++ `/api/backtest/run` 在**请求里没有 `bars` 字段时会自己造一段随机游走**
+    #    （`DataLoader::generate_sample_data`，日期从 2025-01-01 起）。旧写法是
+    #    `except: logger.warning(...)` 然后**照样发**——于是库里没这段行情时，
+    #    walk-forward 的训练期寻优和样本外测试跑的全是**伪随机数**，
+    #    夏普/过拟合比率/参数稳定性煞有介事，HTTP 200，页面上一切正常。
+    #    ⚠️ S8 之后落在 2025 之外的窗口会被引擎的空窗口检查挡下来（400），
+    #       但落在 2025 之内的窗口**照样能拿到一份假数据的 200** —— 所以这道
+    #       防线必须建在调用方，不能指望引擎侧的 400 兜底。
     try:
         from data_engine import DataEngine
         de = DataEngine()
         df = de.get_daily_data(symbol, start_date=start_date, end_date=end_date)
-        if df is not None and not df.empty:
-            bars = []
-            for _, row in df.iterrows():
-                bars.append({
-                    "date": str(row.get("date", row.name))[:10],
-                    "open": float(row["open"]),
-                    "high": float(row["high"]),
-                    "low": float(row["low"]),
-                    "close": float(row["close"]),
-                    "volume": float(row.get("volume", 0)),
-                })
-            body["bars"] = bars
     except Exception as e:
-        logger.warning(f"[WalkForward] 获取K线失败 {symbol}: {e}")
+        raise RuntimeError(
+            f"{symbol} 取 K 线失败（{e}）——walk-forward 不会用模拟数据顶替，本窗判失败") from e
+    if df is None or df.empty:
+        raise RuntimeError(
+            f"{symbol} 在 {start_date} ~ {end_date} 没有行情数据 —— "
+            f"walk-forward 不会用模拟数据顶替，本窗判失败。请先补齐这只标的的行情")
+
+    body["bars"] = [{
+        "date": str(row.get("date", row.name))[:10],
+        "open": float(row["open"]),
+        "high": float(row["high"]),
+        "low": float(row["low"]),
+        "close": float(row["close"]),
+        "volume": float(row.get("volume", 0)),
+    } for _, row in df.iterrows()]
 
     return proxy_sync("POST", "/api/backtest/run", body, timeout=_CPP_TIMEOUT)
 

@@ -134,8 +134,17 @@ class CryptoStrategyEngine:
         d: dict[str, Any] = {"symbol": symbol, "composite": analysis.get("composite"),
                              "recommendation": analysis.get("recommendation"), "held": held}
 
-        entry_hit, entry_fired = evaluate(spec.entry_rules.when, analysis)
-        exit_hit, exit_fired = evaluate(spec.exit_rules.when, analysis)
+        # ⭐ 走 `owner_of()`：组合策略下**每个币按它归属的那条子策略**的规则判，
+        #    顶层 entry/exit 在那种写法下是 None（直接读会 AttributeError）。
+        #    单策略会被 `rule_sets()` 归一成一条 weight=1.0 的 RuleSet，行为不变。
+        owner = spec.owner_of(symbol)
+        if owner is None:
+            # ⛔ 不静默跳过：universe 里有它却没人认领 = DSL 写漏了一块。
+            #    悄悄不交易会让人以为「规则没触发」，而它压根没被评估过。
+            return {**d, "status": "skipped",
+                    "reason": f"{symbol} 不在任何子策略的 universe 里，本轮没有规则可用"}
+        entry_hit, entry_fired = evaluate(owner.entry_rules.when, analysis)
+        exit_hit, exit_fired = evaluate(owner.exit_rules.when, analysis)
         price = (analysis.get("price") or {}).get("latest")
 
         # 持仓 → 看卖出（允许砍亏，不过成本闸）
@@ -153,8 +162,13 @@ class CryptoStrategyEngine:
         if not held and entry_hit:
             # 滑点用**真实盘口实测**替换固定假设（成本闸是「赚不赚」的最后判断，别喂假数）。
             # 必须在成本闸之前换：先估本单名义额 → 扫单簿 → 再判净边际。
+            # ⭐ 组合策略：这条子策略只分到 `weight × 总资金`。
+            #    单策略 weight=1.0 → 与从前完全一致。
+            #    ⚠️ 这是**软上限**（限制它能请求多少），不是各自独立的钱包 ——
+            #    所有子策略仍抢同一个账户，最终由护栏和硬风控裁决。
+            sub_capital = capital * owner.weight
             planned_notional = self._planned_notional(spec, symbol, price, analysis,
-                                                      broker_info, capital)
+                                                      broker_info, sub_capital)
             cm, slip_detail = gr.effective_cost_model(spec.cost_model, symbol, planned_notional)
             d["slippage"] = slip_detail
             gross = gross_target_edge(cm, price, analysis.get("take_profit"))
@@ -163,7 +177,7 @@ class CryptoStrategyEngine:
             if not (cost_ok and tp_ok):
                 return {**d, "status": "blocked_cost", "action": "BUY", "net_edge": net,
                         "reason": cost_reason if not cost_ok else tp_reason, "fired": entry_fired}
-            qty = self._size_buy(spec, symbol, price, analysis, broker_info, capital)
+            qty = self._size_buy(spec, symbol, price, analysis, broker_info, sub_capital)
             if not qty or qty <= 0:
                 return {**d, "status": "skipped", "action": "BUY", "reason": "仓位换算为0（资金/最小下单量）"}
             notional = qty * price

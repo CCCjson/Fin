@@ -66,7 +66,13 @@ const StrategyCard: React.FC<{ s: CryptoStrategyItem }> = ({ s }) => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         <div>
           <div className="text-gray-500 text-xs">参考回测</div>
-          <div className="text-gray-300" title="双均线代理，不代表你的 DSL 规则，仅供参考">
+          <div
+            className="text-gray-300"
+            title={'双均线代理，不代表你的 DSL 规则，仅供参考。\n'
+              + '口径：universe 里所有币共享一份资金的「组合总收益」'
+              + '（2026-07-31 起）。此前入库的行是「各币各发一份完整本金独立跑再平均」，'
+              + '两代数字不可比 —— 别拿新版本跟老版本比大小。'}
+          >
             {typeof s.backtest_net_return === 'number'
               ? `${(s.backtest_net_return * 100).toFixed(2)}%` : '—'}
             <span className="text-gray-600 text-[10px] ml-1">代理</span>

@@ -104,10 +104,13 @@ def _non_replayable_fields(spec: CryptoStrategySpec,
     """
     replayable = _REPLAYABLE_FIELDS | (extra_replayable or set())
     fields: set[str] = set()
-    for rules in (spec.entry_rules, spec.exit_rules):
-        for c in list(rules.when.all_of) + list(rules.when.any_of):
-            if c.field not in replayable and not c.field.startswith(_REPLAYABLE_PREFIXES):
-                fields.add(c.field)
+    # ⚠️ 走 `rule_sets()`：组合策略下顶层 entry/exit 是 None，直接读会 AttributeError。
+    #    单策略会被归一成一条 weight=1.0 的 RuleSet，两种写法在这儿长成同一个形状。
+    for rs in spec.rule_sets():
+        for rules in (rs.entry_rules, rs.exit_rules):
+            for c in list(rules.when.all_of) + list(rules.when.any_of):
+                if c.field not in replayable and not c.field.startswith(_REPLAYABLE_PREFIXES):
+                    fields.add(c.field)
     return sorted(fields)
 
 
@@ -120,6 +123,28 @@ _MIN_REPLAY_COVERAGE = 0.5
 # 🔒 回测里的总仓位上限 = 实盘那条硬风控（必须留 20% 现金）。
 # ⛔ 别为了「让回测数字好看一点」把它调高 —— 那等于让回测承诺一个实盘做不到的收益。
 _MAX_TOTAL_POSITION_PCT = 0.8
+
+
+def _stamp_weight(signals: list[dict[str, Any]], weight: float) -> list[dict[str, Any]]:
+    """给买入信号盖上子策略的资金权重。
+
+    ⭐ **这是「权重真的影响回测」的唯一落点。** 信号的 `weight` 字段是
+    「本单想动用当前可用现金的比例」，C++ 侧默认 0.95。组合策略里把它换成
+    子策略自己的权重，于是 60/40 的分配真的会体现在成交名义额上 ——
+    否则权重就只是 DSL 里一个没人读的装饰字段。
+
+    ⚠️ 只盖买入：卖出是全平持仓，跟资金分配无关。
+    ⚠️ 这是**软上限**不是独立钱包：所有子策略仍抢同一份现金，最终谁买到多少
+    由引擎的等比分配 + 仓位闸门决定（见 `engine.cpp` 的 (2b)(2c) 段）。
+    ⛔ 别改成「按权重把本金切成 N 份各自独立跑」——那就退回 S8 要解决的老问题了。
+    """
+    out = []
+    for sig in signals:
+        s2 = dict(sig)
+        if s2.get("action") == "buy":
+            s2["weight"] = weight
+        out.append(s2)
+    return out
 
 
 def run_backtest_gate(
@@ -175,14 +200,29 @@ def run_backtest_gate(
         except Exception:  # noqa: BLE001 — 查库失败就当一条没攒够（保守，不放宽闸门）
             matured = set()
     replayable = _REPLAYABLE_FIELDS | matured
-    used_fields = rule_fields(spec.entry_rules.when) | rule_fields(spec.exit_rules.when)
+    # ⭐ 组合策略下每条子策略各有自己的规则 —— 走 `rule_sets()` 归一：
+    #    单策略会被归成一条 weight=1.0 的 RuleSet，两种写法在下面长成同一个形状。
+    rule_sets = spec.rule_sets()
+    used_fields: set[str] = set()
+    for rs in rule_sets:
+        used_fields |= rule_fields(rs.entry_rules.when) | rule_fields(rs.exit_rules.when)
     evaluated = sorted(used_fields & replayable)
     proxy_used = bool(used_fields - replayable)
 
-    # ── 逐币生成信号（这一步与从前完全一样）──
+    # ── 逐币生成信号：按**它归属的那条规则集**评估 ──
     signals_by_symbol: dict[str, list[dict[str, Any]]] = {}
     usable_bars: dict[str, list[dict[str, Any]]] = {}
     for symbol, bars in bars_by_symbol.items():
+        owner = spec.owner_of(symbol)
+        if owner is None:
+            # ⛔ 不静默跳过。两种情况都到这儿，理由要说准：
+            #    ① 单策略：这个币根本不在 spec.universe 里（调用方多传了 bars）
+            #    ② 组合策略：顶层 universe 有它，但没有任何子策略认领
+            #    悄悄不交易会让人以为「策略认为它没机会」，而其实它压根没被评估过。
+            why = ("不在 universe 白名单里" if not spec.sub_strategies
+                   else "顶层 universe 有它，但没有任何子策略认领")
+            per_symbol.append({"symbol": symbol, "skipped": why, "net_return": None})
+            continue
         if not bars or len(bars) < _SLOW + 2:
             per_symbol.append({"symbol": symbol, "skipped": "历史不足", "net_return": None})
             continue
@@ -192,10 +232,12 @@ def run_backtest_gate(
         dates = [_date_str(idx) for idx in df.index]
         frames = _frames_for(symbol, dates, used_fields & matured,
                              load_metric_maps, build_frames)
-        on_bar = dsl_on_bar(spec, frames, replayable, proxy_on_bar, date_of=_date_str)
-        signals_by_symbol[symbol] = collect(on_bar, df)
+        on_bar = dsl_on_bar(owner, frames, replayable, proxy_on_bar, date_of=_date_str)
+        signals_by_symbol[symbol] = _stamp_weight(collect(on_bar, df), owner.weight)
         usable_bars[symbol] = bars
         per_symbol.append({"symbol": symbol,
+                           # 这个币归哪条子策略管、那条分到多少资金权重
+                           "rule_set": owner.name, "weight": owner.weight,
                            # 这个币有几天真的取到了指标帧（0 = 全靠代理）
                            "replay_days": sum(1 for f in frames.values() if f)})
 
@@ -269,6 +311,12 @@ def run_backtest_gate(
 
     # ③ 组合口径特有的诊断，全部**不静默**
     contention = portfolio.get("cash_contention") or {}
+    # 🔴 `.get(...) or {}` 会把**两件完全不同的事**压成同一个值：
+    #    「引擎报了：一天都没卡住」和「引擎压根没报这个字段」。
+    #    实测踩过：:8002 上跑着一个被覆盖前的旧二进制，`cap_contention` 根本不在响应里，
+    #    于是 15% 上限明明削掉了 85% 的名义额，caveats 却是空的 —— 全程静默。
+    #    ⛔ 这正是本模块最不该有的那种静默，所以缺字段要**明说**。
+    cap_missing = "cap_contention" not in portfolio and bool(portfolio)
     cap_contention = portfolio.get("cap_contention") or {}
     if contention.get("days"):
         caveats.append(
@@ -277,6 +325,20 @@ def run_backtest_gate(
             f"——这正是组合口径与「各币独立满仓」最大的差别所在")
     # ⚠️ 仓位上限竞争与资金竞争是**两件事**：额度卡住时账上现金还剩着，
     #    上面那条一天都不会记。第一版漏了它，于是「后几个币一单都买不到」全程静默。
+    if cap_missing:
+        caveats.append(
+            "回测引擎没有返回 `cap_contention` —— 说明它是 S8 之前的旧二进制。"
+            "仓位上限**可能**削了单但无法核对（重新编译并重启 :8002 上的 backtest_server）")
+    # ⛔ 单币上限直接裁掉的部分 —— 与「额度竞争」是两件事，但对使用者一样重要：
+    #    实测 15% 上限把请求削掉约 85%，net_return 跟着缩到 1/6。
+    #    不说的话屏幕上只剩一个数字，看不出它是被上限压出来的。
+    symbol_cap = portfolio.get("symbol_cap") or {}
+    if symbol_cap.get("days"):
+        caveats.append(
+            f"有 {symbol_cap['days']} 天被**单币敞口上限**"
+            f"（{spec.position_policy.per_symbol_exposure_cap_pct:.0%}）直接裁小了下单量，"
+            f"累计削掉 {symbol_cap.get('trimmed_notional', 0):,.0f} 名义额 —— "
+            f"⚠️ 这会把收益和亏损**一起**按比例压向 0，别把跌幅收窄读成「策略变好了」")
     if cap_contention.get("days"):
         caveats.append(
             f"有 {cap_contention['days']} 天被仓位上限卡住（单币上限 "
@@ -310,6 +372,7 @@ def run_backtest_gate(
         "engine_version": portfolio.get("engine_version"),
         "cash_contention": contention,
         "cap_contention": cap_contention,
+        "symbol_cap": symbol_cap,
         "metrics": {"portfolio_net_return": net_return, "symbols_tested": len(usable_bars),
                     "round_trip_cost": round(round_trip_cost(cm), 6),
                     "matured_fields": sorted(matured),

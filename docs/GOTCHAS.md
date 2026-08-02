@@ -54,12 +54,23 @@
 
 **怎么做**：买入推荐现在写 `DecisionLog`（`source="report_picks"`，见 `report_engine/picks_log.py`）——那张表本来就是为「上次推荐对不对」归因而建的。注意**「上期」的语义变了**：不再是「上一份同周期报告」，而是「上一批 `report_picks` 推荐」，因此不按 `report_type` 过滤。
 
-### 为什么回测有两套引擎
-`/backtest_cpp` 是 **C++ 正版**（Jason 日常在用，独立进程跑在8002端口，最低5元佣金/印花税/滑点/Sharpe/Sortino全对），`backend/backtest_engine` 是 **Python 遗留版**。
+### 回测只剩一套引擎（C++）——「两套引擎」那段已作废
+~~`backend/backtest_engine` 是 Python 遗留版，alpha_lab 依赖它~~ → **域5 已把 Python 引擎硬删**，目录不存在了。`alpha_lab` 现在走 C++ 的**信号驱动**端点（`/api/backtest/run_signals` + `external_signal_strategy`）：LLM 只产信号序列，执行/计费/指标全在 C++，所以「LLM 生成的任意代码塞不进 C++ 二进制」这个理由已经不成立。
 
-**为什么留着 Python 版**：`alpha_lab`（让LLM生成任意策略代码在sandbox里跑）依赖它——C++引擎只能跑8个编译内置策略，LLM生成的任意代码无法塞进编译好的C++二进制，所以alpha_lab只能用Python引擎。2026-07已把Python引擎的费用模型、T+1结算、次日开盘成交都打过补丁，与C++版对齐。
+**怎么做**：回测相关的改动/审计**只针对 C++版**；改 C++ 后需 `cd backtest_cpp/build && cmake --build .` 重建并**重启 backtest_server**（常驻进程，旧二进制不会自动更新）。
 
-**怎么做**：任何回测相关的改动/审计都优先针对 **C++版**；改C++代码后需 `cd backtest_cpp/build && cmake --build .` 重建并**重启 backtest_server**（常驻进程，旧二进制不会自动更新）。不要在 alpha_lab 之外的场景给 Python 版加新功能。
+### 🔴 回测引擎口径 v1 vs v2：同一列、同一个 JSON、含义已换（S8，2026-07-31）
+S8 把 C++ 引擎从「单票」解开成「共享资金池的组合」，顺带改了两件**直接改变数字**的事：crypto 的一手从 100 股变成 1 股、仓位上限把已有持仓算进去且不再被 `risk_config.enabled` 关掉。所以：
+
+- **判代次靠 `engine_version`**（C++ 结果里的 `"cpp-backtest-v2-portfolio"`）与 gate 返回的 `basis`（`"portfolio_shared_capital"`）。**旧行两个键都没有** —— 库里 S8 前后的行结构上无法区分，只能靠这两个标记。
+- **`crypto_strategies.backtest_net_return` 不可比**：旧=「每个币各发一份完整本金独立跑再把收益率算术平均」，新=「一个组合的总收益」。拿新版本跟同族老版本比大小是**没有意义的**（`list_family` 是「改完变好了没」的入口，最容易在这里踩）。
+- **`metrics.avg_net_return` 已改名 `metrics.portfolio_net_return`**（改名时代码里零消费方，但**历史 DB 行里还是旧键名**，写解析别只认一个）。
+- **`per_symbol[].net_return` 恒为 `None`** —— 一份共享现金拆不出「这个币赚了百分之几」，硬拆出来的数会骗人。⛔ 别「顺手补上」。
+- **`per_symbol[].num_trades` 单位变了**：旧是配对后的**回合数**，新是**成交笔数**（BUY/SELL 各算一笔），闭合回合约翻一倍。同名同位置，别拿新旧值比大小。
+- **`metrics.symbols_tested` 语义变了**：从「产出了收益率的币数」变成「历史够长、进了组合的币数」。
+- **`cash_contention` 与 `cap_contention` 是两件事**：前者现金不够、后者仓位额度不够。额度卡住时账上现金还剩着，`cash_contention` 一天都不会记 —— 只读一个 = 「后几个标的一单都买不到」全程静默。
+- **空窗口现在回 400**：`/api/backtest/run`、`/run_signals`、`/run_portfolio` 在「`start_date`~`end_date` 里一根 bar 都没有」时回 400（旧行为是**静默跑全量数据回 200**，等于对调用方撒谎）。调用方要么按 400 报错，要么先自己校验窗口。
+- ⛔ **别指望这个 400 兜住「库里没这只标的行情」**：C++ 在**请求里根本没有 `bars` 字段**时会造一段随机游走（`generate_sample_data`，日期从 2025-01-01 起），落在 2025 内的窗口照样回 200 假数据。防线在调用方：`api/routes/backtest_cpp.py::_load_bars_or_400` 与 `alpha_lab/walk_forward.py` 都必须取不到就抛，门禁 `tests/test_backtest_no_fake_data.py`。
 
 ### 市场命名：canonical vs 短写
 单一真源 `backend/common/market.py`：canonical = `a_share`/`hk_stock`/`us_stock`。

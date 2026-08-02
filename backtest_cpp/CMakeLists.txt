@@ -99,6 +99,7 @@ set(TEST_SOURCES
     tests/test_strategies.cpp
     tests/test_external_signal.cpp
     tests/test_portfolio_engine.cpp
+    tests/test_pairs_strategy.cpp
 )
 
 add_executable(backtest_tests

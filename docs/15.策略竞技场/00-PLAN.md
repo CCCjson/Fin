@@ -79,7 +79,7 @@
 | 层 | 现状 | 缺口 |
 |---|---|---|
 | 策略持久化 | ✅ `crypto_strategies` 表：完整 DSL（universe/entry/exit/position/cost/guardrails）+ 生命周期 `draft→backtested→armed→paused_by_guardrail→retired` + `paper｜live` 双模式 | **无版本号**、**无子策略嵌套** |
-| 上线前回测闸 | ✅ `crypto_strategy/backtest_gate.py`：净费回测为正才准 arm，含 degraded/replay 保真边界 | 🔴 **逐币独立回测，不是组合回测**（见 §4 问题 1） |
+| 上线前回测闸 | ✅ `crypto_strategy/backtest_gate.py`：净费回测为正才准 arm，含 degraded/replay 保真边界；✅ **2026-07-31 S8 起是真组合回测**（共享资金池，`run_pf(bars_by_symbol, signals_by_symbol, ...)`） | ~~逐币独立回测~~ 已解决；余下：`per_symbol[].net_return` 恒 None（共享现金拆不出逐币收益率，刻意不编） |
 | 逐 tick 审计 | ✅ `crypto_strategy_runs` 表：`pnl_realized_today`、`fees_today`、`decision_detail` **一直在落** | 🔴 **从来没有一个工具读过它** |
 | 护栏 | ✅ `guardrails.py`：单笔上限/每日单数/连续熔断 | 金额分级阈值待加 |
 | 执行层 | ✅ `pending.py` 待确认单 + 幂等键 + 币安实盘打通 | 卡在「待确认」不往下走 |
@@ -204,10 +204,16 @@
 
 ## 4. 🔴 四个真问题（审查发现，都改了路线）
 
-### 问题 1：组合回测引擎不存在，且卡在关键路径上
+### 问题 1：组合回测引擎不存在，且卡在关键路径上 ✅ **已于 2026-07-31 由 S8 解决**
+
+> ⛔ **下面这段是 2026-07-27 的现状记录，不是现在的代码。** 照着写会写错。
+> 现在的形态见 `S8-组合回测引擎.md`：`run_backtest_gate` 的注入点从
+> `run_bt(bars, signals, ...)` 改成 **`run_pf(bars_by_symbol, signals_by_symbol, ...)`**，
+> 一次组合回测跑完整个 universe；C++ 侧新增 `POST /api/backtest/run_portfolio`
+> （Python 门面 `services/backtest_cpp_client.py::run_portfolio`）。
 
 ```python
-# crypto_strategy/backtest_gate.py:164  —— 实测
+# crypto_strategy/backtest_gate.py:164  —— 2026-07-27 实测（S8 前）
 for symbol, bars in bars_by_symbol.items():
     res = run_bt(bars, signals, initial_capital=initial_capital, ...)
     #                            ↑ 每个币都假设有完整的一份本金
@@ -223,6 +229,9 @@ for symbol, bars in bars_by_symbol.items():
 而那个功能在 DSL 里**根本还不存在**（`CryptoStrategySpec` 没有子策略也没有权重）。
 → 已拆出为 **S8**。且 Jason 拍板走**改 C++ 引擎支持多标的**这条路，
 不在 Python 里重建回测层（「回测只剩 C++」这条决定保持不变）。
+→ ✅ **2026-07-31 完工**（批次 1 引擎、批次 2 接 Python 侧）。⚠️ **口径变更留下的疤**：
+`backtest_net_return` 同一列前后含义已换（旧=各币独立收益的算术平均，新=组合总收益），
+**不可比**；判代次看 `backtest_metrics` 里的 `basis` / `engine_version`（旧行没有这两个键）。
 
 ### 问题 2：AI 提案胜率可能永远达不到统计显著
 
@@ -272,12 +281,13 @@ paper 走另一条路（不写 CryptoTrade，这个隔离是刻意的别改）�
 | **S3** ✅ | **竞技场**：1 卫冕 + N 挑战者 + 四道门槛 + 冷却期 + 卫冕者变弱检测 | 中 | S2 | `S3-竞技场.md` |
 | **S4** ✅ | **提案后验**：拿真实盈亏给 AI 的断言打分 + 双重留痕收口（归因维度已在 S1 建成） | 中 | S3 | `S4-提案后验.md` |
 | **S5** | **股票地基**：股票版 DSL + 执行层，抄 crypto | 大 | **S8 的组合回测引擎**（股票版 `backtest_gate` 要用它） | 待写 |
-| **S8** 🆕 | **组合回测引擎（共享资金池）+ 组合策略 DSL（子策略+权重）** | 大 | 独立 | 待写 |
+| **S8** | **组合回测引擎（共享资金池）** ✅ 已完工（批次1 C++ 引擎 / 批次2 接 Python 侧）；**组合策略 DSL（子策略+权重）** 仍待做 | 大 | 独立 | `S8-组合回测引擎.md` |
 | **S6** ✅ | **实时行情统一出口**：跨市场取价 + 缺失不静默（影响面是**四个**消费方不是一个） | 中 | 独立 | `S6-实时行情.md` |
 | **S7** ✅ | **交易终端**：面板系统 + 六块内容 + 市场状态条（🔄 裁决 17 已放行，见卡片 §4b.1） | **大** | S3、S6 | `S7-交易终端.md` |
 
 **关键路径 S0 → S1 → S2 → S3 → S4**；**S6 可并行插空**（唯一真正独立的）；
-S5 卡在 S3 的组合回测引擎；S7 要等 S3 有东西可展示 + S6 的实时通道。
+~~S5 卡在 S3 的组合回测引擎~~ → **S8 的组合回测引擎已于 2026-07-31 建成，S5 的这道闸已开**；
+S7 要等 S3 有东西可展示 + S6 的实时通道。
 
 > **⚠️ S7 规模别低估**：面板系统（拖拽/折叠/布局持久化）+ 跨市场实时行情，
 > 是整条路线最大的一块，**不是「扩建 130 行的 Automation.tsx」那么轻**。

@@ -633,3 +633,34 @@ TEST(PortfolioEngineTest, PositionCapContentionIsReportedSeparatelyFromCash) {
     EXPECT_GT(r.cap_contention_trimmed, 0.0);
     EXPECT_EQ(r.cash_contention_days, 0) << "现金还剩着，别混成资金竞争";
 }
+
+TEST(PortfolioEngineTest, SingleSymbolCapTrimmingIsReported) {
+    /*
+     * ⛔ **单标的上限裁掉多少必须报出来。**
+     *
+     * 它跟 `cap_contention`（额度不够、多单等比分摊）是两件事：这里没有竞争，
+     * 就是一条上限把单直接裁小。但对使用者来说同样是「我请求的名义额没全成交」，
+     * 而且影响可以非常大 —— 实测单币 15% 上限把请求削掉约 85%，收益率缩到 1/6。
+     * 不报的话屏幕上只剩一个「收益 -1.3%」，看不出它是被上限压出来的。
+     *
+     * 🔴 这是审查重跑生产数据时挖出来的：`cap_contention` 是 0、caveats 是空，
+     *    而 15% 上限明明在起作用 —— 两个「没事」拼出一个假象。
+     */
+    RiskConfig risk;
+    risk.enabled = true;
+    risk.max_position_pct = 0.15;      // 单币上限
+    risk.max_total_position_pct = 1.0; // 总仓位不限，隔离出单币上限这一条
+
+    auto engine = crypto_engine(100000.0, risk);
+    engine.load_data("AAA", flat_bars(DATES, 10.0));
+    engine.set_strategy(std::make_unique<PortfolioSignalStrategy>(
+        std::map<std::string, std::map<std::string, SignalEntry>>{
+            {"AAA", {{"2026-01-05", buy(0.95)}}},   // 想要 95%，只能拿 15%
+        }));
+
+    auto r = engine.run();
+    EXPECT_GE(r.symbol_cap_days, 1) << "单币上限削了单，必须记一笔";
+    EXPECT_GT(r.symbol_cap_trimmed, 0.0);
+    EXPECT_EQ(r.cap_contention_days, 0) << "总仓位不限，别混成额度竞争";
+    EXPECT_EQ(r.cash_contention_days, 0) << "只有一个买单，谈不上抢钱";
+}

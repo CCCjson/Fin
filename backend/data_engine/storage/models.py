@@ -1513,9 +1513,30 @@ class CryptoStrategy(Base):
 
     # ── 上线前回测闸（arm 的前置硬条件）──
     last_backtest_at = Column(DateTime)
-    backtest_net_return = Column(Float)                # 净费回报（小数，0.12=12%）
-    backtest_metrics = Column(Text)                    # {"sharpe":..,"max_drawdown":..,"win_rate":..,"degraded":..}
+    # 净费回报（小数，0.12=12%）。
+    # 🔴 **同一列，S8（2026-07-31）前后含义已换**：旧行是「universe 里每个币各发一份
+    #    完整本金独立跑，再把收益率算术平均」，新行是「所有币共享一份资金的组合总收益」。
+    #    两者**不可比**，拿新版本跟库里的历史版本比大小是没有意义的。
+    #    ⚠️ 判一行是哪一代看 `backtest_metrics` 里的 `basis` / `engine_version`
+    #    （旧行两个键都没有；旧行的 `metrics` 里那个键叫 `avg_net_return`，
+    #     新行叫 `portfolio_net_return`）。
+    backtest_net_return = Column(Float)
+    # `crypto_strategy/service.py::backtest_metrics_json()` 的产物，**只此一处序列化**：
+    # {"metrics":{portfolio_net_return,symbols_tested,round_trip_cost,fee_basis,...},
+    #  "degraded":..,"degraded_reasons":[..],"caveats":[..],"replay":{..},
+    #  "basis":"portfolio_shared_capital","engine_version":"cpp-backtest-v2-portfolio",
+    #  "cash_contention":{days,trimmed_notional},"cap_contention":{...},
+    #  "per_symbol":[{symbol,replay_days,num_trades,bar_days,net_return}]}
+    # ⛔ `per_symbol[].net_return` 恒为 None（组合口径下一份共享现金拆不出逐币收益率）；
+    # ⛔ `per_symbol[].num_trades` 是**成交笔数**（BUY/SELL 各算一笔），不是回合数。
+    backtest_metrics = Column(Text)
     backtest_passed = Column(Integer, default=0)
+
+    # ── 组合策略：子策略 + 权重（S8 批次3，裁决 6）──
+    # `[{name,weight,universe,entry_rules,exit_rules}, ...]` 的 JSON 串；单策略为 NULL。
+    # ⚠️ 有它时 `entry_rules` / `exit_rules` 两列是 **NULL**（DSL 里两者互斥），
+    #    读回来一律走 `CryptoStrategySpec.rule_sets()`，⛔ 别直接读那两列。
+    sub_strategies = Column(Text)
 
     # ── 运行态 ──
     last_run_at = Column(DateTime)

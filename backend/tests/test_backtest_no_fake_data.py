@@ -102,6 +102,38 @@ def test_no_logger_line_announces_falling_back_to_fake_data():
             f"说明那条静默降级的路还开着")
 
 
+def test_walk_forward_also_refuses_to_run_without_bars(monkeypatch):
+    """🔴 walk-forward 是**同一个洞的第二个入口**（2026-07-31 扫 S8 消费方时挖出）。
+
+    `alpha_lab/walk_forward.py` 从前是 `except: logger.warning(...)` 然后**不带 bars**
+    发给 C++ —— 于是库里没这段行情时，训练期网格寻优 + 样本外测试跑的全是
+    `generate_sample_data()` 那条伪随机游走，而 overfit_ratio / 参数稳定性
+    照样一本正经地算出来。
+
+    ⚠️ 别以为「S8 之后引擎会 400 挡住」就够了：模拟数据的日期是 **2025-01-01 起**，
+    落在 2025 之内的窗口拿到的仍是**假数据的 200**。防线必须在调用方。
+    """
+    import alpha_lab.walk_forward as wf
+
+    class _DE:
+        def get_daily_data(self, symbol, start_date=None, end_date=None):
+            return _FakeDF(empty=True)
+
+    import data_engine
+    monkeypatch.setattr(data_engine, "DataEngine", lambda: _DE())
+
+    sent: list = []
+    monkeypatch.setattr(wf, "proxy_sync",
+                        lambda *a, **kw: sent.append(a) or {"metrics": {}})
+
+    with pytest.raises(RuntimeError) as e:
+        wf._run_single_cpp_backtest(
+            "600519.SH", "MA_CROSS", {}, "2025-01-01", "2025-06-30",
+            100000.0, "a_share")
+    assert "模拟数据" in str(e.value)
+    assert not sent, "取不到 bars 还把请求发出去了 —— C++ 会造一段随机游走顶替"
+
+
 def test_pairs_second_leg_is_not_silently_skipped():
     """🔴 配对交易的第二条腿拿不到数据时，**不许静默跳过**。
 

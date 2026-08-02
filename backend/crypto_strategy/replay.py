@@ -29,7 +29,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from crypto_intel_engine.dsl import ConditionGroup, CryptoStrategySpec
+from crypto_intel_engine.dsl import ConditionGroup
 
 # ──────────────────── 原语 ↔ 指标 ↔ 分析卡路径 ────────────────────
 
@@ -177,11 +177,15 @@ def filter_replayable(group: ConditionGroup, replayable: set[str]) -> ConditionG
 # ──────────────────── on_bar 工厂 ────────────────────
 
 
-def dsl_on_bar(spec: CryptoStrategySpec, frames: dict[str, dict], replayable: set[str],
+def dsl_on_bar(rules, frames: dict[str, dict], replayable: set[str],
                proxy_on_bar: Callable, *, date_of: Callable[[Any], str]) -> Callable:
     """产一个逐 bar 评估 DSL 的 on_bar（混合回放，形态见模块 docstring）。
 
     Args:
+        rules: 一条 `RuleSet`（`spec.rule_sets()` 的元素）。
+            ⚠️ 参数从整个 `spec` 改成了 RuleSet（S8 批次3）：组合策略下
+            **每条子策略各有自己的进出场规则**，传 spec 的话这里根本不知道该用哪套。
+            单策略照常 —— `rule_sets()` 会把它归一成一条 weight=1.0 的 RuleSet。
         frames: `build_frames` 的产物（date_str → 伪分析卡）。
         replayable: 本次真能逐日回放的原语集合。
         proxy_on_bar: 双均线代理，给「含非可回放原语」的规则当择时替身。
@@ -189,6 +193,7 @@ def dsl_on_bar(spec: CryptoStrategySpec, frames: dict[str, dict], replayable: se
     """
     from crypto_strategy.evaluator import evaluate
 
+    spec = rules   # 下面沿用旧名字，字段结构一致（entry_rules/exit_rules）
     entry_all = rule_fields(spec.entry_rules.when)
     exit_all = rule_fields(spec.exit_rules.when)
     entry_needs_proxy = bool(entry_all - replayable)

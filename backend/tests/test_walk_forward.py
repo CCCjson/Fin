@@ -43,10 +43,16 @@ def test_cpp_call_converts_market_to_wire_value():
         captured["body"] = body
         return {"metrics": {"sharpe_ratio": 1.0, "total_return": 0.1}}
 
-    # 屏蔽取数（无 DataEngine 依赖），只验 market 转换
+    # 只验 market 转换 —— 但**必须喂真 bars**：取不到行情现在直接抛
+    # （walk-forward 不许「不带 bars 发过去」让 C++ 造随机游走，
+    #  见 tests/test_backtest_no_fake_data.py）
+    import pandas as pd
+    _bars = pd.DataFrame([{"date": "2020-01-02", "open": 10.0, "high": 11.0,
+                           "low": 9.5, "close": 10.5, "volume": 1000.0}])
+
     with patch.object(wf, "proxy_sync", _fake_proxy_sync), \
          patch("data_engine.DataEngine") as _de:
-        _de.return_value.get_daily_data.return_value = None
+        _de.return_value.get_daily_data.return_value = _bars
         wf._run_single_cpp_backtest(
             symbol="00700.HK", strategy="MA_CROSS", params={"fast": 5, "slow": 20},
             start_date="2020-01-01", end_date="2020-03-31",

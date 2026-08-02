@@ -102,6 +102,8 @@ backtest_cpp/（端口 8002，独立编译的 C++ 服务）
   - HTTP入口：`backend/api/routes/backtest_cpp.py`
   - 对话入口：`backend/agents/tools/backtest_tools.py`
   - alpha_lab 走 C++ `run_signals`（AI 产信号）；walk-forward 滚动验证算法在 `backend/alpha_lab/walk_forward.py`（走 `proxy_sync` 打 C++，不落库）
+  - **三个端点**：`/api/backtest/run`（内置策略）、`/run_signals`（外部信号，单标的）、`/run_portfolio`（**N 个标的共享一份资金**，S8 新增，门面 `backtest_cpp_client.run_portfolio`，消费方 `crypto_intel_engine/backtest.py::run_crypto_portfolio_backtest` ← `crypto_strategy/backtest_gate.py`）
+  - ⚠️ 口径版本 `engine_version="cpp-backtest-v2-portfolio"`；v1/v2 数字**不可比**，空日期窗口回 400，详见 `GOTCHAS.md`「回测引擎口径 v1 vs v2」
   - 改完 C++ 需 `cd backtest_cpp/build && cmake --build .` 重建并**重启常驻的 backtest_server 进程**（不会自动更新）
 
 ### 交易引擎 `backend/trading_engine/`

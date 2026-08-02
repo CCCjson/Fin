@@ -51,8 +51,12 @@ def _dsl_plain(spec: CryptoStrategySpec) -> dict:
         "name": spec.name, "kind": spec.strategy_kind, "mode": spec.mode,
         "interval_minutes": spec.interval_minutes,
         "universe": spec.universe.symbols,
-        "entry": _conds(spec.entry_rules.when),
-        "exit": _conds(spec.exit_rules.when),
+        # ⚠️ 走 rule_sets()：组合策略下顶层 entry/exit 是 None（见 dsl.py）
+        "rule_sets": [
+            {"name": rs.name, "weight": rs.weight, "symbols": rs.universe.symbols,
+             "entry": _conds(rs.entry_rules.when), "exit": _conds(rs.exit_rules.when)}
+            for rs in spec.rule_sets()
+        ],
         "position": {"source": spec.position_policy.target_pct_source,
                      "per_symbol_cap_pct": spec.position_policy.per_symbol_exposure_cap_pct},
         "cost": {"round_trip_pct": round(rt, 6), "min_net_edge_pct": cm.min_net_edge_pct,
@@ -122,6 +126,10 @@ def compile_crypto_strategy(spec: Any, description_nl: str | None = None) -> Too
     plain.update({
         "strategy_id": result.get("strategy_id"),
         "backtest_net_return_ref": net,   # ⚠️ 参考值：双均线代理，不代表你的 DSL 规则
+        # 🔴 口径标记必须**跟着数字一起给 LLM**（同 pnl.basis 那条规矩）：
+        #    S8 起这个数是「所有币共享一份资金的组合总收益」，而库里 S8 之前的行是
+        #    「各币独立跑再平均」。不把 basis 摆出来，AI 拿新旧数字比大小就是在瞎比。
+        "backtest_basis": bt.get("basis"),
         "degraded": bt.get("degraded"), "degraded_reasons": bt.get("degraded_reasons"),
         # 「数字本身可信度」的警告（费率口径 / 回放覆盖度），与 degraded 正交
         "caveats": bt.get("caveats"),

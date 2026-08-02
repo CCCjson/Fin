@@ -281,8 +281,11 @@ def init_db():
     # 这么回填是**无损**的：此前根本没有「同一条策略的多个版本」这个概念。
     if "crypto_strategies" in insp.get_table_names():
         _cs_cols = {c["name"] for c in insp.get_columns("crypto_strategies")}
+        # ⚠️ `sub_strategies`（S8 批次3 的组合策略）也在这张表里加：存量行留 NULL
+        #    = 单策略，`rule_sets()` 会把它归一成一条 weight=1.0 的规则集，**无损**。
         _cs_new = [("family_id", "VARCHAR(40)"), ("version", "INTEGER"),
-                   ("forked_from", "VARCHAR(40)"), ("is_benchmark", "INTEGER")]
+                   ("forked_from", "VARCHAR(40)"), ("is_benchmark", "INTEGER"),
+                   ("sub_strategies", "TEXT")]
         _cs_added = [c for c, _ in _cs_new if c not in _cs_cols]
         if _cs_added:
             with engine.begin() as conn:

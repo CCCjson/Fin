@@ -114,8 +114,9 @@ def test_gate_runs_one_portfolio_not_n_independent_backtests():
     def run_pf(bars_by_symbol, signals_by_symbol, **kw):
         calls.append(sorted(bars_by_symbol))
         return {"metrics": {"total_return": 0.03}}
+    spec = _spec(universe=Universe(symbols=["BTCUSDT.BN", "ETHUSDT.BN", "SOLUSDT.BN"]))
     r = run_backtest_gate(
-        _spec(), {"BTCUSDT.BN": _bars(), "ETHUSDT.BN": _bars(), "SOLUSDT.BN": _bars()},
+        spec, {"BTCUSDT.BN": _bars(), "ETHUSDT.BN": _bars(), "SOLUSDT.BN": _bars()},
         run_pf=run_pf, collect=_fake_collect)
     assert len(calls) == 1, "三个币应该在**一次**组合回测里跑，不是各跑一遍"
     assert calls[0] == ["BTCUSDT.BN", "ETHUSDT.BN", "SOLUSDT.BN"]
@@ -308,3 +309,131 @@ def test_spec_roundtrip_through_db(mem_db, monkeypatch):
         assert rebuilt.universe.symbols == ["BTCUSDT.BN"]
     finally:
         s.close()
+
+
+# ── 组合策略：子策略 + 权重（S8 批次3，裁决 6）────────────────────────────
+
+def _sub(name, weight, symbols, entry_gte=60):
+    from crypto_intel_engine.dsl import SubStrategy
+    return SubStrategy(
+        name=name, weight=weight,
+        universe=Universe(symbols=symbols),
+        entry_rules=EntryRules(when=ConditionGroup(
+            all_of=[Condition(field="composite", op="gte", value=entry_gte)])),
+        exit_rules=ExitRules(when=ConditionGroup(
+            all_of=[Condition(field="composite", op="lt", value=40)])))
+
+
+def _combo(w_trend=0.6, w_mr=0.4):
+    """「60% 趋势 + 40% 均值回归」—— 裁决 6 那句话，终于表达得出来了。"""
+    return _spec(
+        universe=Universe(symbols=["BTCUSDT.BN", "ETHUSDT.BN"]),
+        entry_rules=None, exit_rules=None,
+        sub_strategies=[_sub("趋势", w_trend, ["BTCUSDT.BN"]),
+                        _sub("均值回归", w_mr, ["ETHUSDT.BN"])])
+
+
+def test_weight_actually_reaches_the_backtest():
+    """⭐ **这是批次3 的核心验收**：改权重，喂给引擎的东西必须跟着变。
+
+    ⛔ 否则权重就只是 DSL 里一个没人读的装饰字段 —— 而那正是 S8 开卡时
+    「带权重的组合策略回测出来的数字跟权重毫无关系」要解决的问题。
+    """
+    seen: dict[str, list] = {}
+
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
+        seen.update(signals_by_symbol)
+        return {"metrics": {"total_return": 0.05}}
+
+    def _always_buy(on_bar, df):
+        return [{"date": "2026-01-10", "action": "buy"}]
+
+    run_backtest_gate(_combo(0.6, 0.4),
+                      {"BTCUSDT.BN": _bars(), "ETHUSDT.BN": _bars()},
+                      run_pf=run_pf, collect=_always_buy)
+    assert seen["BTCUSDT.BN"][0]["weight"] == 0.6
+    assert seen["ETHUSDT.BN"][0]["weight"] == 0.4
+
+    seen.clear()
+    run_backtest_gate(_combo(0.9, 0.1),
+                      {"BTCUSDT.BN": _bars(), "ETHUSDT.BN": _bars()},
+                      run_pf=run_pf, collect=_always_buy)
+    assert seen["BTCUSDT.BN"][0]["weight"] == 0.9, "改了权重，喂进回测的却没变"
+    assert seen["ETHUSDT.BN"][0]["weight"] == 0.1
+
+
+def test_each_symbol_is_evaluated_by_its_owning_sub_strategy():
+    """每个币走**它自己那条子策略**的规则，别混用。"""
+    used: dict[str, int] = {}
+
+    def _spy_collect(on_bar, df):
+        # on_bar 是 dsl_on_bar(owner, ...) 的产物；用闭包里的规则阈值反查是哪条子策略
+        used[len(used)] = 1
+        return []
+
+    calls: list = []
+
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
+        calls.append(sorted(signals_by_symbol))
+        return {"metrics": {"total_return": 0.01}}
+
+    r = run_backtest_gate(_combo(), {"BTCUSDT.BN": _bars(), "ETHUSDT.BN": _bars()},
+                          run_pf=run_pf, collect=_spy_collect)
+    rows = {x["symbol"]: x for x in r["per_symbol"]}
+    assert rows["BTCUSDT.BN"]["rule_set"] == "趋势"
+    assert rows["BTCUSDT.BN"]["weight"] == 0.6
+    assert rows["ETHUSDT.BN"]["rule_set"] == "均值回归"
+    assert rows["ETHUSDT.BN"]["weight"] == 0.4
+    assert calls == [["BTCUSDT.BN", "ETHUSDT.BN"]], "仍然是一次组合回测"
+
+
+def test_symbol_nobody_owns_is_reported_not_silently_dropped():
+    """⛔ 顶层 universe 有它、却没有子策略认领 → 必须点名，不许静默不交易。
+
+    静默的话看上去像「策略认为这个币没机会」，而它其实**压根没被评估过**。
+    """
+    spec = _spec(
+        universe=Universe(symbols=["BTCUSDT.BN", "ETHUSDT.BN", "SOLUSDT.BN"]),
+        entry_rules=None, exit_rules=None,
+        sub_strategies=[_sub("趋势", 0.6, ["BTCUSDT.BN"]),
+                        _sub("均值回归", 0.4, ["ETHUSDT.BN"])])   # SOL 没人管
+
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
+        assert "SOLUSDT.BN" not in bars_by_symbol, "没人管的币不该进回测"
+        return {"metrics": {"total_return": 0.01}}
+
+    r = run_backtest_gate(spec, {"BTCUSDT.BN": _bars(), "ETHUSDT.BN": _bars(),
+                                 "SOLUSDT.BN": _bars()},
+                          run_pf=run_pf, collect=_fake_collect)
+    sol = next(x for x in r["per_symbol"] if x["symbol"] == "SOLUSDT.BN")
+    assert "没有任何子策略认领" in sol["skipped"]
+
+
+def test_plain_strategy_still_gets_weight_one():
+    """单策略走同一条路（`rule_sets()` 归一成一条 weight=1.0），行为不变。"""
+    seen: dict[str, list] = {}
+
+    def run_pf(bars_by_symbol, signals_by_symbol, **kw):
+        seen.update(signals_by_symbol)
+        return {"metrics": {"total_return": 0.02}}
+
+    r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars()},
+                          run_pf=run_pf,
+                          collect=lambda on_bar, df: [{"date": "2026-01-10", "action": "buy"}])
+    assert seen["BTCUSDT.BN"][0]["weight"] == 1.0
+    assert r["per_symbol"][0]["rule_set"] == "t"      # 单策略的 RuleSet 名 = 策略名
+
+
+def test_missing_cap_contention_is_called_out():
+    """🔴 引擎没返回 `cap_contention`（旧二进制）≠「一天都没卡住」。
+
+    实测踩过：:8002 上跑着被覆盖前的旧 binary，15% 上限明明削掉了 85% 的名义额，
+    而 caveats 是空的 —— 全程静默。`.get(...) or {}` 把这两件事压成了同一个值。
+    """
+    def _old_engine(bars_by_symbol, signals_by_symbol, **kw):
+        return {"metrics": {"total_return": 0.01},
+                "cash_contention": {"days": 0, "trimmed_notional": 0.0}}   # 没有 cap_contention
+
+    r = run_backtest_gate(_spec(), {"BTCUSDT.BN": _bars()},
+                          run_pf=_old_engine, collect=_fake_collect)
+    assert any("旧二进制" in c for c in r["caveats"]), "引擎没报这个字段，必须说出来"

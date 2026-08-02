@@ -132,6 +132,8 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
     double cash_contention_trimmed = 0.0;
     int cap_contention_days = 0;
     double cap_contention_trimmed = 0.0;
+    int symbol_cap_days = 0;
+    double symbol_cap_trimmed = 0.0;
 
     for (size_t di = 0; di < dates.size(); ++di) {
         const std::string& today = dates[di];
@@ -207,6 +209,7 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
          * 「本标的持仓不得超过总资产 X%」是每个标的自己的事，没有竞争关系，
          * 所以这一步可以逐单直接裁，顺序无关。
          */
+        double sym_cap_trimmed = 0.0;
         for (auto& order : buys) {
             const Bar* b = open_of(order.symbol);
             if (!risk_mgr.has_position_caps()) break;
@@ -215,6 +218,17 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
             // 只过 ① 这一条：总仓位上限留到 (2b) 统一分配
             int adjusted = risk_mgr.filter_symbol_quantity(
                 order.quantity, b->open, total_value_now, sym_val);
+            /*
+             * ⛔ **单标的上限裁掉多少，必须报出来。**
+             * 它跟 (2b) 的「额度不够、多单等比分摊」是两件事：这里没有竞争，
+             * 就是一条上限直接把单裁小。但对使用者来说它同样是「我请求的
+             * 名义额没有全部成交」，而且影响可以非常大 —— 实测单币上限 15%
+             * 会把请求削掉约 85%，收益率跟着缩到 1/6。
+             * 不报的话，屏幕上只剩一个「收益 -1.3%」，看不出它是被上限压出来的。
+             */
+            if (adjusted < order.quantity) {
+                sym_cap_trimmed += (order.quantity - std::max(0, adjusted)) * b->open;
+            }
             /*
              * ⚠️ 只在**被削减时**才取整到手。
              * 无条件取整会顺手改掉一件无关的事：策略显式下 137 股、又没配
@@ -242,6 +256,11 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
          *
          * ⛔ 别再改回逐单累加。额度不够时**按请求名义额等比缩减**，并如实上报。
          */
+        if (sym_cap_trimmed > 0.0) {
+            symbol_cap_days += 1;
+            symbol_cap_trimmed += sym_cap_trimmed;
+        }
+
         double cap_trimmed = 0.0;
         int buys_before_cap = 0;
         for (const auto& o : buys) if (o.quantity > 0) ++buys_before_cap;
@@ -445,6 +464,8 @@ BacktestResult BacktestEngine::run(const std::string& start_date,
     result.cash_contention_trimmed = cash_contention_trimmed;
     result.cap_contention_days = cap_contention_days;
     result.cap_contention_trimmed = cap_contention_trimmed;
+    result.symbol_cap_days = symbol_cap_days;
+    result.symbol_cap_trimmed = symbol_cap_trimmed;
     result.duplicate_dates = duplicate_dates;
     if (duplicate_dates > 0) {
         std::cerr << "[backtest] 输入数据有 " << duplicate_dates

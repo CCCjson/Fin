@@ -71,10 +71,15 @@ void Server::stop() {
  * make_unique<MACrossStrategy>(...)：
  * 创建一个 MACrossStrategy 对象，并用 unique_ptr 包装。
  * 这比 new + unique_ptr 更安全（异常安全）。
+ *
+ * primary_symbol —— 请求体里的 `symbol`（第一条腿）。
+ * 只有 PAIRS 用得上：它需要知道**两条腿分别叫什么**才能按 ctx.symbol 分辨
+ * 引擎每天喂过来的是哪一条。其余策略忽略这个参数。
  */
 static std::unique_ptr<IStrategy> create_strategy(
     const std::string& name,
-    const json& params
+    const json& params,
+    const std::string& primary_symbol = ""
 ) {
     if (name == "MA_CROSS") {
         int fast = params.value("fast_period", 5);
@@ -128,7 +133,7 @@ static std::unique_ptr<IStrategy> create_strategy(
                 std::string sub_name = sub.value("name", "");
                 double weight = sub.value("weight", 1.0);
                 json sub_params = sub.value("params", json::object());
-                auto sub_strategy = create_strategy(sub_name, sub_params);
+                auto sub_strategy = create_strategy(sub_name, sub_params, primary_symbol);
                 if (sub_strategy) {
                     combo->add_sub_strategy(sub_name, weight, std::move(sub_strategy));
                 }
@@ -143,15 +148,54 @@ static std::unique_ptr<IStrategy> create_strategy(
         double exit_z = params.value("exit_z", 0.5);
         double pct = params.value("position_pct", 0.95);
 
-        // bars2 从 params 中提取
-        std::vector<Bar> bars2;
-        if (params.contains("bars2") && params["bars2"].is_array()) {
-            bars2 = DataLoader::from_json(params["bars2"]);
-        }
-        return std::make_unique<PairsStrategy>(symbol2, bars2, lookback, entry_z, exit_z, pct);
+        /*
+         * ⚠️ **`params.bars2` 不再进策略，而是走 `engine.load_data(symbol2, bars2)`**。
+         *
+         * 线上协议一个字没改（调用方照旧传 `params.symbol2` + `params.bars2`，
+         * `backend/api/routes/backtest_cpp.py` 无需改动），变的是这批 bar 落到哪：
+         * 从前它被塞进策略当「只读参考价」，第二条腿因此**从来没真的下过单**；
+         * 现在它是引擎里一个正经标的，两条腿共享同一份资金、都能成交。
+         * 装载动作见下面的 `load_pair_legs()`。
+         */
+        return std::make_unique<PairsStrategy>(primary_symbol, symbol2,
+                                               lookback, entry_z, exit_z, pct);
     }
 
     return nullptr;   // 未知策略
+}
+
+/*
+ * load_pair_legs — 把 PAIRS 的第二条腿装进引擎。
+ *
+ * 为什么单拎出来：`create_strategy` 只能返回策略对象，喂数据是引擎的事。
+ * 这里顺带递归进 COMBO 的 sub_strategies —— 否则「COMBO 里套一个 PAIRS」
+ * 会拿不到第二条腿的行情而一单不下（旧实现里它是能拿到的，不能让它退化）。
+ *
+ * ⚠️ 缺 `bars2` 时这里**什么都不做**，回测会一单不下地跑完。
+ *    上游 `backend/api/routes/backtest_cpp.py` 已经把「取不到第二条腿就 400」
+ *    这道闸门做在它那边（见 test_pairs_second_leg_is_not_silently_skipped），
+ *    所以这里不再重复拦，但**别把这当成「没数据也没关系」**。
+ */
+static void load_pair_legs(BacktestEngine& engine,
+                           const std::string& strategy_name,
+                           const json& params) {
+    if (strategy_name == "PAIRS") {
+        std::string symbol2 = params.value("symbol2", "");
+        if (!symbol2.empty() && params.contains("bars2") && params["bars2"].is_array()) {
+            auto bars2 = DataLoader::from_json(params["bars2"]);
+            if (!bars2.empty()) {
+                engine.load_data(symbol2, std::move(bars2));
+            }
+        }
+        return;
+    }
+    if (strategy_name == "COMBO" &&
+        params.contains("sub_strategies") && params["sub_strategies"].is_array()) {
+        for (const auto& sub : params["sub_strategies"]) {
+            load_pair_legs(engine, sub.value("name", ""),
+                           sub.value("params", json::object()));
+        }
+    }
 }
 
 /*
@@ -233,6 +277,11 @@ static json result_to_json(const BacktestResult& result) {
     j["cap_contention"] = {
         {"days", result.cap_contention_days},
         {"trimmed_notional", result.cap_contention_trimmed}
+    };
+    // 单标的上限直接裁掉的部分（不是竞争）——影响可以很大，必须能被看见
+    j["symbol_cap"] = {
+        {"days", result.symbol_cap_days},
+        {"trimmed_notional", result.symbol_cap_trimmed}
     };
     // 输入里有多少根 bar 的日期与同标的另一根重复（>0 说明喂进来的数据坏了）
     j["duplicate_dates"] = result.duplicate_dates;
@@ -402,7 +451,7 @@ void Server::setup_routes() {
 
         // PAIRS
         {
-            PairsStrategy s("", {});
+            PairsStrategy s("", "");
             strategies.push_back({
                 {"name", s.name()},
                 {"description", s.description()},
@@ -467,8 +516,8 @@ void Server::setup_routes() {
             }
             RiskConfig risk_cfg = risk_from_json(body);
 
-            // 创建策略
-            auto strategy = create_strategy(strategy_name, params);
+            // 创建策略（PAIRS 需要知道第一条腿叫什么，才能分辨 ctx.symbol）
+            auto strategy = create_strategy(strategy_name, params, symbol);
             if (!strategy) {
                 res.status = 400;
                 res.set_content(
@@ -481,6 +530,13 @@ void Server::setup_routes() {
             BacktestEngine engine(initial_capital, comm, risk_cfg, market_rules_of(market));
             engine.set_strategy(std::move(strategy));
             engine.load_data(symbol, std::move(bars));
+            /*
+             * PAIRS 的第二条腿：协议仍是 `params.bars2`，但现在它进的是**引擎**，
+             * 不再是策略的私有只读副本 —— 第二条腿从此能真的成交。
+             * ⚠️ 于是本端点返回的 `symbol` 字段会变成 "腿1,腿2"（`symbols` 数组
+             *    里两条都在）。后端 run_and_save 不读这个字段，前端只做展示。
+             */
+            load_pair_legs(engine, strategy_name, params);
 
             auto result = engine.run(start_date, end_date);
 

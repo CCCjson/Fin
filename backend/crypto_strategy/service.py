@@ -22,6 +22,8 @@ class StrategyError(Exception):
 
 # ──────────────────── spec ↔ row 序列化 ────────────────────
 
+# ⚠️ `entry_rules`/`exit_rules` 在**组合策略**下是 None（与 `sub_strategies` 互斥），
+#    所以序列化要跳过 None、反序列化要允许缺失 —— 别把它们当必填。
 _SUBOBJECTS = ("universe", "entry_rules", "exit_rules", "position_policy",
                "cost_model", "guardrails")
 
@@ -34,7 +36,15 @@ def _spec_to_columns(spec: CryptoStrategySpec) -> dict[str, Any]:
         "capital_basis": spec.capital_basis, "mode": spec.mode,
     }
     for key in _SUBOBJECTS:
-        cols[key] = getattr(spec, key).model_dump_json()
+        obj = getattr(spec, key)
+        # ⚠️ 组合策略下 entry_rules/exit_rules 是 **None**（与 sub_strategies 互斥）→ 存 NULL。
+        #    ⛔ 别无条件 `.model_dump_json()`，那一行落库当场 AttributeError。
+        cols[key] = obj.model_dump_json() if obj is not None else None
+    # 组合策略的子策略列表（单策略存 NULL）。
+    # 🔴 没有这一行的话，权重会**静默丢失**：存进去是组合策略，读回来是一条没有规则的空壳。
+    cols["sub_strategies"] = (
+        json.dumps([x.model_dump() for x in spec.sub_strategies], ensure_ascii=False)
+        if spec.sub_strategies else None)
     return cols
 
 
@@ -49,6 +59,9 @@ def spec_from_row(row) -> CryptoStrategySpec:
         raw = getattr(row, key)
         if raw:
             data[key] = json.loads(raw)
+    raw_subs = getattr(row, "sub_strategies", None)
+    if raw_subs:
+        data["sub_strategies"] = json.loads(raw_subs)
     return CryptoStrategySpec(**data)
 
 
@@ -224,6 +237,7 @@ def backtest_metrics_json(bt: dict[str, Any]) -> str:
          # 组合口径特有：几天被现金/仓位上限卡住（币数越多越紧）
          "cash_contention": bt.get("cash_contention"),
          "cap_contention": bt.get("cap_contention"),
+         "symbol_cap": bt.get("symbol_cap"),
          "per_symbol": bt.get("per_symbol")}, ensure_ascii=False)
 
 

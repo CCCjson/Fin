@@ -428,3 +428,47 @@ def test_init_db_migration_runs_on_a_table_without_the_new_columns(tmp_path, mon
         idx = {r[1] for r in conn.execute(text("PRAGMA index_list(crypto_strategies)"))}
     assert row == ("CS-OLD", 1)
     assert "idx_crypto_strategy_family_version" in idx
+
+
+# ── 组合策略的持久化（S8 批次3）────────────────────────────────────────────
+
+def _combo_spec():
+    sub = lambda n, w, syms: {                                    # noqa: E731
+        "name": n, "weight": w, "universe": {"symbols": syms},
+        "entry_rules": {"when": {"all_of": [{"field": "composite", "op": "gte", "value": 60}]}},
+        "exit_rules": {"when": {"all_of": [{"field": "composite", "op": "lt", "value": 40}]}}}
+    return {**_SPEC, "name": "组合",
+            "universe": {"symbols": ["BTCUSDT.BN", "ETHUSDT.BN"]},
+            "entry_rules": None, "exit_rules": None,
+            "sub_strategies": [sub("趋势", 0.6, ["BTCUSDT.BN"]),
+                               sub("均值回归", 0.4, ["ETHUSDT.BN"])]}
+
+
+def test_combo_strategy_survives_a_round_trip_through_the_db(clean):
+    """🔴 组合策略必须**存得下也读得回**。
+
+    ⚠️ 差点漏掉：`_spec_to_columns` 原本无条件 `getattr(spec, key).model_dump_json()`，
+    而组合策略的 `entry_rules` 是 **None** —— 落库那一刻就 AttributeError。
+    而且 `sub_strategies` 当时根本没有对应的列，权重会**静默丢失**：
+    存进去是组合策略，读回来变成一条没有规则的空壳。
+    """
+    from crypto_intel_engine.dsl import CryptoStrategySpec
+    from crypto_strategy.service import crypto_strategy_service as svc
+
+    spec = CryptoStrategySpec(**_combo_spec())
+    r = svc.compile_and_persist(spec, do_backtest=False)
+
+    from crypto_strategy.service import spec_from_row
+    s = get_session()
+    try:
+        row = s.query(CryptoStrategy).filter(
+            CryptoStrategy.strategy_id == r["strategy_id"]).first()
+        assert row.sub_strategies, "sub_strategies 没落库 —— 权重会静默丢失"
+        assert row.entry_rules is None, "组合策略的顶层规则列该是 NULL"
+        back = spec_from_row(row)
+    finally:
+        s.close()
+
+    assert [(x.name, x.weight) for x in back.rule_sets()] == [("趋势", 0.6), ("均值回归", 0.4)]
+    assert back.entry_rules is None, "组合策略不该有顶层规则"
+    assert back.owner_of("ETHUSDT.BN").name == "均值回归"

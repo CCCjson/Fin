@@ -226,6 +226,45 @@ class PositionPolicy(BaseModel):
         return self
 
 
+class SubStrategy(BaseModel):
+    """组合策略的一条子策略（S8 裁决 6）。
+
+    ⭐ 存在的意义是让「60% 趋势 + 40% 均值回归」**能被表达出来**。
+    在此之前 DSL 只有一个 universe 加一套规则，权重根本无处可写。
+
+    🔴 **v1 硬性要求：各子策略的 universe 不许重叠。**
+
+    因为交易所侧**一个币只有一个仓位**。同一个币若被两条子策略各管一半，
+    同一根 bar 上 A 说买、B 说卖时无法净额处理 ——
+    「A 持 0.5 BTC、B 持 −0.3 BTC」在现货上根本不存在（引擎不支持做空）。
+    要支持重叠得先有一层「仓位归属」账本，那是另一张卡的体量。
+
+    ⚠️ 所以「同一批币、两套规则」这种经典写法 **v1 表达不了**，
+    可表达的是「这几个币走趋势、那几个币走均值回归」。
+    ⛔ 别为了绕过这条限制去掉校验 —— 去掉之后回测数字会变成一个说不清含义的东西。
+    """
+    name: str = Field(..., min_length=1, description="子策略名（同一 spec 内唯一）")
+    weight: float = Field(..., gt=0, le=1, description="资金权重，同一 spec 内合计 = 1.0")
+    universe: Universe = Field(..., description="这条子策略管哪些币（⛔ 不许与兄弟重叠）")
+    entry_rules: EntryRules
+    exit_rules: ExitRules
+
+
+class RuleSet(BaseModel):
+    """一套「管哪些币 + 什么时候进出 + 分多少资金」——`CryptoStrategySpec.rule_sets()` 的产物。
+
+    ⭐ 它的作用是让**单策略和组合策略在下游长成同一个形状**：
+    单策略 = 一条 weight=1.0 的 RuleSet，组合策略 = N 条。
+    于是回测闸 / 逐日回放 / 实盘引擎都只需要写一套「遍历 rule_sets」的逻辑，
+    不用到处 `if spec.sub_strategies:` 分叉 —— 那种分叉迟早会漏一处。
+    """
+    name: str
+    weight: float
+    universe: Universe
+    entry_rules: EntryRules
+    exit_rules: ExitRules
+
+
 class CostModel(BaseModel):
     taker_fee_pct: float = Field(0.001, ge=0, description="单边 taker 费率（币安现货 0.1%）")
     slippage_pct: float = Field(0.0005, ge=0, description="单边滑点假设（fixed 档用；measured 取不到时的兜底）")
@@ -262,13 +301,95 @@ class CryptoStrategySpec(BaseModel):
     strategy_kind: Literal["swing", "arb", "long_hold"] = "swing"
     interval_minutes: int = Field(30, ge=1, description="tick 节奏（分钟）")
     universe: Universe
-    entry_rules: EntryRules
-    exit_rules: ExitRules
+    # ⚠️ 单策略写法：这两个必填。**组合策略（给了 sub_strategies）时必须缺席**，
+    #    互斥由 `_rules_xor_sub_strategies` 强制 —— 两边都写会让「到底按谁的规则交易」
+    #    变成一个没有答案的问题，而那种歧义在真钱系统里不能靠约定俗成。
+    #    ⛔ 别直接读这两个字段，走 `rule_sets()`（组合策略下它们是 None）。
+    entry_rules: EntryRules | None = None
+    exit_rules: ExitRules | None = None
+    sub_strategies: list[SubStrategy] | None = Field(
+        None, description="组合策略：子策略 + 权重（裁决 6）。给了它就不能再给顶层 entry/exit")
     position_policy: PositionPolicy = Field(default_factory=PositionPolicy)
     cost_model: CostModel = Field(default_factory=CostModel)
     guardrails: Guardrails
     capital_basis: Literal["config", "real_total_value"] = "config"
     mode: Literal["paper", "live"] = "paper"
+
+    @model_validator(mode="after")
+    def _rules_xor_sub_strategies(self) -> "CryptoStrategySpec":
+        """单策略与组合策略**二选一**，且组合的 universe 不许重叠。
+
+        ⛔ 两边都写 = 「到底按谁的规则交易」没有答案。真钱系统里这种歧义
+        不能靠约定俗成，必须在编译期就炸掉。
+        """
+        has_top = self.entry_rules is not None or self.exit_rules is not None
+        subs = self.sub_strategies
+
+        if not subs:
+            if self.entry_rules is None or self.exit_rules is None:
+                raise ValueError("单策略必须同时给 entry_rules 和 exit_rules"
+                                 "（要写组合策略请给 sub_strategies）")
+            return self
+
+        if has_top:
+            raise ValueError("给了 sub_strategies 就不能再给顶层 entry_rules/exit_rules —— "
+                             "两套规则并存的话，「按谁的规则交易」没有答案")
+        if len(subs) < 2:
+            raise ValueError("组合策略至少要两条子策略；只有一条的话直接写成单策略即可"
+                             "（同一件事有两种写法，迟早会读错）")
+
+        names = [s.name for s in subs]
+        if len(set(names)) != len(names):
+            raise ValueError(f"子策略名重复：{sorted({n for n in names if names.count(n) > 1})}")
+
+        total = sum(s.weight for s in subs)
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"子策略权重合计必须等于 1.0，当前是 {total:.4f}"
+                             f"（{'、'.join(f'{s.name}={s.weight}' for s in subs)}）")
+
+        # 🔴 universe 不许重叠 —— 理由见 SubStrategy 的 docstring（一个币只有一个仓位，
+        #    同根 bar 上 A 买 B 卖无法净额，而现货不能做空）
+        seen: dict[str, str] = {}
+        for sub in subs:
+            for sym in sub.universe.symbols:
+                if sym in seen:
+                    raise ValueError(
+                        f"{sym} 同时被子策略「{seen[sym]}」和「{sub.name}」管着。"
+                        f"v1 不支持重叠 universe：交易所侧一个币只有一个仓位，"
+                        f"同一根 bar 上一个说买一个说卖时无法净额处理"
+                        f"（现货不能做空）。请把币分开，或合并成一条子策略。")
+                seen[sym] = sub.name
+
+        # 子策略的币必须都在顶层 universe 里 —— 顶层是「这条策略碰哪些币」的总闸
+        outside = sorted(set(seen) - set(self.universe.symbols))
+        if outside:
+            raise ValueError(f"这些币不在顶层 universe 里：{outside}。"
+                             f"顶层 universe 是总闸，子策略只能在它的范围内切分。")
+        return self
+
+    def rule_sets(self) -> list["RuleSet"]:
+        """归一化访问器：**单策略与组合策略在这里长成同一个形状**。
+
+        ⭐ 所有消费方（回测闸 / 逐日回放 / 实盘引擎 / agent 工具）都走这里，
+        ⛔ 别再直接读 `spec.entry_rules` —— 组合策略下它是 None，
+        直接读会得到一个 `AttributeError` 或者更糟：静默把组合策略当成没有规则。
+
+        单策略 → 一条 `RuleSet`（weight=1.0，universe = 顶层）。
+        """
+        if self.sub_strategies:
+            return [RuleSet(name=s.name, weight=s.weight, universe=s.universe,
+                            entry_rules=s.entry_rules, exit_rules=s.exit_rules)
+                    for s in self.sub_strategies]
+        assert self.entry_rules is not None and self.exit_rules is not None  # validator 保证
+        return [RuleSet(name=self.name, weight=1.0, universe=self.universe,
+                        entry_rules=self.entry_rules, exit_rules=self.exit_rules)]
+
+    def owner_of(self, symbol: str) -> "RuleSet | None":
+        """这个币归哪条规则集管（universe 不重叠，所以最多一条）。"""
+        for rs in self.rule_sets():
+            if symbol in rs.universe.symbols:
+                return rs
+        return None
 
     @model_validator(mode="after")
     def _arb_needs_edge_above_cost(self) -> "CryptoStrategySpec":
