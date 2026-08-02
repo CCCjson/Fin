@@ -40,11 +40,45 @@ def test_between_requires_pair():
     Condition(field="composite", op="between", value=[40, 60])   # ok
 
 
-def test_universe_requires_bn_suffix():
-    with pytest.raises(ValidationError):
-        Universe(symbols=["BTCUSDT"])
+def test_universe_normalizes_case():
+    """`Universe` 只做大写归一。
+
+    ⚠️ 后缀校验**挪到了 spec 层**（S5 批次1）：后缀规则跟市场绑
+    （crypto `.BN` / A 股 `.SH/.SZ/.BJ` / 美股裸 ticker），而 `Universe`
+    自己不知道它属于哪个市场 —— 在这里写死 `.BN` 会让股票策略连编译都过不了。
+    真正的把关见 `test_crypto_spec_rejects_a_share_symbols`。
+    """
     u = Universe(symbols=["btcusdt.bn"])
     assert u.symbols == ["BTCUSDT.BN"]
+    with pytest.raises(ValidationError):
+        Universe(symbols=["  "])
+
+
+def test_crypto_spec_rejects_a_share_symbols():
+    """🔴 市场写错时必须**编译期就炸**。
+
+    DSL 的语义是「取不到值 = 该条不满足」，所以市场写错的话字段表也会取错，
+    **所有条件静默永不触发** —— 策略一单不下，而每一层看上去都正常。
+    """
+    base = {"name": "t", "guardrails": {"per_order_notional_usdt": 100,
+                                        "max_orders_per_day": 3},
+            "entry_rules": {"when": {"all_of": [
+                {"field": "composite", "op": "gte", "value": 60}]}},
+            "exit_rules": {"when": {"all_of": [
+                {"field": "composite", "op": "lt", "value": 40}]}}}
+
+    # crypto 策略写了 A 股标的
+    with pytest.raises(ValidationError, match="不属于 crypto"):
+        CryptoStrategySpec(**base, market="crypto",
+                           universe={"symbols": ["600519.SH"]})
+    # 裸 BTCUSDT 会被 `infer_market_from_symbol` 判成美股 —— 所以 crypto 必须带 .BN
+    with pytest.raises(ValidationError, match="不属于 crypto"):
+        CryptoStrategySpec(**base, market="crypto",
+                           universe={"symbols": ["BTCUSDT"]})
+    # 反向：A 股策略写了币
+    with pytest.raises(ValidationError, match="不属于 a_share"):
+        CryptoStrategySpec(**base, market="a_share",
+                           universe={"symbols": ["BTCUSDT.BN"]})
 
 
 def test_empty_condition_group_rejected():
@@ -245,3 +279,78 @@ class TestSubStrategies:
         again = CryptoStrategySpec.model_validate(spec.model_dump())
         assert [(r.name, r.weight) for r in again.rule_sets()] == \
                [(r.name, r.weight) for r in spec.rule_sets()]
+
+
+# ── 市场无关的字段注册表（S5 批次1）────────────────────────────────────────
+
+class TestMarketAwareFields:
+    """🔴 跨市场字段**必须编译期炸**，因为它的运行期表现是「静默永不触发」。
+
+    DSL 的语义是「取不到值 = 该条不满足」。所以一条 A 股策略里写了 `funding_rate`
+    （crypto 的字段）时不会报错 —— 它会一单不下，看上去像「行情一直没到条件」。
+    这种失败模式在真钱系统里最难查：每一层看上去都正常。
+    """
+
+    _G = {"per_order_notional_usdt": 100, "max_orders_per_day": 3}
+
+    @classmethod
+    def _mk(cls, market, symbols, field):
+        return CryptoStrategySpec(
+            name="t", market=market, guardrails=cls._G,
+            universe={"symbols": symbols},
+            entry_rules={"when": {"all_of": [{"field": field, "op": "lt", "value": 20}]}},
+            exit_rules={"when": {"all_of": [
+                {"field": "composite", "op": "lt", "value": 40}]}})
+
+    def test_stock_spec_accepts_stock_fields(self):
+        assert self._mk("a_share", ["600519.SH"], "valuation.pe_ttm").market == "a_share"
+        assert self._mk("us_stock", ["AAPL"], "valuation.pe_ttm").market == "us_stock"
+
+    def test_crypto_stays_the_default(self):
+        """存量数据里没有 market 字段，读回来必须仍是 crypto。"""
+        s = self._mk("crypto", ["BTCUSDT.BN"], "funding_rate")
+        assert s.market == "crypto"
+        again = CryptoStrategySpec.model_validate(
+            {k: v for k, v in s.model_dump().items() if k != "market"})
+        assert again.market == "crypto"
+
+    def test_stock_spec_rejects_crypto_fields(self):
+        with pytest.raises(ValidationError, match="是 crypto 的字段"):
+            self._mk("a_share", ["600519.SH"], "funding_rate")
+
+    def test_crypto_spec_rejects_stock_fields(self):
+        with pytest.raises(ValidationError, match="crypto 没有"):
+            self._mk("crypto", ["BTCUSDT.BN"], "valuation.pe")
+
+    def test_error_says_which_market_the_field_belongs_to(self):
+        """⭐ 报错要**说得清**，不是干巴巴一句「未知字段」。"""
+        with pytest.raises(ValidationError) as e:
+            self._mk("a_share", ["600519.SH"], "funding_rate")
+        msg = str(e.value)
+        assert "crypto" in msg and "静默永不触发" in msg
+
+    def test_hk_stock_is_not_registered(self):
+        """港股 Jason 已拍板不做 —— ⛔ 不许静默回落到 A 股的字段表。"""
+        from common.strategy_fields import registry_for
+        with pytest.raises(KeyError, match="还没有字段注册表"):
+            registry_for("hk_stock")
+
+    def test_ml_dimension_is_deliberately_absent_for_stocks(self):
+        """⛔ `dim.ml` 刻意不给股票用：项目里一个训好的模型都没有（P1-6 未开工），
+        暴露它 = 邀请 AI 写出永远不触发的规则。"""
+        from common.strategy_fields import explain_unknown, known_fields
+        assert "dim.ml" not in known_fields("a_share")
+        assert "刻意不提供" in explain_unknown("a_share", "dim.ml")
+
+    def test_evaluator_uses_the_right_market_table(self):
+        """同一张分析卡、同一个字段名，在两个市场下取到的是**不同的路径**。"""
+        from crypto_strategy.evaluator import evaluate
+
+        stock_card = {"dimensions": {"fundamental": {"score": 70}}}
+        group = ConditionGroup(all_of=[
+            Condition(field="dim.fundamental", op="gte", value=60)])
+        ok, _ = evaluate(group, stock_card, market="a_share")
+        assert ok is True
+        # crypto 表里没有 dim.fundamental → 取不到 → 不满足（而不是报错）
+        ok2, _ = evaluate(group, stock_card, market="crypto")
+        assert ok2 is False

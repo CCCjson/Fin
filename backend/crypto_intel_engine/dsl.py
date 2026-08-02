@@ -104,9 +104,22 @@ FieldName = Literal[
     "tf_4h_trend", "tf_4h_aligned",
     "price.change_5d_pct", "price.change_20d_pct", "price.change_60d_pct",
     "suggested_position_pct", "current_position_pct",
+    # ── 股票（A股/美股）独有的字段（S5 批次1）──
+    # ⚠️ 它们**在这个枚举里**只是为了让 `Condition` 能构造出来；
+    #    「这个字段属不属于本策略的市场」由 `StrategySpec._fields_belong_to_this_market`
+    #    查表判。两层各管一件事：
+    #      枚举 → 给 LLM 的 JSON schema 提示（别瞎猜字段名）
+    #      市场校验 → 防止跨市场混用（否则会**静默永不触发**）
+    #    ⛔ 别把两层合并成一个 —— 合并就得给每个市场各造一份 Condition 类。
+    "dim.fundamental", "dim.position",
+    "valuation.pe", "valuation.pe_ttm", "valuation.pb",
+    "valuation.total_mv", "valuation.circ_mv",
+    "data_quality.level", "data_quality.score",
 ]
-# 防漂移：枚举必须与真源 FIELD_RESOLVERS 完全一致（改一处必改另一处）
-assert set(get_args(FieldName)) == set(FIELD_RESOLVERS), "FieldName 与 FIELD_RESOLVERS 不一致"
+
+# 防漂移：crypto 的字段必须与真源 FIELD_RESOLVERS 完全一致（改一处必改另一处）。
+# ⚠️ 枚举是**所有市场的并集**，所以这里只能查「crypto 的没漏」，不能查相等。
+assert set(FIELD_RESOLVERS) <= set(get_args(FieldName)), "FieldName 漏了 crypto 的字段"
 
 _NUMERIC_OPS = {"gt", "gte", "lt", "lte", "eq", "between"}
 _CATEGORICAL_OPS = {"eq", "in"}
@@ -195,11 +208,18 @@ class Universe(BaseModel):
 
     @field_validator("symbols")
     @classmethod
-    def _suffix(cls, v: list[str]) -> list[str]:
-        bad = [s for s in v if not s.upper().endswith(".BN")]
-        if bad:
-            raise ValueError(f"交易对须带 .BN 后缀：{bad}")
-        return [s.upper() for s in v]
+    def _normalize(cls, v: list[str]) -> list[str]:
+        """只做大写归一。
+
+        ⚠️ 后缀校验**挪到了 spec 层**（`_symbols_match_market`），因为它跟市场绑：
+        crypto 要 `.BN`、A 股要 `.SH/.SZ/.BJ`、美股是裸 ticker。
+        `Universe` 自己不知道它属于哪个市场，在这里写死 `.BN` 会让股票策略
+        连编译都过不了（S5 批次1 踩到）。
+        """
+        blank = [s for s in v if not s or not s.strip()]
+        if blank:
+            raise ValueError("交易标的不能是空串")
+        return [s.upper().strip() for s in v]
 
 
 class EntryRules(BaseModel):
@@ -300,6 +320,10 @@ class CryptoStrategySpec(BaseModel):
     name: str = Field(..., min_length=1)
     strategy_kind: Literal["swing", "arb", "long_hold"] = "swing"
     interval_minutes: int = Field(30, ge=1, description="tick 节奏（分钟）")
+    # 这条策略跑哪个市场 —— 决定用哪张**字段注册表**（S5 批次1）。
+    # ⚠️ 默认 crypto 是为了**不动存量数据**（库里的行都没有这个字段）。
+    # ⛔ 港股 Jason 已拍板不做，写了会在字段校验那里直接抛。
+    market: Literal["crypto", "a_share", "us_stock"] = "crypto"
     universe: Universe
     # ⚠️ 单策略写法：这两个必填。**组合策略（给了 sub_strategies）时必须缺席**，
     #    互斥由 `_rules_xor_sub_strategies` 强制 —— 两边都写会让「到底按谁的规则交易」
@@ -314,6 +338,78 @@ class CryptoStrategySpec(BaseModel):
     guardrails: Guardrails
     capital_basis: Literal["config", "real_total_value"] = "config"
     mode: Literal["paper", "live"] = "paper"
+
+    @model_validator(mode="after")
+    def _symbols_match_market(self) -> "CryptoStrategySpec":
+        """标的必须属于本策略声明的市场。
+
+        ⚠️ 这条校验从 `Universe` 挪上来的：后缀规则跟市场绑（crypto `.BN` /
+        A 股 `.SH/.SZ/.BJ` / 美股裸 ticker），而 `Universe` 自己不知道市场。
+
+        🔴 判据走 `infer_market_from_symbol`（全项目唯一的后缀推断实现），
+        ⛔ 别在这里再手写一遍后缀表 —— 那种复制迟早跟真源漂移。
+        （已知坑：裸 `BTC` 会被它判成美股，所以 crypto 必须带 `.BN`。）
+        """
+        from common.market import infer_market_from_symbol
+
+        all_syms = list(self.universe.symbols)
+        for sub in (self.sub_strategies or []):
+            all_syms += list(sub.universe.symbols)
+
+        bad = {s: infer_market_from_symbol(s) for s in all_syms
+               if infer_market_from_symbol(s) != self.market}
+        if bad:
+            detail = "、".join(f"{s}(看起来是 {m})" for s, m in sorted(bad.items()))
+            raise ValueError(
+                f"这些标的不属于 {self.market}：{detail}。"
+                f"⚠️ 市场写错的话，字段表也会取错 —— 所有条件都会取不到值而**静默永不触发**。")
+        return self
+
+    @model_validator(mode="after")
+    def _fields_belong_to_this_market(self) -> "CryptoStrategySpec":
+        """🔴 **跨市场字段必须在编译期炸掉，不能留到运行期。**
+
+        DSL 的语义是「取不到值 = 该条不满足」。所以一条 a_share 策略里写了
+        `funding_rate`（crypto 的字段）时，它不会报错 —— 它会**静默地永不触发**，
+        看上去像「行情一直没到条件」。这种失败模式在真钱系统里最难查：
+        策略一单不下，而每一层看上去都正常。
+
+        所以在这里查表挡住，并给出**说得清的理由**（这个字段是哪个市场的 /
+        为什么刻意不提供），而不是干巴巴一句「未知字段」。
+        """
+        from common.strategy_fields import explain_unknown, known_fields
+
+        try:
+            allowed = known_fields(self.market)
+        except KeyError as e:      # 没注册的市场（比如港股）
+            raise ValueError(str(e)) from e
+
+        bad: list[str] = []
+        for rs in self._raw_rule_groups():
+            for c in list(rs.all_of) + list(rs.any_of):
+                if c.field not in allowed:
+                    bad.append(c.field)
+        if bad:
+            uniq = sorted(set(bad))
+            raise ValueError(
+                "；".join(explain_unknown(self.market, f) for f in uniq))
+        return self
+
+    def _raw_rule_groups(self) -> list["ConditionGroup"]:
+        """本 spec 里所有条件组（顶层的或子策略的）—— 只给校验用。
+
+        ⚠️ 不能走 `rule_sets()`：那个方法断言「顶层规则非空」，
+        而字段校验跑在 `_rules_xor_sub_strategies` **之前**（pydantic 按定义顺序），
+        此刻 spec 可能还处在非法形状。
+        """
+        groups: list[ConditionGroup] = []
+        for rules in (self.entry_rules, self.exit_rules):
+            if rules is not None:
+                groups.append(rules.when)
+        for sub in (self.sub_strategies or []):
+            groups.append(sub.entry_rules.when)
+            groups.append(sub.exit_rules.when)
+        return groups
 
     @model_validator(mode="after")
     def _rules_xor_sub_strategies(self) -> "CryptoStrategySpec":
@@ -418,3 +514,15 @@ def gross_target_edge(cm: CostModel, entry: float | None, take_profit: float | N
     if entry and take_profit and entry > 0:
         return take_profit / entry - 1
     return None
+
+
+# ──────────────────── 登记进按市场查表的注册表（S5）────────────────────
+#
+# ⚠️ crypto 的字段表**真源仍是本文件**，别搬去 `common/strategy_fields.py`。
+# 那边只是登记一份引用，让「按市场取字段」这条路对 crypto 同样成立 ——
+# 股票（A股/美股）的表住在那边，两边形状同构但字段不同。
+# ⛔ 别把两张表合并：合并之后一条 crypto 策略能写出 `valuation.pe < 20`，
+#    而 DSL 的语义是「取不到 = 不满足」→ 那条规则**静默地永不触发**。
+from common.strategy_fields import _register_crypto as _reg_crypto  # noqa: E402
+
+_reg_crypto()
