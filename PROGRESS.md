@@ -42,6 +42,10 @@
 - ⚠️ `conda run` 会吞 stdout，调试时加 `--no-capture-output`
 - 改完后端要在 App 里生效必须 `bash restart.sh --backend`（App 无热更新）
 - 判据铁律：crypto 现有测试**一条都不许红**，那是公共层抽取的回归防线（S5 §5）
+- 🔴 **push 必须走 HTTPS，裸 `git push` 一定失败**（SSH key 全废）。已验证可行的命令：
+  `gh auth switch --user CCCjson && git push https://github.com/CCCjson/Fin.git feat/s5-stock-arena`
+  （第 0 轮已跑通，upstream 已设成 HTTPS URL，之后裸 `git push` 应该就能用了）
+- ⚠️ `timeout` 命令在这台 mac 上不存在，别用它包 git 命令
 
 ## 未解决
 
