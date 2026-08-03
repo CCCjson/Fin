@@ -135,3 +135,5 @@ htmlcov/
 code_dataset/
 datasets/
 TradingAgents-main/
+
+.steploop/
