@@ -23,10 +23,12 @@ def _ret(mean: float, n: int = 40, wobble: float = 0.001) -> list[float]:
 
 
 def _side(basis="live_fills", returns=None, days=40, trade_days=30,
-          backtest=True, benchmark=False, **kw):
+          backtest=True, benchmark=False, market="crypto", **kw):
+    # ⚠️ `market` 必须有默认值：「口径可比」那道门槛是 **fail-closed** 的
+    #    （取不到市场就不放行），不给的话所有用例都会红在同一处。
     return {"strategy_id": "CS-X", "name": "策略", "version": 1,
             "basis": basis, "returns": returns if returns is not None else _ret(0.0),
-            "days": days, "trade_days": trade_days,
+            "days": days, "trade_days": trade_days, "market": market,
             "backtest_passed": backtest, "is_benchmark": benchmark, **kw}
 
 
@@ -451,3 +453,39 @@ def test_arena_output_never_leaks_the_returns_array(db):
     _mk("挑战者", enabled=1, mode="paper")
     r = arena.evaluate_arena()
     assert "returns" not in json.dumps(r, default=str)
+
+
+def test_cross_market_is_not_comparable():
+    """🔴 分母是同一个总资金设置，分子却是不同币种 —— 比大小没有意义。
+
+    ⚠️ 这只是止血：真正的「每个市场族内一个卫冕者」是 S5 任务 03 的事
+    （要改裁决 7 的读法，得 Jason 拍板）。这道门槛先保证**不会给出跨市场的错结论**。
+    """
+    ch = _side(returns=[0.02] * 40, market="a_share")
+    mm = _side(returns=[0.001] * 40, market="crypto")
+    r = arena.evaluate_challenger(ch, mm)
+    assert r["gates"]["comparable"]["passed"] is False
+    assert "市场不同" in r["gates"]["comparable"]["detail"]
+    assert r["should_switch"] is False, "跨市场也敢建议切换"
+
+
+def test_same_market_still_comparable():
+    """反方向：同市场别被这道新门槛误伤。"""
+    ch = _side(returns=[0.02] * 40, market="a_share")
+    mm = _side(returns=[0.001] * 40, market="a_share")
+    assert arena.evaluate_challenger(ch, mm)["gates"]["comparable"]["passed"] is True
+
+
+def test_missing_market_is_fail_closed():
+    """🔒 取不到市场**不许放行**。
+
+    「取不到值 → 当作满足」是 S5 一路踩过来的失败模式：`_gates_snapshot` 曾经手拼
+    snapshot、漏了 `market`，于是 `None == None` 判过，把一条「四道门槛全过」的
+    假记录写进了切换留痕 —— 而那正是事后复盘「这次换对了吗」的唯一依据。
+    """
+    ch, mm = _side(returns=[0.02] * 40), _side(returns=[0.001] * 40)
+    ch.pop("market")
+    mm.pop("market")
+    r = arena.evaluate_challenger(ch, mm)
+    assert r["gates"]["comparable"]["passed"] is False
+    assert r["should_switch"] is False

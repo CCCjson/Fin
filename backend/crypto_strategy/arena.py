@@ -156,13 +156,22 @@ def evaluate_challenger(challenger: dict[str, Any], champion: dict[str, Any], *,
     # 门槛 0：口径可比。paper 是理想撮合，跟 live 比大小是自欺（坑 1）。
     # ⚠️ 还要卡**分母同源**：一条按真实账户值定仓位、一条按配置本金，收益率量级会整体
     # 偏一个倍数，而那跟策略好坏毫无关系。
+    # 🔀 还要卡**同一个市场**（S5）：分母是全局的「总资金」设置、不分市场，而分子的
+    # 币种各不相同 —— 拿 A 股的 CNY 收益率和币的 USDT 收益率比大小是没有意义的。
+    # ⚠️ 这只是**止血**：真正的「每个市场族内一个卫冕者」是 S5 任务 03 的事，
+    #    它涉及改裁决 7 的读法，要 Jason 拍板。这里先保证**不会给出跨市场的错结论**。
     cb, mb = challenger.get("basis"), champion.get("basis")
     ccb, mcb = challenger.get("capital_basis"), champion.get("capital_basis")
+    cm, mm = challenger.get("market"), champion.get("market")
     has_data = bool(cb) and cb != "none" and bool(mb) and mb != "none"
     same_mode = cb == mb
     same_denom = ccb == mcb
+    # 🔒 **fail-closed**：取不到市场就不许放行。写成 `cm == mm` 的话，
+    # 一个忘了带 `market` 的调用方会拿到 `None == None` → 静默判过 ——
+    # 「取不到值 → 当作满足」正是 S5 一路踩过来的那个失败模式，这道门槛不带着它出生。
+    same_market = bool(cm) and cm == mm
     gates["comparable"] = {
-        "passed": has_data and same_mode and same_denom,
+        "passed": has_data and same_mode and same_denom and same_market,
         "detail": (
             f"挑战者 {cb or '无数据'} vs 卫冕者 {mb or '无数据'} —— "
              f"至少有一边算不出收益序列，没法比。" if not has_data else
@@ -171,7 +180,9 @@ def evaluate_challenger(challenger: dict[str, Any], champion: dict[str, Any], *,
              if not same_mode else
              f"本金口径不同（{ccb} vs {mcb}）：一条按真实账户值定仓位、一条按配置本金，"
              f"收益率量级会整体偏一个倍数，跟策略好坏无关。" if not same_denom else
-             f"两边都是 {cb}、本金口径都是 {ccb}"),
+             f"市场不同（{cm} vs {mm}）：分母是同一个总资金设置，分子却是不同币种，"
+             f"比大小没有意义。同市场内才排名。" if not same_market else
+             f"两边都是 {cb}、本金口径都是 {ccb}、都在 {cm}"),
     }
 
     # 门槛 ①：观察期。
@@ -321,12 +332,15 @@ def champion_weakening(returns: list[float], *, recent_days: int = 14,
 # ── 组装：从库里取数 → 判定（这一层碰 DB，上面全是纯函数）────────────────
 
 def _snapshot(row: Any, *, days: int) -> dict[str, Any]:
-    from crypto_strategy.performance import daily_returns
+    from crypto_strategy.performance import daily_returns, strategy_market
     dr = daily_returns(row.strategy_id, days=days)
     return {
         "strategy_id": row.strategy_id, "name": row.name,
         "version": row.version or 1, "family_id": row.family_id or row.strategy_id,
         "status": row.status, "mode": row.mode, "enabled": bool(row.enabled),
+        # ⚠️ market 取自**策略行**而不是序列返回值：算不出序列时（basis=none）
+        # 也必须知道它是哪个市场的，否则「口径可比」那道门槛没得判。
+        "market": strategy_market(row),
         "is_benchmark": bool(row.is_benchmark),
         "backtest_passed": bool(row.backtest_passed),
         "basis": dr.get("basis"), "returns": dr.get("returns") or [],
@@ -334,14 +348,41 @@ def _snapshot(row: Any, *, days: int) -> dict[str, Any]:
         "days": dr.get("days") or 0, "trade_days": dr.get("trade_days") or 0,
         "trade_count": dr.get("trade_count") or 0,
         "open_positions": dr.get("open_positions") or {},
+        # 序列的成色（股票才有）：`partial`/`suspected` 说明有几天是工作日启发式
+        # 补出来的（不认识节假日）。⛔ 别让门槛② 拿一条掺了假期的序列当真。
+        "calendar_confidence": dr.get("calendar_confidence"),
+        "heuristic_days": dr.get("heuristic_days"),
         "no_data_reason": dr.get("reason"),
     }
 
 
+def snapshot_of(strategy_id: str, *, days: int = 90) -> dict[str, Any] | None:
+    """按策略号取一份快照 —— **`_snapshot` 的唯一对外入口**。找不到策略返回 None。
+
+    🔴 **⛔ 别再手拼第二份 snapshot dict。** 门槛全靠 `dict.get()` 读，漏一个键
+    不会报错，只会**静默放行**：`market` 漏了就是 `None == None` → 「口径可比」判过 ——
+    而留痕路径（`service._gates_snapshot`）恰恰靠它记「这次换对了吗」，
+    于是最该留对的那一刻留下的是「四道门槛全过」。这个坑已经踩过一次。
+    """
+    from data_engine.storage.database import get_session
+    from data_engine.storage.models import CryptoStrategy
+    session = get_session()
+    try:
+        row = session.query(CryptoStrategy).filter(
+            CryptoStrategy.strategy_id == strategy_id).first()
+        if row is None:
+            return None
+        session.expunge(row)
+    finally:
+        session.close()
+    return _snapshot(row, days=days)
+
+
 # 摘要里给 LLM/前端看的字段。⛔ 别把 `returns`（90+ 个 float × N 条）漏出去 ——
 # 纯烧 token，而且它对「该不该换」这个问题一点解释力都没有。
-_BRIEF = ("strategy_id", "name", "version", "mode", "status", "basis",
-          "capital_basis", "days", "trade_days", "trade_count", "no_data_reason")
+_BRIEF = ("strategy_id", "name", "version", "mode", "status", "basis", "market",
+          "capital_basis", "days", "trade_days", "trade_count",
+          "calendar_confidence", "no_data_reason")
 
 
 def _brief(s: dict[str, Any]) -> dict[str, Any]:

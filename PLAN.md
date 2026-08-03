@@ -17,7 +17,7 @@
       验收：`cd backend && conda run -n quant python -m pytest tests/crypto_strategy/test_performance.py tests/test_strategy_runtime.py -q`
       要点：paper/live 分桶不合并（S4 教训）；crypto 分支**一行都不许改行为**，回归全绿是判据。
 
-- [ ] 02 `daily_returns` 支持股票策略：从 `strategy_trades` 算日收益序列，窗口按**市场当地日**切 —
+- [x] 02 `daily_returns` 支持股票策略：从 `strategy_trades` 算日收益序列，窗口按**市场当地日**切 —
       验收：`cd backend && conda run -n quant python -m pytest tests/crypto_strategy/ -q`
       要点：这是四道门槛门槛②的输入，序列口径错了整个竞技场就是错的；
       ⚠️ 已知缺陷「序列只含已实现盈亏 → 偏袒亏了死扛」**本轮不修**（见任务 04）。

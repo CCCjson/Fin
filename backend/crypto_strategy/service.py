@@ -193,19 +193,24 @@ def _gates_snapshot(from_id: str, to_id: str) -> str | None:
     try:
         import json
 
-        from crypto_strategy.arena import evaluate_challenger
-        from crypto_strategy.performance import daily_returns
+        from crypto_strategy.arena import evaluate_challenger, snapshot_of
         snaps = {}
         for sid in (from_id, to_id):
-            dr = daily_returns(sid)
-            snaps[sid] = {"basis": dr.get("basis"), "returns": dr.get("returns") or [],
-                          "capital_basis": dr.get("capital_basis"),
-                          "days": dr.get("days") or 0,
-                          "trade_count": dr.get("trade_count") or 0,
-                          "open_positions": dr.get("open_positions") or {},
-                          "backtest_passed": True}
+            # 🔴 走 `snapshot_of` 而不是手拼 —— 手拼漏一个键（比如 `market`）时门槛
+            # 不会报错，只会静默放行（`None == None`），而这里正是留痕路径。
+            s = snapshot_of(sid)
+            if s is None:
+                return None
+            # ⚠️ `backtest_passed` 刻意钉成 True：arm 之前已经强制过闸了
+            # （`_assert_armable` + `backtest_passed=1`），这里要记的是**收益侧**
+            # 的门槛长什么样，不是再判一次回测。保持原行为。
+            snaps[sid] = {**s, "backtest_passed": True}
         r = evaluate_challenger(snaps[to_id], snaps[from_id])
-        return json.dumps({"gates": r["gates"], "blocked_by": r["blocked_by"]},
+        # ⚠️ `verdict` 必须一起记：基准线策略走的是**短路**分支，`gates` 是空的、
+        # `blocked_by` 也是空的 —— 光看这两个字段读起来像「没有任何门槛挡住」，
+        # 而真实原因（「基准线永远不参与切换」）只在 verdict 那句话里。
+        return json.dumps({"gates": r["gates"], "blocked_by": r["blocked_by"],
+                           "verdict": r["verdict"]},
                           ensure_ascii=False, default=str)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"切换门槛快照算不出来 {from_id}→{to_id}: {e}")

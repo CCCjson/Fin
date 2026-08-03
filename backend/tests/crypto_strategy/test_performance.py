@@ -25,6 +25,7 @@ from data_engine.storage.models import (
     CryptoStrategyRun,
     CryptoTrade,
     StrategyTrade,
+    TradingCalendar,
 )
 
 SID = "CS-TEST-0001"
@@ -46,7 +47,7 @@ def db():
     s = get_session()
     try:
         for model in (CryptoStrategyRun, CryptoTrade, CryptoFill, StrategyTrade,
-                      CryptoStrategy):
+                      TradingCalendar, CryptoStrategy):
             s.query(model).delete()
         s.commit()
     finally:
@@ -485,9 +486,16 @@ def test_daily_returns_uses_live_when_both_exist(db):
 
 def _mk_stock_fill(session, *, sid=STOCK_SID, market="a_share", symbol="600519.SH",
                    side="BUY", price=100.0, qty=100, mode="live",
-                   commission=0.0, days_ago=0):
-    from common.market_time import market_day_of as _mday
-    day = _mday(datetime.utcnow() - timedelta(days=days_ago), market)
+                   commission=0.0, days_ago=0, on=None):
+    """造一行成交台账。
+
+    ⚠️ `days_ago` 是**按市场当地日**往回数（`market_today`），⛔ 不是 `utcnow().date()`：
+    UTC ≥16:00（北京 00:00-08:00）两者差一天，用 UTC 日算会让成交整体落到目标日 +1，
+    于是断绝对日期的用例**每天红 8 小时**，而且它测的还是「按当地日切」这件事本身。
+    断绝对日期时直接传 `on=date(...)`，别用相对天数。
+    """
+    from common.market_time import market_today as _mtoday
+    day = on if on is not None else _mtoday(market) - timedelta(days=days_ago)
     _add(session, StrategyTrade(
         market=market, symbol=symbol, side=side, price=price, quantity=qty,
         amount=price * qty, commission=commission, trade_date=day,
@@ -619,3 +627,196 @@ def test_stock_pnl_sentence_uses_the_market_currency(db):
     assert "CNY" in s and "USDT" not in s
     # crypto 不带 currency 字段 → 兜底仍是 USDT（原样，别改成空串）
     assert "USDT" in perf._pnl_sentence({"basis": "live_fills", "realized_pnl": 1.0})
+
+
+# ── 7. 股票日收益率序列（S5，门槛②④ 的输入）──────────────────────────────
+#
+# 与 crypto 那条腿的关键差异：**股票有休市日**。拿自然日补零会凭空塞进 ~30% 的零，
+# 把 μ 和 σ 一起稀释 —— 而门槛② 正好吃这两个数。
+
+def _mk_calendar(session, market, days):
+    for d in days:
+        _add(session, TradingCalendar(market=market, cal_date=d, source="manual"))
+    session.commit()
+
+
+def test_stock_series_is_padded_by_trading_days_not_natural_days(db):
+    """🔴 休市日不是「策略没交易的一天」，是**这一天不存在**。"""
+    from datetime import date as _date
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    # 造一份只有 5 个交易日的日历（周一到周五），窗口横跨一个周末
+    trading = [_date(2026, 7, 20) + timedelta(days=i) for i in range(5)]
+    _mk_calendar(db, "a_share", trading)
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100,
+                   on=_date(2026, 7, 20))
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100,
+                   on=_date(2026, 7, 22))
+
+    r = perf.daily_returns(STOCK_SID,
+                           since=datetime(2026, 7, 20), until=datetime(2026, 7, 24, 23))
+    assert r["basis"] == "live_fills"
+    assert r["calendar_confidence"] == "certain"
+    assert r["window_days"] == 5, f"补成了 {r['window_days']} 天，周末被算进来了"
+    assert r["dates"] == [d.isoformat() for d in trading]
+    assert r["trade_days"] == 1
+    assert r["trade_count"] == 1
+
+
+def test_stock_series_day_is_the_market_local_day(db):
+    """⛔ 按日切必须用市场当地日 —— A 股当地日零点在 UTC 是**前一天** 16:00，
+    按 UTC 日切整条序列会偏一天，而偏一天的序列在门槛② 眼里完全正常。"""
+    from datetime import date as _date
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    trading = [_date(2026, 7, 20) + timedelta(days=i) for i in range(5)]
+    _mk_calendar(db, "a_share", trading)
+    sell_day = _date(2026, 7, 22)
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100,
+                   on=_date(2026, 7, 20))
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100,
+                   on=sell_day)
+
+    r = perf.daily_returns(STOCK_SID,
+                           since=datetime(2026, 7, 20), until=datetime(2026, 7, 24, 23))
+    hit = [d for d, x in zip(r["dates"], r["returns"], strict=True) if x != 0.0]
+    assert hit == [sell_day.isoformat()], f"平仓被记到了 {hit}，不是 {sell_day}"
+
+
+def test_stock_series_matches_the_aggregate(db):
+    """按日拆开的总和必须等于 `strategy_pnl` 的汇总值 —— 两处配对规则是同一套。"""
+    from datetime import date as _date
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    _mk_calendar(db, "a_share", [_date(2026, 7, 20) + timedelta(days=i) for i in range(5)])
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100, commission=3.0,
+                   on=_date(2026, 7, 20))
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100, commission=15.0,
+                   on=_date(2026, 7, 22))
+
+    since, until = datetime(2026, 7, 20), datetime(2026, 7, 24, 23)
+    agg = perf.strategy_pnl(STOCK_SID, since=since, until=until)["realized_pnl"]
+    dr = perf.daily_returns(STOCK_SID, since=since, until=until)
+    assert sum(dr["returns"]) * dr["capital"] == pytest.approx(agg, abs=1e-4)
+
+
+def test_stock_fill_outside_the_calendar_is_not_dropped(db):
+    """🔴 成交是事实、日历是推断 —— 冲突时以成交为准，并且**说出口**。
+
+    日历自己也可能是残的（拉了一半 / 自举中断）。拿它当唯一判据，就会把真金白银
+    赚的钱从序列里悄悄删掉。
+    """
+    from datetime import date as _date
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    _mk_calendar(db, "a_share", [_date(2026, 7, 20) + timedelta(days=i) for i in range(5)])
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100,
+                   on=_date(2026, 7, 20))
+    # 7/25 是周六（日历里没有），但台账上就是有一笔平仓
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100,
+                   on=_date(2026, 7, 25))
+
+    r = perf.daily_returns(STOCK_SID,
+                           since=datetime(2026, 7, 20), until=datetime(2026, 7, 26, 23))
+    assert "2026-07-25" in r["dates"], "日历外的成交被从序列里删掉了"
+    assert r["off_calendar_days"] == ["2026-07-25"]
+    assert sum(r["returns"]) * r["capital"] == pytest.approx(2000.0, abs=1e-4)
+    assert "交易日历之外" in r["note"]
+
+
+def test_stock_series_marks_heuristic_days_as_suspected(db):
+    """⚠️ 日历盖不住窗口时要**补齐并降级**，⛔ 不许让序列尾部悄悄少几天。
+
+    `trading_days()` 是给缺口扫描用的，超出覆盖范围时它只回「盖住的那段」——
+    对缺口扫描是对的，对收益序列是灾难（少掉的恰恰是最近、最该看的那几天）。
+    """
+    _mk_strategy(db, STOCK_SID, mode="live", market="us_stock")
+    _mk_stock_fill(db, market="us_stock", symbol="AAPL", side="BUY",
+                   price=100.0, qty=10, days_ago=6)
+    _mk_stock_fill(db, market="us_stock", symbol="AAPL", side="SELL",
+                   price=120.0, qty=10, days_ago=1)
+    # 刻意不造日历 → 全靠工作日启发式
+    from datetime import date as _d
+    r = perf.daily_returns(STOCK_SID, days=7)
+    assert r["calendar_confidence"] == "suspected"
+    assert r["dates"], "日历空的时候序列整个没了"
+    # 🔴 整段都是猜的时候**不许报 0**。这个字段本轮就是因为「23 天全靠猜、报 0」
+    # 被抓出来的：它算的是 `len(known)`，与 `off` 的处理耦合，动一下就会无声退回 0。
+    assert r["heuristic_days"] == len(r["dates"]) - len(r.get("off_calendar_days") or [])
+    assert all(_d.fromisoformat(d).weekday() < 5 for d in r["dates"]
+               if d not in (r.get("off_calendar_days") or []))
+
+
+def test_stock_series_prefers_live_over_paper(db):
+    """真金白银优先 —— paper 是模拟撮合，掺进来会污染判定。"""
+    from datetime import date as _date
+    _mk_strategy(db, STOCK_SID, mode="paper", market="a_share")
+    _mk_calendar(db, "a_share", [_date(2026, 7, 20) + timedelta(days=i) for i in range(5)])
+    for mode, price in (("live", 110.0), ("paper", 200.0)):
+        _mk_stock_fill(db, mode=mode, side="BUY", price=100.0, qty=100,
+                       on=_date(2026, 7, 20))
+        _mk_stock_fill(db, mode=mode, side="SELL", price=price, qty=100,
+                       on=_date(2026, 7, 22))
+
+    r = perf.daily_returns(STOCK_SID,
+                           since=datetime(2026, 7, 20), until=datetime(2026, 7, 24, 23))
+    assert r["basis"] == "live_fills"
+    assert sum(r["returns"]) * r["capital"] == pytest.approx(1000.0, abs=1e-4)
+
+
+def test_stock_series_none_when_no_fills(db):
+    _mk_strategy(db, STOCK_SID, mode="paper", market="us_stock")
+    r = perf.daily_returns(STOCK_SID, days=30)
+    assert r["basis"] == "none" and "没有可算收益" in r["reason"]
+
+
+def test_stock_series_backfills_the_uncovered_tail(db):
+    """🔴 日历盖不到窗口尾部时**补齐并降级**，⛔ 不许让序列尾部悄悄少几天。
+
+    `trading_days()` 是给缺口扫描用的，超出覆盖范围时它只回「日历盖住的那段」——
+    对缺口扫描是对的，对收益序列是灾难：少掉的恰恰是最近、最该看的那几天。
+    生产上这是**常态**（日历靠收盘后的指数 bar 自举，天然滞后一天以上）。
+    """
+    from datetime import date as _date
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    # 日历只造到 7/22，但窗口要到 7/24
+    _mk_calendar(db, "a_share", [_date(2026, 7, 20) + timedelta(days=i) for i in range(3)])
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100, on=_date(2026, 7, 20))
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100, on=_date(2026, 7, 22))
+
+    r = perf.daily_returns(STOCK_SID,
+                           since=datetime(2026, 7, 20), until=datetime(2026, 7, 24, 23))
+    assert "2026-07-23" in r["dates"] and "2026-07-24" in r["dates"], \
+        f"日历盖不到的尾部被丢了：{r['dates']}"
+    # ⭐ 「日历滞后于收盘」是常态 → partial，不是 suspected。
+    # 两态的话这个标记会恒亮，等于没有标记。
+    assert r["calendar_confidence"] == "partial"
+    assert r["heuristic_days"] == 2
+    assert r["window_days"] == 5
+
+
+def test_stock_series_certain_only_when_calendar_covers_the_window(db):
+    """三态的另一半：日历盖满窗口才配叫 certain。"""
+    from datetime import date as _date
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    _mk_calendar(db, "a_share", [_date(2026, 7, 20) + timedelta(days=i) for i in range(5)])
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100, on=_date(2026, 7, 20))
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100, on=_date(2026, 7, 22))
+
+    r = perf.daily_returns(STOCK_SID,
+                           since=datetime(2026, 7, 20), until=datetime(2026, 7, 24, 23))
+    assert r["calendar_confidence"] == "certain"
+    assert r["heuristic_days"] == 0
+
+
+def test_stock_series_reports_unbucketed_and_uncosted(db):
+    """⚠️ 诚实度字段在 `strategy_pnl` 报了、序列这边也必须报 —— 同一个事实
+    在两个出口说法不一致，比不说更糟。"""
+    from datetime import date as _date
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    _mk_calendar(db, "a_share", [_date(2026, 7, 20) + timedelta(days=i) for i in range(5)])
+    # 卖多于已知买入 → 成本未知；外加一行 mode 不认识的
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100, on=_date(2026, 7, 22))
+    _mk_stock_fill(db, mode="shadow", side="BUY", price=100.0, qty=100,
+                   on=_date(2026, 7, 21))
+
+    r = perf.daily_returns(STOCK_SID,
+                           since=datetime(2026, 7, 20), until=datetime(2026, 7, 24, 23))
+    assert r["has_uncosted_sell"] is True
+    assert r["unbucketed_fills"] == {"shadow": 1}
