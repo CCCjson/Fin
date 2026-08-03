@@ -24,10 +24,12 @@ from data_engine.storage.models import (
     CryptoStrategy,
     CryptoStrategyRun,
     CryptoTrade,
+    StrategyTrade,
 )
 
 SID = "CS-TEST-0001"
 OTHER = "CS-TEST-0002"
+STOCK_SID = "CS-TEST-STOCK"
 
 
 def _add(session, obj):
@@ -43,7 +45,8 @@ def db():
     session.close()
     s = get_session()
     try:
-        for model in (CryptoStrategyRun, CryptoTrade, CryptoFill, CryptoStrategy):
+        for model in (CryptoStrategyRun, CryptoTrade, CryptoFill, StrategyTrade,
+                      CryptoStrategy):
             s.query(model).delete()
         s.commit()
     finally:
@@ -467,3 +470,152 @@ def test_daily_returns_uses_live_when_both_exist(db):
     _mk_run(db, SID, mode="paper", detail=_paper_detail("BUY", 1.0, 100.0), minutes_ago=90)
 
     assert perf.daily_returns(SID, days=10)["basis"] == "live_fills"
+
+
+# ── 6. 股票策略：读的是另一张台账（S5）─────────────────────────────────────
+#
+# `crypto_strategies` 这张表同时存币策略和股票策略（靠 `market` 列区分），
+# 但两者的成交落在**不同的台账**里。这一节守三件事：
+#
+# 1. 股票策略能算出数（此前 `strategy_pnl` 只认 `crypto_trades` → 恒为 none，
+#    于是股票策略进了排行榜却永远显示空白）；
+# 2. crypto 那半边**一行行为都没变**（它正在跑真钱）；
+# 3. paper 与 live 分桶不合并 —— 股票两种模式落在**同一张表**里，
+#    全靠 `mode` 列分，少一个 filter 就是拿模拟成绩给真钱决策背书。
+
+def _mk_stock_fill(session, *, sid=STOCK_SID, market="a_share", symbol="600519.SH",
+                   side="BUY", price=100.0, qty=100, mode="live",
+                   commission=0.0, days_ago=0):
+    from common.market_time import market_day_of as _mday
+    day = _mday(datetime.utcnow() - timedelta(days=days_ago), market)
+    _add(session, StrategyTrade(
+        market=market, symbol=symbol, side=side, price=price, quantity=qty,
+        amount=price * qty, commission=commission, trade_date=day,
+        source_kind=STRATEGY, source_ref=sid, rule_set="趋势", mode=mode))
+    session.commit()
+
+
+def test_stock_pnl_reads_the_stock_ledger(db):
+    """股票策略走 `strategy_trades`，不再恒为「算不出来」。"""
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share", name="茅台策略")
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100, commission=3.0, days_ago=3)
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100, commission=15.0, days_ago=1)
+
+    r = perf.strategy_pnl(STOCK_SID)
+    assert r["basis"] == "live_fills"
+    assert r["market"] == "a_share"
+    assert r["closed_legs"] == 1
+    # 毛利 2000，减两腿手续费（3 + 15）
+    assert r["realized_pnl"] == pytest.approx(2000 - 3 - 15, abs=1e-6)
+    assert r["fees"] == pytest.approx(18.0, abs=1e-6)
+
+
+def test_stock_commission_comes_from_the_ledger_row(db):
+    """⚠️ 费用取台账里**券商回报的实际手续费**，不是一个估出来的费率。
+
+    平进平出必须是**亏手续费**：抹掉费用的话，一条来回不赚钱的策略
+    看起来会是平的，而它真实在慢慢流血。
+    """
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100, commission=3.0, days_ago=3)
+    _mk_stock_fill(db, side="SELL", price=100.0, qty=100, commission=13.0, days_ago=1)
+    r = perf.strategy_pnl(STOCK_SID)
+    assert r["realized_pnl"] == pytest.approx(-16.0, abs=1e-6)
+
+
+def test_stock_paper_and_live_are_separate_buckets(db):
+    """🔒 两种模式在**同一张表**里 —— 分桶全靠 `mode` 列，⛔ 绝不合并。"""
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    _mk_stock_fill(db, mode="live", side="BUY", price=100.0, qty=100, days_ago=3)
+    _mk_stock_fill(db, mode="live", side="SELL", price=110.0, qty=100, days_ago=1)
+    _mk_stock_fill(db, mode="paper", side="BUY", price=100.0, qty=100, days_ago=3)
+    _mk_stock_fill(db, mode="paper", side="SELL", price=200.0, qty=100, days_ago=1)
+
+    r = perf.strategy_pnl(STOCK_SID)
+    assert r["basis"] == "mixed"
+    assert r["live"]["realized_pnl"] == pytest.approx(1000.0, abs=1e-6)
+    assert r["paper"]["realized_pnl"] == pytest.approx(10000.0, abs=1e-6)
+    # ⛔ 顶层不许出现一个「合计」，那正是拿模拟成绩给真钱背书的入口
+    assert "realized_pnl" not in r
+    assert "不可相加" in r["note"]
+
+
+def test_stock_buy_outside_window_still_provides_cost_basis(db):
+    """🔴 回归：买在窗口外、卖在窗口内 → 盈亏**不能变成 0**。
+
+    成本基础天然跨窗口（股票持仓跨月完全正常）。按 `since` 切成交会把买入腿
+    切掉 → `costed = min(sold, 0) = 0` → 那笔平仓不记 → 静默报「赚了 0」。
+    成本必须从全历史累，窗口只切在平仓日上。
+    """
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100, days_ago=40)
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100, days_ago=5)
+
+    r = perf.strategy_pnl(STOCK_SID, since=datetime.utcnow() - timedelta(days=30),
+                          until=datetime.utcnow())
+    assert r["closed_legs"] == 1
+    assert r["realized_pnl"] == pytest.approx(2000.0, abs=1e-6)
+
+
+def test_stock_window_excludes_older_closes(db):
+    """窗口切在平仓日上：窗口外平的仓不该算进这个窗口的战绩。"""
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100, days_ago=50)
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100, days_ago=40)
+
+    r = perf.strategy_pnl(STOCK_SID, since=datetime.utcnow() - timedelta(days=30),
+                          until=datetime.utcnow())
+    assert r["closed_legs"] == 0
+    assert r["realized_pnl"] == 0
+
+
+def test_stock_no_fills_says_never_traded_not_zero(db):
+    """「一笔成交都没有」≠「跑了但没赚」—— 两者该查的方向完全不同。"""
+    _mk_strategy(db, STOCK_SID, mode="paper", market="us_stock")
+    r = perf.strategy_pnl(STOCK_SID)
+    assert r["basis"] == "none"
+    assert "一笔成交都没有" in r["reason"]
+
+
+def test_stock_unknown_mode_fills_are_not_silently_dropped(db):
+    """⚠️ 悄悄少算一批成交，和「这条策略没赚钱」在屏幕上长得一模一样。"""
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    _mk_stock_fill(db, mode="shadow", side="BUY", price=100.0, qty=100, days_ago=2)
+    r = perf.strategy_pnl(STOCK_SID)
+    assert r["unbucketed_fills"] == {"shadow": 1}
+
+
+def test_crypto_strategy_ignores_the_stock_ledger(db):
+    """🔴 分叉的另一半：币策略**不许**去读 `strategy_trades`。
+
+    存量币策略的 `market` 是 NULL（模型约定 NULL = crypto）。兜底若写成
+    `normalize_market` 的默认值（A股），所有老币策略会一夜之间去读一张空的
+    股票台账 —— 战绩集体归零，而且一声不吭。
+    """
+    _mk_strategy(db, SID, mode="live", market=None)
+    _mk_trade(db, order_id="A1", kind=STRATEGY, ref=SID)
+    _mk_trade(db, order_id="A2", kind=STRATEGY, ref=SID, side="SELL")
+    _mk_fill(db, order_id="A1", trade_id="1", symbol="BTCUSDT.BN",
+             price=100.0, qty=1.0, is_buyer=True, minutes_ago=20)
+    _mk_fill(db, order_id="A2", trade_id="2", symbol="BTCUSDT.BN",
+             price=120.0, qty=1.0, is_buyer=False, minutes_ago=10)
+    # 同一个 strategy_id 在股票台账里也有行（不该发生，但发生了也不能混进来）
+    _mk_stock_fill(db, sid=SID, side="BUY", price=1.0, qty=100, days_ago=3)
+    _mk_stock_fill(db, sid=SID, side="SELL", price=999.0, qty=100, days_ago=1)
+
+    r = perf.strategy_pnl(SID)
+    assert r["basis"] == "live_fills"
+    assert r["realized_pnl"] == pytest.approx(20.0)      # 币的 20，不是股票的 99800
+    assert "market" not in r                             # crypto 分支的返回形状没变
+
+
+def test_stock_pnl_sentence_uses_the_market_currency(db):
+    """⚠️ 一条茅台策略的盈亏念成「USDT」是说了句假话，而这句话要拿来做决定。"""
+    _mk_strategy(db, STOCK_SID, mode="live", market="a_share")
+    _mk_stock_fill(db, side="BUY", price=100.0, qty=100, days_ago=3)
+    _mk_stock_fill(db, side="SELL", price=120.0, qty=100, days_ago=1)
+
+    s = perf._pnl_sentence(perf.strategy_pnl(STOCK_SID))
+    assert "CNY" in s and "USDT" not in s
+    # crypto 不带 currency 字段 → 兜底仍是 USDT（原样，别改成空串）
+    assert "USDT" in perf._pnl_sentence({"basis": "live_fills", "realized_pnl": 1.0})

@@ -31,3 +31,20 @@
   而 01-04 是纯读侧扩展、风险低得多，先做能让竞技场对股票立刻可用。
 - **影响范围**：`crypto_strategy/performance.py`、`crypto_strategy/arena.py`、
   `strategy_runtime/ledger.py` 的读侧调用方。
+
+### 2026-08-03 — `strategy_trades` 的 price/quantity/commission 改记「券商回报值」
+- **决定**：`strategy_runtime/executor.py::_record` 从「记决策价 + 手续费 0」改成
+  「记券商回报的 `filled_price` / `filled_quantity` / `commission`」，且**只有
+  `FILLED` / `PARTIAL_FILLED` 才写台账**（`SUBMITTED` / `PENDING` 不写）。
+- **理由**：股票战绩（任务 01）就是拿这张台账算的。按决策价 + 零手续费记账等于
+  抹掉滑点和费用，偏差方向**恒为高估** —— 一条其实不赚钱的策略会因此拿到上位资格，
+  而竞技场四道门槛正是靠这个数判切不切换。
+- **否决了**：(a) 只改读侧、读的时候按费率补一个估算费用 —— 那是拿假数字盖住假数字，
+  且与 A 股印花税、真券商阶梯佣金都对不上；(b) 连 `SUBMITTED` 一起记 —— 那是凭空
+  捏造一笔可能永远不会发生的成交。
+- **⚠️ 接缝**：改动前后的台账行**不同口径**（老行=决策价零费用，新行=成交价含费）。
+  当前生产库里股票台账基本是空的（调度器刚上、只有 PaperBroker），影响可忽略；
+  但跨这个时间点算战绩时要知道有这道缝。
+- **🔴 欠债**：目前没有「成交回报回填台账」这一环，所以接真券商后**挂单成交不会自动
+  补记**。接券商时必须一起补，否则限价单的战绩会系统性缺失。
+- **影响范围**：`strategy_runtime/executor.py`、`strategy_trades` 表的数据语义。

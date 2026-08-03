@@ -31,6 +31,10 @@ from loguru import logger
 
 from common.trading_rules import is_tradable_at, lot_floor
 
+# 只有这两个状态代表「钱真的动了」。⛔ 别把 SUBMITTED/PENDING 加进来 ——
+# 见 `_record` 的 docstring：那会往台账里写一行永远不会发生的成交。
+_FILLED_STATUSES = ("FILLED", "PARTIAL_FILLED")
+
 
 class MarketAdapter(Protocol):
     """一个市场要提供的三样东西（其余都是共享的）。"""
@@ -200,13 +204,47 @@ def _risk_gate(spec, symbol: str, side: str, qty: int, price: float,
 
 
 def _record(spec, d: SymbolDecision, order, strategy_id: str | None, mode: str) -> None:
-    """成交留痕（失败只 warning，不掀翻已经成交的单）。"""
+    """成交留痕（失败只 warning，不掀翻已经成交的单）。
+
+    🔴 记的是**券商回报的成交价/成交量/手续费**，不是「我想下的那个价」。
+    拿决策价 + 手续费 0 记账等于抹掉滑点和费用，而战绩正是拿这张台账算的 ——
+    偏差方向恒为**高估**，一条其实不赚钱的策略会因此拿到上位的资格。
+    ⚠️ 券商没给（真券商还没接、或字段缺失）才回落到决策值，⛔ 别反过来。
+
+    ## 🔒 只有**真的成交了**才记
+
+    `submit()` 把 `SUBMITTED` / `PENDING` 也当成功放行（限价单被受理但还没成交）。
+    那种单记进台账 = 凭空捏造一行「按决策价全额成交、手续费 0」的假成交，
+    而它可能永远不会成交。⛔ 不记。
+
+    🔴 **代价说清楚**：目前**没有**「成交回报回填台账」这一环，所以真券商到位后
+    挂着的限价单成交了也不会自动补记 —— 接真券商时必须一起补上（PROGRESS 已记）。
+    今天只有 PaperBroker（要么 `FILLED`、要么在 `submit` 里抛掉），这道闸是空转的。
+    """
     if not strategy_id:
         return
     from strategy_runtime.ledger import record_fill
 
+    status = (getattr(getattr(order, "status", None), "value", None) or "").upper()
+    if status not in _FILLED_STATUSES:
+        logger.warning(f"[{spec.market}] {d.symbol} 单已受理但未成交（{status}），"
+                       f"**不写台账**；真券商到位后需靠成交回报补记")
+        return
+
+    # ⚠️ 转换单独兜住：`_record` 是在 `run_tick` 的 `except` 里被调的，
+    # 券商回报里混进一个非数值（`"1,234.5"`）会被吞成 `order_failed` ——
+    # **单已经下出去了，决策明细却说它失败了**，比记错价还糟。
+    try:
+        price = float(getattr(order, "filled_price", 0) or 0) or (d.price or 0.0)
+        quantity = int(getattr(order, "filled_quantity", 0) or 0) or d.quantity
+        commission = float(getattr(order, "commission", 0) or 0)
+    except (TypeError, ValueError) as e:  # 券商回报字段不是数 → 退回决策值并说出来
+        logger.warning(f"[{spec.market}] {d.symbol} 券商回报字段解析失败（{e}），"
+                       f"台账退回按决策值记 —— 这一行的费用/滑点是缺的")
+        price, quantity, commission = (d.price or 0.0), d.quantity, 0.0
+
     record_fill(market=spec.market, symbol=d.symbol, side=d.side or "",
-                price=d.price or 0.0, quantity=d.quantity,
+                price=price, quantity=quantity, commission=commission,
                 strategy_id=strategy_id, rule_set=d.rule_set, mode=mode,
                 broker_order_id=str(getattr(order, "order_id", "") or "") or None)
 

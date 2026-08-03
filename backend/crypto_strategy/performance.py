@@ -1,7 +1,20 @@
-"""策略战绩 —— 「我那条 BTC 策略跑得怎么样」的计算内核（S1）。
+"""策略战绩 —— 「我那条策略跑得怎么样」的计算内核（S1，S5 起按市场分叉）。
 
 纯计算：不出网、不碰 LLM、不写库。只读 `crypto_strategy_runs` / `crypto_trades` /
-`crypto_fills` / `crypto_strategies`。
+`crypto_fills` / `crypto_strategies` / `strategy_trades`。
+
+# 🔀 按市场分叉（S5）
+
+`crypto_strategies` 这张表**同时存着币策略和股票策略**（靠 `market` 列区分，
+存量行 NULL = crypto）。两个市场的成交落在**不同的台账**里：
+
+| 市场 | 台账 | paper 记在哪 |
+|---|---|---|
+| crypto | `crypto_trades` + `crypto_fills` | ⛔ 不落台账，从 run 的 `decision_detail` 回放 |
+| 股票 | `strategy_trades`（`mode` 列分桶） | 同一张表，`mode='paper'` |
+
+⛔ **crypto 那半边一行都不许改**：它正在跑真钱，且是这次抽取共用层的回归防线。
+股票走 `_stock_pnl()` 那条独立分支，两条腿只共用 `_pair()` 的配对规则。
 
 # 三个必须先讲清楚的口径
 
@@ -32,13 +45,13 @@ paper 不写 `CryptoTrade`（这个隔离是刻意的，别改），它的「成
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from loguru import logger
 
-from common.market import CRYPTO
-from common.market_time import market_day_of, utc_iso, utc_now
+from common.market import A_SHARE, CRYPTO, HK_STOCK, US_STOCK, normalize_market
+from common.market_time import market_day_bounds, market_day_of, utc_iso, utc_now
 from common.trade_source import STRATEGY as TRADE_STRATEGY
 from common.trade_source import UNKNOWN as TRADE_UNKNOWN
 
@@ -245,6 +258,11 @@ def _pair(legs: list[dict], fee_pct: float, *,
     Args:
         since: 传了就**只统计这之后的平仓**，更早的腿仅用于累积成本 ——
             否则窗口外的买入腿会被切掉，收益系统性低估（见 `strategy_pnl` 的注释）。
+
+    ⭐ 腿里带 `fee` 时用**这一笔的实际费用**，不带才按 `fee_pct` 估。
+    股票台账（`strategy_trades.commission`）记的是券商回报的真实手续费，
+    而 crypto paper 只有一个费率可估 —— 两种口径都要能表达，⛔ 但别把
+    「这笔没有费用信息」和「这笔手续费是 0」混成一件事（前者留 None 走费率）。
     """
     state: dict[str, dict[str, float]] = {}
     realized = 0.0
@@ -255,7 +273,7 @@ def _pair(legs: list[dict], fee_pct: float, *,
     for lg in legs:
         st = state.setdefault(lg["symbol"], {"qty": 0.0, "cost": 0.0, "avg": 0.0})
         gross = lg["qty"] * lg["price"]
-        fee = gross * fee_pct
+        fee = gross * fee_pct if lg.get("fee") is None else float(lg["fee"])
         # ⭐ `since` 之前的腿**只用来累成本，不计入本窗口的收益/费用**（与 live 侧
         # 「成本从全历史累、窗口只切平仓日」完全同一个口径）。
         in_window = since is None or lg.get("at") is None or lg["at"] >= since
@@ -290,6 +308,139 @@ def _pair(legs: list[dict], fee_pct: float, *,
     }
 
 
+# ──────────────────────── 股票：成交台账口径（S5） ────────────────────────
+
+# 盈亏的计价单位。⚠️ 只服务「念给 Jason 听的那句话」，**不做任何汇率折算** ——
+# 每个市场各算各的本金与收益（`docs/组合模块` 已拍板不跨市场折算）。
+# 这是全项目目前唯一一处市场→币种映射；出现第二个消费方时提到 `common/market.py`。
+_MARKET_UNIT = {A_SHARE: "CNY", HK_STOCK: "HKD", US_STOCK: "USD", CRYPTO: "USDT"}
+
+_STOCK_MODES = ("live", "paper")
+
+
+def _market_of(row: Any) -> str:
+    """这条策略跑哪个市场 —— **决定读哪张台账**。
+
+    🔴 存量行 `market` 是 NULL，语义是 crypto（模型里写死的约定）。所以兜底必须是
+    crypto，⛔ 不能用 `normalize_market` 的默认兜底 A股 —— 那会让所有老币策略
+    一夜之间去读一张空的股票台账，战绩集体归零而且不报错。
+    """
+    raw = getattr(row, "market", None)
+    return normalize_market(raw, default=CRYPTO) if raw else CRYPTO
+
+
+def _stock_legs(strategy_id: str, market: str, until: datetime | None
+                ) -> tuple[dict[str, list[dict]], dict[str, int]]:
+    """股票策略的成交腿，按 `mode` 分桶。返回 `({mode: legs}, {未知 mode: 笔数})`。
+
+    🔴 **取的是全历史**（`days=None`），只在上界切 `until`：成本基础天然跨窗口
+    （买在 40 天前、卖在昨天），按窗口切会把买入腿切掉 → `costed = min(sold, 0) = 0`
+    → 那笔平仓不记 → **收益静默低估**。窗口是展示口径，切在平仓日上（`_pair(since=…)`）。
+
+    ⚠️ `mode` 不是 paper/live 的行**不静默丢掉**，单独计数报出来 ——
+    悄悄少算一批成交，和「这条策略没赚钱」在屏幕上长得一模一样。
+    """
+    from strategy_runtime.ledger import strategy_fills
+
+    rows = strategy_fills(strategy_id, days=None,
+                          until=market_day_of(until, market) if until else None)
+    buckets: dict[str, list[dict]] = {m: [] for m in _STOCK_MODES}
+    stray: dict[str, int] = {}
+    for r in rows:
+        mode = (r.get("mode") or "").lower()
+        if mode not in buckets:
+            stray[mode or "(空)"] = stray.get(mode or "(空)", 0) + 1
+            continue
+        # 台账只有交易**日**，没有时刻 —— 统一取该市场当地日的零点（naive UTC），
+        # 这样 `_pair(since=…)` 的比较就是**整日粒度**，与 live 侧「窗口切在平仓日」
+        # 同一个口径。⛔ 别用 `datetime.combine(day, time.min)`：那是本地零点冒充 UTC。
+        day = date.fromisoformat(r["trade_date"])
+        buckets[mode].append({
+            "symbol": r["symbol"], "side": (r["side"] or "").upper(),
+            "qty": float(r["quantity"]), "price": float(r["price"]),
+            # ⚠️ 费用取台账里**券商回报的实际手续费**（含 A 股卖出印花税），
+            # ⛔ 不在这里凭费率补一个假的。
+            # 🔴 `commission is None` = **这一笔没有费用信息**，与「手续费是 0」
+            # 不是一件事：前者按 0 记会静默按零费率算账（一条来回不赚钱的策略
+            # 看起来会是平的）。数字上眼下都是 0，但笔数要报出来（`fills_without_fee`）。
+            "fee": None if r.get("commission") is None else float(r["commission"]),
+            "at": market_day_bounds(r.get("market") or market, day)[0],
+        })
+    return buckets, stray
+
+
+def _stock_window_start(market: str, since: datetime | None) -> datetime | None:
+    """展示窗口的下界 → 该市场当地日的零点（naive UTC）。
+
+    台账是日粒度，所以窗口也按**整日**切：`since` 当天的成交要**整天算进来**，
+    否则一笔上午的平仓会因为 `since` 是下午三点而莫名其妙被排除。
+    """
+    if since is None:
+        return None
+    return market_day_bounds(market, market_day_of(since, market))[0]
+
+
+def _stock_block(legs: list[dict], *, market: str, mode: str,
+                 since: datetime | None) -> dict[str, Any] | None:
+    """一个桶（paper 或 live）的盈亏。没有腿 → None。"""
+    if not legs:
+        return None
+    # fee_pct=0.0：股票的费用逐笔取自台账，**没有一个可估的费率**。
+    # 缺费用信息的笔数单独报出来（⛔ 不许当成「这笔免费」蒙混过去）。
+    res = _pair(legs, 0.0, since=_stock_window_start(market, since))
+    no_fee = sum(1 for lg in legs if lg.get("fee") is None)
+    live = mode == "live"
+    return {
+        # ⚠️ 复用 crypto 那套 `basis` 词表**是刻意的**：下游（提案后验、竞技场、
+        # agent 工具）全按这四个值分支，新造一个词等于让它们**静默走进 else**。
+        "basis": "live_fills" if live else "paper_simulated",
+        "fills": len(legs),
+        **res,
+        "coverage": {"attributed_fills": len(legs),
+                     "fills_without_fee": no_fee},
+        "note": (("真实成交（成交价与手续费取自券商回报，含 A 股卖出印花税）。"
+                  if live else
+                  "⚠️ 模拟账：撮合由 PaperBroker 生成（必成、按下单价 + 固定滑点），"
+                  "**不可与实盘策略的数字比大小**。")
+                 + "成本从全历史累计，窗口只切平仓日。"
+                 + (f"⚠️ 其中 {no_fee} 笔没有费用信息，按 0 计 —— 实际收益比这个数低。"
+                    if no_fee else "")),
+    }
+
+
+def _stock_pnl(row: Any, strategy_id: str, market: str, since: datetime | None,
+               until: datetime | None) -> dict[str, Any]:
+    """股票策略的战绩 —— 数据源是 `strategy_trades`，不是 `crypto_trades`。
+
+    🔒 **paper 与 live 分桶不合并**（S4 的教训）：股票两种模式落在**同一张表**里
+    （与 crypto「paper 压根不落台账」不同），所以分桶这件事在这里全靠 `mode` 列 ——
+    ⛔ 少一个 filter 就会把模拟成绩加进真钱战绩。
+    """
+    unit = _MARKET_UNIT.get(market, "")
+    head = {"strategy_id": strategy_id, "market": market,
+            "current_mode": (row.mode or "paper").lower(), "currency": unit}
+
+    buckets, stray = _stock_legs(strategy_id, market, until)
+    if stray:
+        # 诚实度指标，与 live 侧的 `unknown_source_trades` 同一个用途。
+        head["unbucketed_fills"] = stray
+    live = _stock_block(buckets["live"], market=market, mode="live", since=since)
+    paper = _stock_block(buckets["paper"], market=market, mode="paper", since=since)
+
+    if live and paper:
+        return {**head, "basis": "mixed", "live": live, "paper": paper,
+                "note": ("这条策略既有实盘成交也有纸面记录（模式切换过）。"
+                         "⛔ 两块**不可相加、也不可比大小** —— paper 是模拟撮合。")}
+    if live:
+        return {**head, **live}
+    if paper:
+        return {**head, **paper}
+    return {**head, "basis": "none",
+            "reason": ("这条策略在成交台账（strategy_trades）里一笔成交都没有 —— "
+                       "先确认它是不是压根没被武装/没到过 tick，而不是「跑了没赚」"),
+            "coverage": {"attributed_fills": 0}}
+
+
 # ──────────────────────── 对外 ────────────────────────
 
 def strategy_pnl(strategy_id: str, *, since: datetime | None = None,
@@ -307,11 +458,18 @@ def strategy_pnl(strategy_id: str, *, since: datetime | None = None,
     `arm()` / `enable_paper()` 随时会翻它，paper→arm→退回 paper 正是设计好的主流程
     （`00-PLAN §3` 裁决 7）。按 `row.mode` 分支的话，一条切回 paper 的策略会让它
     **真金白银赚的钱整段人间蒸发**，verdict 还会一句话之内自相矛盾。
+
+    ⚠️ 唯一按 `row.market` 分的是**读哪张台账**（见模块头的表）——
+    那是数据在哪的问题，跟「这笔算 paper 还是 live」是两码事。
     """
     row = _strategy_row(strategy_id)
     if row is None:
         return {"strategy_id": strategy_id, "basis": "none",
                 "reason": f"没有 {strategy_id} 这条策略"}
+
+    market = _market_of(row)
+    if market != CRYPTO:
+        return _stock_pnl(row, strategy_id, market, since, until)
 
     mode = (row.mode or "paper").lower()
     live = _live_block(strategy_id, since, until)
@@ -515,14 +673,15 @@ def _paper_daily_pnl(legs: list[dict], fee_pct: float) -> list[tuple[str, float]
     """paper 腿 → [(日期, 当日已实现盈亏)]，配对规则与 `_pair` 完全一致。
 
     ⚠️ 不复用 `_pair` 是因为那个函数只回汇总值；这里要的是**按日拆开**。
-    两处的配对规则必须一模一样，改一边就要改另一边（有测试钉死两者的总和相等）。
+    两处的配对规则必须一模一样，改一边就要改另一边（有测试钉死两者的总和相等）——
+    逐笔 `fee` 这条也一样，虽然当下只有股票腿会带它。
     """
     state: dict[str, dict[str, float]] = {}
     out: list[tuple[str, float]] = []
     for lg in legs:
         st = state.setdefault(lg["symbol"], {"qty": 0.0, "cost": 0.0, "avg": 0.0})
         gross = lg["qty"] * lg["price"]
-        fee = gross * fee_pct
+        fee = gross * fee_pct if lg.get("fee") is None else float(lg["fee"])
         day = (market_day_of(lg["at"], CRYPTO).isoformat() if lg.get("at")
                else market_day_of(utc_now(), CRYPTO).isoformat())
         if lg["side"] == "BUY":
@@ -645,15 +804,19 @@ def _verdict(row: Any, runs: list[dict], reasons: dict[str, int],
 
 
 def _pnl_sentence(pnl: dict) -> str:
+    # ⚠️ 计价单位跟着市场走：一条茅台策略的盈亏念成「USDT」是**说了句假话**，
+    # 而这句话是要念给 Jason 听、并据此决定切不切策略的。crypto 不带这个字段 →
+    # 兜底 USDT（原样，别改成空串）。
+    unit = pnl.get("currency") or "USDT"
     basis = pnl.get("basis")
     if basis == "mixed":
         live, paper = pnl.get("live") or {}, pnl.get("paper") or {}
-        return (f"实盘已实现 {live.get('realized_pnl', 0):+.2f} USDT"
+        return (f"实盘已实现 {live.get('realized_pnl', 0):+.2f} {unit}"
                 f"（{live.get('closed_legs', 0)} 笔平仓）；另有模拟账 "
-                f"{paper.get('realized_pnl', 0):+.2f} USDT（模式切换过）——"
+                f"{paper.get('realized_pnl', 0):+.2f} {unit}（模式切换过）——"
                 f"⛔ 两者**不可相加也不可比大小**。")
     if basis == "live_fills":
-        s = (f"真实已实现盈亏 {pnl.get('realized_pnl', 0):+.2f} USDT"
+        s = (f"真实已实现盈亏 {pnl.get('realized_pnl', 0):+.2f} {unit}"
              f"（{pnl.get('closed_legs', 0)} 笔平仓）。")
         if pnl.get("has_uncosted_sell"):
             # 这个标志此前从不进 verdict —— 于是「买入腿不在账里」会被念成「赚了 0」。
@@ -663,7 +826,7 @@ def _pnl_sentence(pnl: dict) -> str:
                   f"来源不明，没算进这条策略。")
         return s
     if basis == "paper_simulated":
-        s = (f"模拟账 {pnl.get('realized_pnl', 0):+.2f} USDT——"
+        s = (f"模拟账 {pnl.get('realized_pnl', 0):+.2f} {unit}——"
              f"⚠️ 理想撮合，**别拿它跟实盘策略比大小**。")
         if pnl.get("live_unavailable"):
             s += f"（实盘那部分算不出来：{pnl['live_unavailable']}）"

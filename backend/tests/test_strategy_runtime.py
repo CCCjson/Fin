@@ -6,6 +6,8 @@ Jason 2026-08-02 拍板股票走全自动（人只监控），所以下单前**�
 CLAUDE.md 那四条红线（总仓位 ≤80% / 单日亏损 ≤3% / 每笔必须止损 / 连亏 3 次暂停）
 从此全靠代码把关。
 """
+import pytest
+
 from crypto_intel_engine.dsl import CryptoStrategySpec
 from strategy_runtime.executor import decide_symbol, run_tick
 
@@ -262,3 +264,98 @@ def test_decide_symbol_is_pure_enough_to_unit_test():
     d = decide_symbol(_spec(), "600519.SH", adapter, 1_000_000, _AllowAll())
     assert d.status == "ready" and d.side == "BUY"
     assert adapter.broker.submitted == []
+
+
+# ──────────────────── 成交台账留痕 ────────────────────
+#
+# 战绩是拿这张台账算的（`crypto_strategy.performance._stock_pnl`），
+# 所以「记了什么」直接决定「策略看起来赚不赚钱」。
+
+REC_SID = "CS-TEST-REC"
+
+
+@pytest.fixture
+def ledger_clean():
+    from data_engine.storage.database import get_session
+    from data_engine.storage.models import StrategyTrade
+    yield
+    s = get_session()
+    try:
+        s.query(StrategyTrade).filter(StrategyTrade.source_ref == REC_SID).delete()
+        s.commit()
+    finally:
+        s.close()
+
+
+class _ReportingBroker(_FakeBroker):
+    """会回报成交价/成交量/手续费的券商（PaperBroker 就是这样的）。"""
+
+    def __init__(self, *, status="FILLED", filled_price=33.5, filled_quantity=6000,
+                 commission=12.3):
+        super().__init__()
+        self._fields = {"status": status, "filled_price": filled_price,
+                        "filled_quantity": filled_quantity, "commission": commission}
+
+    def submit_order(self, symbol, action, quantity, price):
+        self.submitted.append((symbol, action, quantity, price))
+        f = self._fields
+        return type("_O", (), {
+            "status": type("_S", (), {"value": f["status"]})(),
+            "order_id": "OD-1", "error_msg": None,
+            "filled_price": f["filled_price"],
+            "filled_quantity": f["filled_quantity"],
+            "commission": f["commission"]})()
+
+
+def _fills():
+    from strategy_runtime.ledger import strategy_fills
+    return strategy_fills(REC_SID, days=None)
+
+
+class TestFillLedger:
+    def test_records_what_the_broker_reported_not_the_wish(self, ledger_clean):
+        """🔴 记券商回报的成交价与手续费，不是「我想下的那个价」。
+
+        拿决策价 + 手续费 0 记账 = 抹掉滑点和费用，偏差方向恒为**高估** ——
+        一条其实不赚钱的策略会因此拿到上位的资格。
+        """
+        adapter = _FakeAdapter({"600519.SH": _card(price=33.0)},
+                               broker=_ReportingBroker())
+        run_tick(_spec(), adapter, capital=1_000_000, risk_manager=_AllowAll(),
+                 strategy_id=REC_SID, mode="paper")
+        rows = _fills()
+        assert len(rows) == 1
+        assert rows[0]["price"] == 33.5, "记成决策价了，滑点被抹掉"
+        assert rows[0]["commission"] == 12.3, "手续费记成 0 了"
+        assert rows[0]["quantity"] == 6000
+
+    def test_accepted_but_unfilled_order_is_not_recorded(self, ledger_clean):
+        """🔒 只是被受理、还没成交的单**不许**记 —— 那是凭空捏造一笔成交。"""
+        adapter = _FakeAdapter({"600519.SH": _card(price=33.0)},
+                               broker=_ReportingBroker(status="SUBMITTED"))
+        out = run_tick(_spec(), adapter, capital=1_000_000, risk_manager=_AllowAll(),
+                       strategy_id=REC_SID, mode="live")
+        assert out["tally"].get("ordered") == 1      # 单确实下出去了
+        assert _fills() == [], "还没成交就被记成了成交"
+
+    def test_bad_broker_field_does_not_flip_the_order_to_failed(self, ledger_clean):
+        """⚠️ 单已经下出去了，决策明细却说它失败 —— 比记错价还糟。
+
+        `_record` 是在 `run_tick` 的 `except` 里被调的，回报里混进一个非数值
+        （`"1,234.5"`）时转换抛错会被吞成 `order_failed`，上层据此重排 =
+        **同一笔成交下两次**。
+        """
+        adapter = _FakeAdapter({"600519.SH": _card(price=33.0)},
+                               broker=_ReportingBroker(filled_price="1,234.5"))
+        out = run_tick(_spec(), adapter, capital=1_000_000, risk_manager=_AllowAll(),
+                       strategy_id=REC_SID, mode="paper")
+        assert out["tally"].get("order_failed") is None
+        assert out["tally"].get("ordered") == 1
+        assert _fills()[0]["price"] == 33.0          # 退回决策值，但确实记下来了
+
+    def test_no_strategy_id_means_no_trace(self, ledger_clean):
+        """临时试跑/单测不传 `strategy_id` → 不留痕（⚠️ 真跑策略时必须传）。"""
+        adapter = _FakeAdapter({"600519.SH": _card(price=33.0)},
+                               broker=_ReportingBroker())
+        run_tick(_spec(), adapter, capital=1_000_000, risk_manager=_AllowAll())
+        assert _fills() == []

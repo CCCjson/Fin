@@ -14,6 +14,7 @@ S1 踩过一次：策略排的单只在待确认单表里留了个桥接引用�
 `mode` 列区分 paper / live，**查询时绝不合并**（S4 的教训：paper 是理想撮合，
 把它跟真钱成绩加在一起等于拿模拟成绩给真钱决策背书）。
 """
+from datetime import date
 from typing import Any
 
 from loguru import logger
@@ -60,11 +61,20 @@ def record_fill(*, market: str, symbol: str, side: str, price: float,
 
 
 def strategy_fills(strategy_id: str, *, mode: str | None = None,
-                   days: int = 30) -> list[dict[str, Any]]:
+                   days: int | None = 30,
+                   until: date | None = None) -> list[dict[str, Any]]:
     """一条策略的成交明细。
 
-    ⚠️ `mode` 不传时**两种模式都会返回**，调用方必须自己分桶 ——
-    ⛔ 别把 paper 和 live 的盈亏加在一起。
+    Args:
+        mode: 只要某一桶。⚠️ 不传时**两种模式都会返回**，调用方必须自己分桶 ——
+            ⛔ 别把 paper 和 live 的盈亏加在一起。
+        days: 往回数多少天。🔴 **算盈亏必须传 `None`（=全历史）**：
+            成本基础天然跨窗口（买在 40 天前、卖在昨天），按 `days` 切会把买入腿
+            切掉 → 配对时 `costed = min(sold, 0) = 0` → 那笔平仓不记 →
+            **收益静默低估**，而且不会有任何报错。窗口是**展示口径**，
+            应该切在平仓日上（见 `crypto_strategy.performance._pair` 的 `since`）。
+        until: 只看这一天（含）之前的成交，**按市场当地日**给。用于「回到 T 时刻
+            重算一遍」这类历史窗口查询。
     """
     from datetime import timedelta
 
@@ -72,12 +82,15 @@ def strategy_fills(strategy_id: str, *, mode: str | None = None,
     from data_engine.storage.database import get_session
     from data_engine.storage.models import StrategyTrade
 
-    since = (utc_now() - timedelta(days=max(1, days))).date()
     session = get_session()
     try:
         q = session.query(StrategyTrade).filter(
-            StrategyTrade.source_ref == strategy_id,
-            StrategyTrade.trade_date >= since)
+            StrategyTrade.source_ref == strategy_id)
+        if days is not None:
+            q = q.filter(StrategyTrade.trade_date
+                         >= (utc_now() - timedelta(days=max(1, days))).date())
+        if until is not None:
+            q = q.filter(StrategyTrade.trade_date <= until)
         if mode:
             q = q.filter(StrategyTrade.mode == mode)
         rows = q.order_by(StrategyTrade.trade_date.asc(),

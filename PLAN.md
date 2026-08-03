@@ -13,7 +13,7 @@
 
 ### A. 股票竞技场（S5 §3c 欠债 —— 台账已建好，但上层不认它）
 
-- [ ] 01 `strategy_pnl` 按 market 分叉：股票走 `strategy_trades`，crypto 保持读 `crypto_trades` 不动 —
+- [x] 01 `strategy_pnl` 按 market 分叉：股票走 `strategy_trades`，crypto 保持读 `crypto_trades` 不动 —
       验收：`cd backend && conda run -n quant python -m pytest tests/crypto_strategy/test_performance.py tests/test_strategy_runtime.py -q`
       要点：paper/live 分桶不合并（S4 教训）；crypto 分支**一行都不许改行为**，回归全绿是判据。
 
