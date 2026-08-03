@@ -1374,6 +1374,64 @@ class CryptoBar(Base):
         return f"<CryptoBar({self.symbol} {self.interval} {self.open_time} close={self.close})>"
 
 
+class StrategyTrade(Base):
+    """**市场无关**的策略成交台账（S5）—— 股票自动交易的战绩/归因就靠它。
+
+    ## 为什么不复用现有的两张表
+
+    - `trades`（`Trade`）：外键挂在 `orders` 上、还要 `account_id`，是**回测/纸面**
+      的成交记录，不是「哪条策略在实盘做了什么」。
+    - `crypto_trades`（`CryptoTrade`）：币安专用（USDT 计价、小数币量），
+      而且它**正在跑真钱**，改它等于给实盘链路上手术。
+
+    所以新开一张，且从第一天起就**按市场分叉**（`market` 列），
+    crypto 将来迁过来时不用再改结构。
+
+    ## 🔴 归因必须写在成交这一行里
+
+    S1 的教训：策略排的单只在待确认单表里留桥接，而那张表的 FILLED 行
+    **24 小时后就被清理删掉** —— 超期之后「这笔成交属于哪条策略」永久查不回来。
+    ⛔ 所以别指望事后 join，`source_kind`/`source_ref` 当场写。
+
+    ## ⚠️ 数量用 Integer
+
+    股票按股交易（A 股还要整手）。crypto 迁过来时要改成 Float
+    （0.0015 BTC），届时**同时**改 `CryptoTrade` 的迁移脚本。
+    """
+    __tablename__ = "strategy_trades"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    market = Column(String(16), nullable=False, index=True)     # a_share / us_stock / crypto
+    symbol = Column(String(20), nullable=False, index=True)
+    side = Column(String(10), nullable=False)                   # BUY / SELL
+    price = Column(Float, nullable=False)
+    quantity = Column(Integer, nullable=False)
+    amount = Column(Float, nullable=False)                      # price * quantity
+    commission = Column(Float, default=0)
+    broker_order_id = Column(String(64), nullable=True, index=True)
+    trade_date = Column(Date, nullable=False, index=True)
+
+    # ── 来源归因（真源 `common/trade_source.py`，与 crypto 同一套口径）──
+    # `source_ref`：strategy → 策略号 `CS-…`；ai_advice → decision_id。
+    source_kind = Column(String(16), default="unknown", index=True)
+    source_ref = Column(String(64))
+    # 组合策略里是哪条子策略下的单（单策略 = 策略名）—— 没有它就算不出
+    # 「60% 那条腿到底赚没赚」，而那正是权重值不值得调的依据。
+    rule_set = Column(String(64))
+
+    # 🔒 纸面与实盘**分桶不合并**（S4 的教训：paper 是理想撮合，
+    #    把它跟真钱成绩加在一起等于拿模拟成绩给真钱决策背书）。
+    mode = Column(String(10), default="paper", index=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_strategy_trade_market_date", "market", "trade_date"),
+        Index("idx_strategy_trade_source", "source_kind", "source_ref"),
+        Index("idx_strategy_trade_strategy", "source_ref", "mode"),
+    )
+
+
 class CryptoTrade(Base):
     """币安现货成交台账 —— crypto 独立成交记录（与 A 股 ManualTrade 分书本）。
 

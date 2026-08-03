@@ -199,16 +199,33 @@ def _risk_gate(spec, symbol: str, side: str, qty: int, price: float,
                           fired=fired, rule_set=rule_set)
 
 
+def _record(spec, d: SymbolDecision, order, strategy_id: str | None, mode: str) -> None:
+    """成交留痕（失败只 warning，不掀翻已经成交的单）。"""
+    if not strategy_id:
+        return
+    from strategy_runtime.ledger import record_fill
+
+    record_fill(market=spec.market, symbol=d.symbol, side=d.side or "",
+                price=d.price or 0.0, quantity=d.quantity,
+                strategy_id=strategy_id, rule_set=d.rule_set, mode=mode,
+                broker_order_id=str(getattr(order, "order_id", "") or "") or None)
+
+
 def run_tick(spec, adapter: MarketAdapter, *, capital: float,
-             risk_manager=None, dry_run: bool = False) -> dict:
-    """跑一轮：逐标的决策，`ready` 的真的下单。
+             risk_manager=None, dry_run: bool = False,
+             strategy_id: str | None = None, mode: str = "paper") -> dict:
+    """跑一轮：逐标的决策，`ready` 的真的下单，并**当场留痕**。
 
     Args:
-        dry_run: 只决策不下单（paper 干跑 / 单测用）。
+        dry_run: 只决策不下单（干跑 / 单测用）。
             ⚠️ 它**不是**「安全模式」—— `paper` 与 `live` 的区别在 broker，不在这里。
+        strategy_id: 归因用。不传就**不留痕**（单测/临时试跑）。
+            ⚠️ 真跑策略时必须传，否则战绩算不出来。
+        mode: `paper` / `live` —— 🔒 台账里分桶，查询时**绝不合并**
+            （paper 是理想撮合，跟真钱成绩加在一起等于拿模拟成绩背书）。
 
     Returns:
-        `{decisions: [...], ordered: n, blocked_risk: n, ...}`
+        `{decisions: [...], tally: {...}}`
     """
     if risk_manager is None:
         from trading_engine.risk.manager import RiskManager
@@ -223,8 +240,12 @@ def run_tick(spec, adapter: MarketAdapter, *, capital: float,
             d = SymbolDecision(symbol, "skipped", reason=f"决策异常：{e}")
         if d.status == "ready" and not dry_run:
             try:
-                adapter.submit(symbol, d.side, d.quantity, d.price)
+                order = adapter.submit(symbol, d.side, d.quantity, d.price)
                 d.status = "ordered"
+                # 🔴 归因**当场**写进成交台账。S1 的教训：靠桥表事后 join 的话，
+                #    那张表的 FILLED 行 24 小时后被清理，「这笔属于哪条策略」
+                #    就永久查不回来了。⛔ 别改成「先记引用回头补」。
+                _record(spec, d, order, strategy_id, mode)
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"[{spec.market}] {symbol} 下单失败: {e}")
                 d.status = "order_failed"
