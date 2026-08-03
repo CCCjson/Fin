@@ -106,20 +106,36 @@ def _supersede_siblings(session, row, *, target_mode: str) -> list[str]:
     两条规则叠加：
 
     1. **同族**其它在跑的版本一律退位 —— 同一条策略不该有两个版本同时跑。
-    2. 🔴 **上 live 时，全局其它跑实盘的也要退位**（裁决 7：同期只有一条 live）。
+       ⚠️ `fork_version` 目前**不校验** `market`，所以同族理论上造得出跨市场的
+       版本；那种情况下同族**仍然无条件退位**，是刻意的（同一条策略不该有两个版本
+       同时跑）。⛔ 别把这句读成「同族不可能跨市场」——没有任何东西在保证它。
+    2. 🔴 **上 live 时，同市场其它跑实盘的也要退位**（裁决 7 新读法：**每个市场**
+       同期只有一条 live，Jason 2026-08-03 拍板）。
        只按同族让位的话，「从甲家族换到乙家族」会留下**两条同时 live**，而且
        `pending.has_open` 的去重是按 strategy_id 的，两条会对同一个币各排一张单。
        这是复审实测出来的：arm 甲、再 arm 乙（不同族）→ 两条都是 armed+live+enabled。
+
+    🔀 **`market` 这一条是分族的地基**：判定层（`arena`）分了族而这里不分，
+    arm 一条 A 股策略就会把正在跑真钱的 crypto 策略停掉 —— 「每市场一个卫冕者」
+    在数据层根本立不住。⛔ 改一边必须改另一边。
     """
+    from crypto_strategy.performance import strategy_market
     from data_engine.storage.models import CryptoStrategy
+
     cond = _family_filter(row)
     if target_mode == "live":
         cond = or_(cond, CryptoStrategy.mode == "live")
+    family = row.family_id or row.strategy_id
+    my_market = strategy_market(row)
     out = []
     for other in session.query(CryptoStrategy).filter(
             cond,
             CryptoStrategy.strategy_id != row.strategy_id,
             CryptoStrategy.status.in_(_LIVE_STATUSES)).all():
+        # ⚠️ 市场在 Python 里判（`market_of` 是「NULL = crypto」的唯一实现）。
+        same_family = (other.family_id or other.strategy_id) == family
+        if not same_family and strategy_market(other) != my_market:
+            continue          # 别的市场的卫冕者，与这次上位无关
         other.status = "superseded"
         other.enabled = 0
         out.append(other.strategy_id)
@@ -127,27 +143,43 @@ def _supersede_siblings(session, row, *, target_mode: str) -> list[str]:
 
 
 def _current_live(session, row) -> str | None:
-    """arm 之前，**全局**正在跑实盘的是哪一条（用来记「谁换了谁」）。
+    """arm 之前，**同市场**正在跑实盘的是哪一条（用来记「谁换了谁」）。
 
-    ⚠️ 不限同族：同期只有一条 live（裁决 7），换到另一个家族同样是一次切换 ——
+    ⚠️ 不限同族：同市场同期只有一条 live，换到另一个家族同样是一次切换 ——
     按同族查会让跨家族切换查不到「被换下的人」，冷却期也就无从算起。
+    🔀 但**限同市场**（裁决 7 新读法）：不限的话，arm 一条 A 股策略会被记成
+    「把那条币策略换下来了」，于是币的冷却期被一次股票上位重置。
     """
+    from crypto_strategy.performance import strategy_market
     from data_engine.storage.models import CryptoStrategy
-    cur = session.query(CryptoStrategy).filter(
-        CryptoStrategy.strategy_id != row.strategy_id,
-        CryptoStrategy.enabled == 1,
-        CryptoStrategy.mode == "live",
-        CryptoStrategy.status.in_(_LIVE_STATUSES)).first()
-    return cur.strategy_id if cur else None
+
+    my_market = strategy_market(row)
+    for cur in session.query(CryptoStrategy).filter(
+            CryptoStrategy.strategy_id != row.strategy_id,
+            CryptoStrategy.enabled == 1,
+            CryptoStrategy.mode == "live",
+            CryptoStrategy.status.in_(_LIVE_STATUSES)).all():
+        if strategy_market(cur) == my_market:
+            return cur.strategy_id
+    return None
 
 
 def _challenger_count(session, row) -> int:
-    """切换那一刻有几个挑战者 —— 多重比较修正的输入，事后复盘要能还原当时的门槛高度。"""
+    """切换那一刻**这个市场**有几个挑战者 —— 多重比较修正的输入，
+    事后复盘要能还原当时的门槛高度。
+
+    🔀 按市场数（裁决 7 新读法）：多重比较修正防的是「同时跑 N 条、最好那条大概率是
+    运气」，而别的市场的策略根本不参与这场比较 —— 把它们算进来是凭空抬高门槛。
+    """
+    from crypto_strategy.performance import strategy_market
     from data_engine.storage.models import CryptoStrategy
-    return session.query(CryptoStrategy).filter(
+
+    my_market = strategy_market(row)
+    rows = session.query(CryptoStrategy).filter(
         CryptoStrategy.enabled == 1,
         CryptoStrategy.strategy_id != row.strategy_id,
-        CryptoStrategy.is_benchmark != 1).count()
+        CryptoStrategy.is_benchmark != 1).all()
+    return sum(1 for r in rows if strategy_market(r) == my_market)
 
 
 def _record_switch(prev_live: str | None, out: dict, superseded: list[str],

@@ -503,6 +503,10 @@ def list_strategy_proposals(family_id: str | None = None, status: str | None = N
 
 class ArenaArgs(BaseModel):
     days: int = Field(90, ge=7, le=365, description="用多长的历史算日收益率序列，默认 90 天")
+    market: str = Field("crypto", description=(
+        "判哪个市场的竞技场：crypto / a_share / us_stock。默认 crypto。"
+        "⚠️ 每个市场各有一个卫冕者，跨市场不排名（分母是同一个总资金设置、"
+        "分子却是不同币种，比大小没有意义）"))
 
 
 @tool(
@@ -518,10 +522,22 @@ class ArenaArgs(BaseModel):
     args_model=ArenaArgs,
     category="crypto", group="crypto",
 )
-def evaluate_strategy_arena(days: int = 90) -> ToolEnvelope:
-    from crypto_strategy.arena import evaluate_arena
+def evaluate_strategy_arena(days: int = 90, market: str = "crypto") -> ToolEnvelope:
+    from crypto_strategy.arena import (
+        UnknownMarketError,
+        evaluate_arena,
+        markets_with_strategies,
+        resolve_market,
+    )
 
-    r = evaluate_arena(days=days)
+    # ⛔ 认不出的市场**不回落到 crypto**：LLM 传「股票」时静默拿到币的竞技场，
+    #    而 verdict 通篇不提市场名 —— 它会把币的结论当成股票的答复报给 Jason。
+    try:
+        m = resolve_market(market)
+    except UnknownMarketError as e:
+        return ToolEnvelope(business_result="negative", message=str(e),
+                            data={"markets_with_strategies": markets_with_strategies()})
+    r = evaluate_arena(market=m, days=days)
     if r.get("champion") is None:
         return ToolEnvelope(business_result="negative", message=r["verdict"], data=r)
     return ToolEnvelope(data=r, message=r["verdict"])

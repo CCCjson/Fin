@@ -489,3 +489,193 @@ def test_missing_market_is_fail_closed():
     r = arena.evaluate_challenger(ch, mm)
     assert r["gates"]["comparable"]["passed"] is False
     assert r["should_switch"] is False
+
+
+# ── 按市场分族（S5 任务 03，裁决 7 新读法）────────────────────────────────
+#
+# Jason 2026-08-03 拍板：「同一时期只有一条 live」改读作「**每个市场**同期一条 live」。
+# 判定层和退位逻辑**必须一起**分族 —— 只改判定层的话，arm 一条 A 股策略照样会把
+# 正在跑真钱的币策略停掉，「每市场一个卫冕者」在数据层立不住。
+
+def test_arena_only_judges_its_own_market(db):
+    """别的市场的策略不该出现在这个市场的竞技场里。"""
+    _mk("币卫冕者", enabled=1, mode="live", status="armed")
+    _mk("A股挑战者", enabled=1, mode="paper", market="a_share")
+
+    r = arena.evaluate_arena(market="crypto")
+    assert r["market"] == "crypto"
+    assert r["champion"]["name"] == "币卫冕者"
+    assert r["challengers"] == 0, "A 股策略被算进了 crypto 的挑战者"
+    # 诚实度：别的市场有策略这件事要说出来，不能装作不存在
+    assert set(r["markets_with_strategies"]) == {"crypto", "a_share"}
+
+
+def test_each_market_has_its_own_champion(db):
+    """两个市场可以各有一条 live，互不相干。"""
+    _mk("币卫冕者", enabled=1, mode="live", status="armed")
+    _mk("A股卫冕者", enabled=1, mode="live", status="armed", market="a_share")
+
+    assert arena.evaluate_arena(market="crypto")["champion"]["name"] == "币卫冕者"
+    assert arena.evaluate_arena(market="a_share")["champion"]["name"] == "A股卫冕者"
+    assert arena.current_champion("crypto")["name"] == "币卫冕者"
+    assert arena.current_champion("a_share")["name"] == "A股卫冕者"
+
+
+def test_missing_champion_message_names_the_market(db):
+    """⚠️ 分族之后「没有卫冕者」不再等于「整个系统没在自动交易」——
+    说笼统了会让 Jason 以为别的市场也停了。"""
+    _mk("币卫冕者", enabled=1, mode="live", status="armed")
+    r = arena.evaluate_arena(market="a_share")
+    assert r["champion"] is None
+    assert "a_share" in r["verdict"]
+    assert "crypto" in r["verdict"], "别的市场还在跑，这件事得说出来"
+
+
+def test_legacy_null_market_is_crypto(db):
+    """🔴 存量行 `market` 是 NULL，语义是 crypto。兜底错了老币策略会集体消失。"""
+    _mk("存量策略", enabled=1, mode="live", status="armed", market=None)
+    assert arena.evaluate_arena(market="crypto")["champion"]["name"] == "存量策略"
+    assert arena.evaluate_arena(market="a_share")["champion"] is None
+
+
+def test_arming_in_one_market_does_not_demote_another(db):
+    """🔴 **这条是分族的地基**：arm 一条 A 股策略，不许把正在跑真钱的币策略停掉。"""
+    from crypto_strategy.service import crypto_strategy_service as svc
+    from data_engine.storage.database import get_session
+    from data_engine.storage.models import CryptoStrategy
+
+    crypto_live = _mk("币卫冕者", enabled=1, mode="live", status="armed")
+    stock = _mk("A股新秀", market="a_share", backtest_passed=1)
+    svc.arm(stock)
+
+    s = get_session()
+    try:
+        c = s.query(CryptoStrategy).filter(
+            CryptoStrategy.strategy_id == crypto_live).first()
+        assert c.status == "armed" and c.enabled == 1, \
+            "arm 一条 A 股策略把正在跑真钱的币策略停掉了"
+        a = s.query(CryptoStrategy).filter(
+            CryptoStrategy.strategy_id == stock).first()
+        assert a.status == "armed" and a.mode == "live"
+    finally:
+        s.close()
+
+
+def test_arming_in_the_same_market_still_demotes(db):
+    """反方向：同市场内**仍然**只能有一条 live，别把这道防线一起分没了。"""
+    from crypto_strategy.service import crypto_strategy_service as svc
+    from data_engine.storage.database import get_session
+    from data_engine.storage.models import CryptoStrategy
+
+    old = _mk("旧卫冕者", enabled=1, mode="live", status="armed")
+    new = _mk("新挑战者", backtest_passed=1)
+    svc.arm(new)
+
+    s = get_session()
+    try:
+        o = s.query(CryptoStrategy).filter(CryptoStrategy.strategy_id == old).first()
+        assert o.status == "superseded" and o.enabled == 0
+    finally:
+        s.close()
+
+
+def test_cooldown_is_per_market(db):
+    """🔀 冷却期不分市场的话，换一次币策略会让 A 股 14 天内换不了 ——
+    两个市场的横跳本来就是两件独立的事。"""
+    from crypto_strategy.service import crypto_strategy_service as svc
+
+    _mk("旧币卫冕者", enabled=1, mode="live", status="armed")
+    svc.arm(_mk("新币卫冕者", backtest_passed=1))     # crypto 发生一次切换
+
+    assert arena._days_since_last_switch("crypto") == 0
+    assert arena._days_since_last_switch("a_share") is None, \
+        "币的切换把 A 股的冷却期也点着了"
+
+
+def test_crypto_engine_does_not_tick_stock_strategies(db):
+    """🔴 crypto 引擎**只能**跑 crypto 策略 —— 与股票调度器那条门禁对称。
+
+    不筛的话三个后果**都发生在碰 symbol 之前**（所以「股票 symbol 会被 crypto 分析
+    拒掉」兜不住）：账户级熔断会拿币安的回撤把 A 股策略停掉；`last_run_at` 与股票
+    调度器抢同一个时隙 → 股票策略盘中静默跳过；`CryptoStrategyRun` 被写进股票策略的行。
+
+    ⚠️ 这个洞在加股票调度时就在了，但「每市场一条 live」让两边同时在跑成为**常态**。
+    """
+    from crypto_strategy.engine import CryptoStrategyEngine
+
+    _mk("币策略", enabled=1, mode="paper")
+    _mk("A股策略", enabled=1, mode="paper", market="a_share")
+    _mk("美股策略", enabled=1, mode="paper", market="us_stock")
+    _mk("存量策略", enabled=1, mode="paper", market=None)      # NULL = crypto
+
+    loaded = {r.name for r in CryptoStrategyEngine()._load_enabled()}
+    assert loaded == {"币策略", "存量策略"}, f"crypto 引擎捞到了别的市场的策略：{loaded}"
+
+
+def test_unknown_market_is_rejected_not_silently_crypto(db):
+    """⛔ 认不出的市场**不许回落到 crypto**。
+
+    `normalize_market` 对认不出的字符串一律回落 default —— `?market=a_shre`、
+    LLM 传「股票」都会静默拿到币的竞技场，而有卫冕者那一支的 verdict 通篇不提
+    市场名，AI 会把币的结论当成股票的答复报给 Jason。
+    """
+    for bad in ("a_shre", "股票", "nasdaq"):
+        with pytest.raises(arena.UnknownMarketError):
+            arena.resolve_market(bad)
+    # 空/None 仍回落 crypto（唯一在跑真钱的市场，也是老调用方的默认行为）
+    assert arena.resolve_market(None) == "crypto"
+    assert arena.resolve_market("") == "crypto"
+    # 认得出的别名照常归一
+    assert arena.resolve_market("A股") == "a_share"
+    assert arena.resolve_market("us") == "us_stock"
+
+
+def test_markets_with_strategies_lists_every_market(db):
+    """「还有别的市场」这件事要能穿过接口边界（两块屏对不上就是这么来的）。"""
+    _mk("币策略", enabled=1, mode="paper")
+    _mk("A股策略", enabled=1, mode="paper", market="a_share")
+    _mk("退役的美股策略", enabled=0, mode="paper", market="us_stock",
+        status="retired")
+    assert arena.markets_with_strategies() == ["a_share", "crypto"]
+    assert "us_stock" in arena.markets_with_strategies(include_archived=True)
+
+
+def test_cooldown_survives_a_deleted_strategy_row(db):
+    """🔒 切换记录指向的策略行被硬删后，冷却期**不许整条消失**。
+
+    内连接会让那条记录从计算里蒸发 → 回落到更早的一条、甚至变成 None
+    （=不受冷却期约束），而那正是「防反复横跳」最该生效的时候。
+    市场未知时按「属于每个市场」算，宁可多冷却一会儿。
+    """
+    from data_engine.storage.database import get_session
+    from data_engine.storage.models import CryptoArenaSwitch, CryptoStrategy
+
+    s = get_session()
+    try:
+        s.add(CryptoArenaSwitch(family_id="F", from_strategy_id="CS-OLD",
+                                to_strategy_id="CS-GONE", challenger_count=1))
+        s.commit()
+        assert s.query(CryptoStrategy).filter(
+            CryptoStrategy.strategy_id == "CS-GONE").first() is None
+    finally:
+        s.close()
+
+    assert arena._days_since_last_switch("crypto") == 0
+    assert arena._days_since_last_switch("a_share") == 0, "策略行被删就当没冷却期了"
+
+
+def test_both_outputs_agree_on_markets_with_strategies(db):
+    """🔴 同一个字段不许有两个答案。
+
+    第一版 `evaluate_arena` 内联了一份按 `enabled==1` 筛的实现，而 `/champion`
+    走的是 `markets_with_strategies()`（未归档都算）。分叉点恰好是**第二个市场
+    最早、最长的那个状态**：刚编译完、还没 arm 的 draft ——
+    于是「还有别的市场」这件事，两块屏一块说有一块说没有，
+    而这个字段存在的唯一理由就是防这个。
+    """
+    _mk("币策略", enabled=1, mode="live", status="armed")
+    _mk("A股草稿", enabled=0, mode="paper", market="a_share", status="draft")
+
+    assert arena.markets_with_strategies() == ["a_share", "crypto"]
+    assert arena.evaluate_arena(market="crypto")["markets_with_strategies"] == \
+        arena.markets_with_strategies(), "两个出口对同一个问题给了不同答案"

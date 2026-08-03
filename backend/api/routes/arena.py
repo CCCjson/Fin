@@ -46,8 +46,9 @@ router = APIRouter(prefix="/arena", tags=["交易终端（只读）"])
 
 
 @router.get("/champion")
-async def champion(days: int = Query(30, ge=1, le=365)) -> dict[str, Any]:
-    """卫冕者面板：当前跑实盘那条的完整体检。
+async def champion(days: int = Query(30, ge=1, le=365),
+                   market: str = Query("crypto")) -> dict[str, Any]:
+    """**一个市场**的卫冕者面板：当前跑实盘那条的完整体检。
 
     ⚠️ 三种状态要分清，前端据此走三条不同的分支：
       1. `strategy` 为空 —— 压根没有在跑实盘的策略；
@@ -57,20 +58,42 @@ async def champion(days: int = Query(30, ge=1, le=365)) -> dict[str, Any]:
 
     ⭐ **不调 `evaluate_arena`**：那会给每条 enabled 策略跑一遍回放，而这里只需要
     「谁在跑」+ 它自己的体检。「正在变弱」由 `/verdict` 出（见模块头）。
+
+    ⚠️ `market` 默认 `crypto`（**唯一在跑真钱的市场**），所以前端不传也是原来的行为。
+    裁决 7 的新读法是「每个市场同期一条 live」，别的市场要传 `?market=a_share`。
     """
     def _work() -> dict[str, Any]:
-        from crypto_strategy.arena import current_champion
+        from crypto_strategy.arena import (
+            UnknownMarketError,
+            current_champion,
+            markets_with_strategies,
+            resolve_market,
+        )
         from crypto_strategy.performance import strategy_health
 
-        champ = current_champion()
+        # ⛔ 认不出的市场**不回落**：`?market=a_shre` 静默拿到 crypto 的卫冕者，
+        #    而这块面板通篇不写市场名 —— 会被当成股票的答复读。
+        try:
+            m = resolve_market(market)
+        except UnknownMarketError as e:
+            return {"ok": False, "strategy": None, "market": None,
+                    "markets_with_strategies": markets_with_strategies(),
+                    "reason": str(e)}
+        champ = current_champion(m)
+        # ⭐ 「还有别的市场」这件事要穿过接口边界：不带的话，一旦股票也 arm 上 live，
+        #    这块面板只显示 crypto，而 /standings 是全市场混列的 —— 两块屏对不上。
+        others = markets_with_strategies()
         if not champ:
-            return {"ok": False, "strategy": None,
-                    "reason": ("现在没有在跑实盘的策略（没有卫冕者）——"
-                               "「该不该换」这个问题还不成立。先 arm 一条上 live。")}
+            return {"ok": False, "strategy": None, "market": m,
+                    "markets_with_strategies": others,
+                    "reason": (f"{m} 这个市场现在没有在跑实盘的策略（没有卫冕者）——"
+                               f"「该不该换」这个问题还不成立。先 arm 一条上 live。")}
         h = strategy_health(champ["strategy_id"], days=days)
         return {
             "ok": bool(h.get("ok")),
             "strategy": champ,
+            "market": m,
+            "markets_with_strategies": others,
             "halted": champ["halted"],
             "is_benchmark": champ["is_benchmark"],
             "health": h,
@@ -102,15 +125,37 @@ async def standings(days: int = Query(30, ge=1, le=365),
 
 
 @router.get("/verdict")
-async def verdict(days: int = Query(90, ge=7, le=365)) -> dict[str, Any]:
-    """竞技场判定：该不该换掉现在这条，卡在哪道门槛。
+async def verdict(days: int = Query(90, ge=7, le=365),
+                  market: str = Query("crypto")) -> dict[str, Any]:
+    """**一个市场**的竞技场判定：该不该换掉现在这条，卡在哪道门槛。
 
     ⚠️ 这是**规则的意见**，不写库、不改状态。真要换仍要走确认门。
     ⭐ `champion_weakening` 只从这里出（见模块头）。
+    ⚠️ `market` 默认 `crypto`，返回值里带 `markets_with_strategies` ——
+    别的市场有没有策略看那个字段（前端的市场切换器还没做）。
     """
     def _work() -> dict[str, Any]:
-        from crypto_strategy.arena import evaluate_arena
-        return evaluate_arena(days=days)
+        from crypto_strategy.arena import (
+            UnknownMarketError,
+            evaluate_arena,
+            markets_with_strategies,
+            resolve_market,
+        )
+        try:
+            m = resolve_market(market)
+        except UnknownMarketError as e:
+            # 🔴 错误分支必须是**完整的 ArenaVerdict 骨架**，不能开第二种形状：
+            #    前端把 `challengers` / `days_since_last_switch` / `note` 写成必填
+            #    （`arenaService.ts`），少一个就是 `undefined 个挑战者` 渲染到屏上，
+            #    而 tsc **不会报** —— 与「`strategy_health` 提前返回时没有 `runs` 键」
+            #    同一个形状的坑，那次整个 App 变成了错误页。
+            return {"champion": None, "market": None, "results": [],
+                    "challengers": 0, "challenger_details": [], "benchmarks": [],
+                    "days_since_last_switch": None,
+                    "markets_with_strategies": markets_with_strategies(),
+                    "verdict": str(e),
+                    "note": "市场参数没认出来，这份判定是空的 —— 换个市场名再问。"}
+        return evaluate_arena(market=m, days=days)
 
     return await asyncio.to_thread(_work)
 

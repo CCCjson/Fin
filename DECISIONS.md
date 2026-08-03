@@ -77,3 +77,29 @@
   卡在 comparable、整个竞技场「无结论」—— 这是诚实降级，03 分族后自然解开。
 - **顺带**：`arena.snapshot_of()` 成为 snapshot 的唯一出口，⛔ 别再手拼第二份。
 - **影响范围**：`crypto_strategy/arena.py`、`crypto_strategy/service.py`。
+
+### 2026-08-03 — 裁决 7 改读作「**每个市场**同期只有一条 live」（Jason 拍板）
+- **决定**：卫冕者 / 挑战者 / 退位 / 冷却期**全部按 `market` 分族**。
+  取代裁决 7 的字面读法（`docs/15.策略竞技场/00-PLAN.md:124`「同一时期只有一条 live」）——
+  那句话写在项目只有 crypto 的时期，没有市场限定词。
+- **理由**：裁决 6 否掉过「多条策略同时 live 各分资金」，但它否的是**同一市场内**
+  多条策略抢同一批标的、还可能对同一标的下反向单。跨市场没有这个问题：标的不重叠、
+  券商账户不同、风控 `broker_info` 本来就各取各的。所以这不是推翻裁决 6，
+  是补一个当时不存在的维度。
+- **否决了**：(a) 字面执行 —— 等于「同一时间只能自动交易一个市场」，
+  股票竞技场做出来只能看不能用；(b) 分族评比但 live 名额全局唯一 ——
+  多一个「族内冠军 ≠ 在跑的那条」的概念要解释，且没解决根本问题。
+- **影响范围**：`arena.evaluate_arena` / `_days_since_last_switch`、
+  `service._supersede_siblings` / `_current_live`。
+  🔴 判定层和**退位逻辑必须一起改** —— 只改判定层的话「每市场一个卫冕者」在数据层立不住。
+
+### 2026-08-03 — 总资金 = **各市场资金之和**（Jason 拍板，方向已定，实施单列）
+- **决定**：每个市场有自己的资金基数，全局 `total_capital` 是它们的**和**（不是共用一个数）。
+- **理由**：上一条让两个市场可以同时跑真钱，而仓位大小和收益率分母目前都取同一个
+  全局 `UserSettings.total_capital`（默认 5000）—— 两边同时 live 时总敞口会翻倍。
+- **⚠️ 实施不在任务 03 里**：`get_total_capital()` 被风控规则、仓位换算、crypto 引擎
+  多处消费，动它属于「影响 3 个以上文件 + 涉及仓位上限」的大改动
+  （memory `risk-total-position-floor`：动任何仓位上限前必读）。已作为独立任务
+  排进 PLAN，在 03 之后立刻做。
+- **影响范围**：`trading_engine/risk/adapter.py`、`UserSettings`、
+  `crypto_strategy/performance._capital_basis`、`strategy_runtime/scheduler`。

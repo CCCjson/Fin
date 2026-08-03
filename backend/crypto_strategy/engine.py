@@ -56,11 +56,34 @@ class CryptoStrategyEngine:
     # ──────────────── 加载 / 到期 ────────────────
 
     def _load_enabled(self) -> list:
+        """启用中的 **crypto** 策略。
+
+        🔴 **必须按 market 筛**（与 `StockStrategyScheduler._enabled_stock_strategies`
+        对称）：`crypto_strategies` 这张表同时存着股票策略，不筛的话本引擎会去 tick 它们，
+        而三个后果**都发生在碰 symbol 之前**，所以「股票 symbol 会被 crypto 分析拒掉」
+        兜不住：
+
+        1. `_run_one` 第一件事就是账户级当日亏损熔断 —— 拿的是**币安账户**的已实现盈亏。
+           一次 crypto 回撤会把一条 **a_share** 策略 `paused_by_guardrail` + `enabled=0`，
+           理由来自一个它根本没在跑的市场；
+        2. `_touch()` 写的 `last_run_at` 与 `StockStrategyScheduler._is_due` 读的是
+           **同一个字段** —— 两个引擎抢同一个时隙，股票策略盘中间歇性静默跳过；
+        3. `_log_run` 会用股票策略的 id 往 `CryptoStrategyRun` 里写行，污染战绩读侧。
+
+        ⚠️ 这个洞在加股票调度时就在了，但「每市场一条 live」（裁决 7 新读法）
+        把「crypto live 与 stock live 同时在跑」从异常态变成了**预期常态**，它从此常驻。
+        """
+        from crypto_strategy.performance import market_of
         from data_engine.storage.database import get_session
         from data_engine.storage.models import CryptoStrategy
         session = get_session()
         try:
-            return session.query(CryptoStrategy).filter(CryptoStrategy.enabled == 1).all()
+            rows = session.query(CryptoStrategy).filter(CryptoStrategy.enabled == 1).all()
+            # 市场在 Python 里筛：`market_of` 是「NULL = crypto」的唯一实现，
+            # 在 SQL 里手写 `market == 'crypto' OR market IS NULL` 就是第二份。
+            mine = [r for r in rows if market_of(r.market) == CRYPTO]
+            session.expunge_all()
+            return mine
         finally:
             session.close()
 

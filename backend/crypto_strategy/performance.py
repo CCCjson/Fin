@@ -318,15 +318,32 @@ _MARKET_UNIT = {A_SHARE: "CNY", HK_STOCK: "HKD", US_STOCK: "USD", CRYPTO: "USDT"
 _STOCK_MODES = ("live", "paper")
 
 
-def strategy_market(row: Any) -> str:
-    """这条策略跑哪个市场 —— **决定读哪张台账**。
+def market_of(raw: str | None) -> str:
+    """`crypto_strategies.market` 列的值 → canonical 市场。
+
+    ⚠️ **它不是全项目唯一一处**，同一列的市场分类另有两份，改口径时三处都要看：
+      - `strategy_runtime/scheduler.py::_enabled_stock_strategies` 的
+        `CryptoStrategy.market.in_(("a_share", "us_stock"))`（SQL 侧，且被
+        `tests/test_stock_scheduler_and_ledger.py` 用**字面字符串**锁死，动不了）；
+      - `crypto_strategy/service.py::spec_from_row` 靠 pydantic 默认值实现的隐式
+        NULL → crypto。
+    三份目前口径一致（NULL = crypto），⛔ 别只改这一处就以为改完了。
 
     🔴 存量行 `market` 是 NULL，语义是 crypto（模型里写死的约定）。所以兜底必须是
     crypto，⛔ 不能用 `normalize_market` 的默认兜底 A股 —— 那会让所有老币策略
     一夜之间去读一张空的股票台账，战绩集体归零而且不报错。
+
+    ⚠️ 想按市场筛策略时**在 Python 里用它筛**，别在 SQL 里手写
+    `market == 'crypto' OR market IS NULL` —— 那就是这条规则的第二份实现，
+    而两份实现迟早会分叉（分叉的那天没人会收到通知）。在跑的策略只有个位数，
+    多读几行的代价远小于口径分裂。
     """
-    raw = getattr(row, "market", None)
     return normalize_market(raw, default=CRYPTO) if raw else CRYPTO
+
+
+def strategy_market(row: Any) -> str:
+    """这条策略跑哪个市场 —— **决定读哪张台账**、以及它在哪个市场的竞技场里。"""
+    return market_of(getattr(row, "market", None))
 
 
 def _stock_legs(strategy_id: str, market: str, until: datetime | None
@@ -1004,7 +1021,7 @@ def _pnl_sentence(pnl: dict) -> str:
 
 # 软退役之后这些状态的行会**永久累积**（旧实现是直接删的），默认不列，
 # 否则跑上半年这张表全是历史版本。要看历史用 `include_archived=True`。
-_ARCHIVED_STATUSES = ("retired", "superseded")
+ARCHIVED_STATUSES = ("retired", "superseded")
 
 
 def standings(*, days: int = 30, include_archived: bool = False) -> list[dict[str, Any]]:
@@ -1020,7 +1037,7 @@ def standings(*, days: int = 30, include_archived: bool = False) -> list[dict[st
     try:
         q = session.query(CryptoStrategy)
         if not include_archived:
-            q = q.filter(CryptoStrategy.status.notin_(_ARCHIVED_STATUSES))
+            q = q.filter(CryptoStrategy.status.notin_(ARCHIVED_STATUSES))
         # ⚠️ 带上 family/version：多版本同名（fork 默认继承名字），
         # 只给 name 的话 AI 和 Jason 都分不清哪条是哪版。
         # ⭐ `is_benchmark` 一起带出来：调用方（交易终端要把基准线置顶、并给它挂个

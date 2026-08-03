@@ -23,6 +23,13 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from common.market import CRYPTO
+from crypto_strategy.performance import (
+    ARCHIVED_STATUSES,
+    market_of,
+    strategy_market,
+)
+
 # ── 默认阈值（`00-PLAN §7` 的 Jason 建议值，全部可配）──────────────────────
 MIN_OBSERVE_DAYS = 30        # 门槛①：挑战者至少跑够多少天
 MIN_TRADE_DAYS = 20          # 门槛①：至少多少个「有交易的日子」
@@ -40,6 +47,31 @@ _SE_EPS = 1e-9
 # 置 0，只按 enabled 找卫冕者的话，**最该给判据的那一刻工具会说「没有卫冕者」**。
 # 与 `crypto_strategy/service.py::_LIVE_STATUSES` 同一套口径，改一边要改另一边。
 _LIVE_STATUSES = ("armed", "paused_by_guardrail")
+
+class UnknownMarketError(ValueError):
+    """传进来的市场认不出来。
+
+    🔴 **不回落到默认市场**：`normalize_market` 对认不出的字符串一律回落 default
+    （`?market=a_shre`、LLM 传「股票」都会**静默拿到 crypto 竞技场**），而有卫冕者
+    那一支的 verdict 通篇不提市场名 —— AI 很容易把 crypto 的结论当成股票的答复
+    报给 Jason。与本模块「口径可比」那道门槛同一个 fail-closed 口径。
+    """
+
+
+def resolve_market(raw: str | None) -> str:
+    """外部传进来的市场字符串 → canonical，**认不出就抛**。
+
+    ⚠️ 空/None 才回落 crypto（唯一在跑真钱的市场，也是老调用方的默认行为）。
+    """
+    from common.market import CANONICAL_MARKETS, normalize_market
+    if raw is None or not str(raw).strip():
+        return CRYPTO
+    m = normalize_market(raw, default="")
+    if m not in CANONICAL_MARKETS:
+        raise UnknownMarketError(
+            f"认不出市场「{raw}」。可选：{'、'.join(CANONICAL_MARKETS)}")
+    return m
+
 
 GATE_LABELS = {
     "observation": "观察期够长",
@@ -332,7 +364,7 @@ def champion_weakening(returns: list[float], *, recent_days: int = 14,
 # ── 组装：从库里取数 → 判定（这一层碰 DB，上面全是纯函数）────────────────
 
 def _snapshot(row: Any, *, days: int) -> dict[str, Any]:
-    from crypto_strategy.performance import daily_returns, strategy_market
+    from crypto_strategy.performance import daily_returns
     dr = daily_returns(row.strategy_id, days=days)
     return {
         "strategy_id": row.strategy_id, "name": row.name,
@@ -354,6 +386,34 @@ def _snapshot(row: Any, *, days: int) -> dict[str, Any]:
         "heuristic_days": dr.get("heuristic_days"),
         "no_data_reason": dr.get("reason"),
     }
+
+
+def markets_with_strategies(*, include_archived: bool = False) -> list[str]:
+    """哪些市场有策略 —— **一次纯 SQL**，不算任何战绩。**这个问题只准这一处回答。**
+
+    ⭐ 存在的理由是让「还有别的市场」这件事能穿过接口边界：分族之后每个出口只看
+    一个市场，不带这个字段的话，一旦股票也 arm 上 live，卫冕者面板只显示 crypto，
+    而 `/standings` 是全市场混列的 —— **两块屏对不上**，而 Jason 无从知道该切哪个。
+
+    🔴 **口径刻意与 `standings()` 对齐**（未归档的都算，含 draft/backtested），
+    因为它防的就是「这块屏说有、那块屏说没有」。⛔ 别在调用处另写一套筛法：
+    第一版就是这么分叉的 —— `evaluate_arena` 内联了一份按 `enabled==1` 筛的，
+    于是同一个字段对 `/champion` 和 `/verdict` 给出**两个答案**，
+    而分叉点恰好是第二个市场最早、最长的那个状态（刚编译完还没 arm）。
+    """
+    from data_engine.storage.database import get_session
+    from data_engine.storage.models import CryptoStrategy
+    session = get_session()
+    try:
+        q = session.query(CryptoStrategy.market)
+        if not include_archived:
+            # ⛔ 别写字面量：真源是 `performance.ARCHIVED_STATUSES`（`standings()` 用的
+            # 就是它）。抄一份的话，往那边加一个归档状态时这里不会跟着变 ——
+            # 「这块屏说有、那块屏说没有」会原样复发，只是下沉了一层。
+            q = q.filter(CryptoStrategy.status.notin_(ARCHIVED_STATUSES))
+        return sorted({market_of(m) for (m,) in q.all()})
+    finally:
+        session.close()
 
 
 def snapshot_of(strategy_id: str, *, days: int = 90) -> dict[str, Any] | None:
@@ -391,37 +451,61 @@ def _brief(s: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _days_since_last_switch() -> int | None:
-    """距**上一次任何切换**多少天。None = 从没切换过（不受冷却期约束）。
+def _days_since_last_switch(market: str = CRYPTO) -> int | None:
+    """距**这个市场**上一次切换多少天。None = 从没切换过（不受冷却期约束）。
 
-    🔴 **刻意不按 family 查**：同期只有一条 live（裁决 7），所以「上次换人」是**全局
-    一件事**。按 family 查的话，从甲家族换到乙家族时查不到任何记录 → 冷却期永远 None →
-    「防反复横跳」这道防线对**跨家族切换完全无效**，而那恰恰是最容易横跳的场景
+    🔴 **刻意不按 family 查**：同市场同期只有一条 live，所以「上次换人」在一个市场里
+    是**一件事**。按 family 查的话，从甲家族换到乙家族时查不到任何记录 → 冷却期永远
+    None → 「防反复横跳」这道防线对**跨家族切换完全无效**，而那恰恰是最容易横跳的场景
     （AI 每次都能造一条全新策略）。
+
+    🔀 **但必须按市场分**（裁决 7 新读法）：冷却期不分市场的话，换一次币策略会让 A 股
+    14 天内换不了 —— 两个市场的横跳本来就是两件独立的事。
+
+    ⚠️ `crypto_arena_switches` **没有 `market` 列**（加列要迁移，属于大改动）。
+    所以按 `to_strategy_id` 反查策略行的市场。这张表**只记真的发生过的切换**（低频），
+    两列全扫的代价可以忽略 —— ⛔ 别为了「优化」加 `LIMIT N`：某个市场的上次切换一旦
+    排到 N 条之外，这里就会返回 None（=不受冷却期约束），**等于在历史最长的时候
+    把防横跳关掉**，而且一声不吭。
     """
     from common.market_time import utc_now
     from data_engine.storage.database import get_session
-    from data_engine.storage.models import CryptoArenaSwitch
+    from data_engine.storage.models import CryptoArenaSwitch, CryptoStrategy
     session = get_session()
     try:
-        row = (session.query(CryptoArenaSwitch)
-               .order_by(CryptoArenaSwitch.created_at.desc()).first())
-        if row is None or row.created_at is None:
-            return None
-        return int(max(0, (utc_now() - row.created_at).days))
+        # 🔒 **outerjoin 不是 join**：`delete_strategy()` 会硬删策略行，内连接会让
+        # 指向它的切换记录**整条消失** → 冷却期回落到更早的一条、甚至变成 None
+        # （=不受约束），而这正是「防反复横跳」最该生效的时候。
+        # ⚠️ 一并取 `strategy_id` 当**存在性标记**：`market` 列自己分不清
+        # 「join 不上」和「存量行 NULL（= crypto）」—— 两者都是 None。
+        rows = (session.query(CryptoArenaSwitch.created_at,
+                              CryptoStrategy.strategy_id, CryptoStrategy.market)
+                .outerjoin(CryptoStrategy,
+                           CryptoStrategy.strategy_id == CryptoArenaSwitch.to_strategy_id)
+                .order_by(CryptoArenaSwitch.created_at.desc()).all())
     finally:
         session.close()
+    for created_at, sid, raw_market in rows:
+        if created_at is None:
+            continue
+        # ⚠️ 策略行被删了 = 市场未知 → **算进每个市场**，宁可多冷却一会儿。
+        # 与「口径可比」那道门槛同一个 fail-closed 口径：取不到值不许放行。
+        if sid is not None and market_of(raw_market) != market:
+            continue
+        return int(max(0, (utc_now() - created_at).days))
+    return None
 
 
-def current_champion() -> dict[str, Any] | None:
-    """当前跑实盘那条的身份牌 —— **一次纯 SQL，不算任何战绩**。
+def current_champion(market: str = CRYPTO) -> dict[str, Any] | None:
+    """**这个市场**当前跑实盘那条的身份牌 —— **一次纯 SQL，不算任何战绩**。
 
     ⭐ 存在的理由是省算力：`evaluate_arena` 会给**每条** enabled 策略跑一遍
     `daily_returns`（内含 `cost_basis.replay`）。调用方只想知道「谁在跑」时
     （比如交易终端的卫冕者面板要拿它去查体检报告），走全场判定等于白烧 O(N) 次回放。
 
-    ⚠️ 筛选条件必须与 `evaluate_arena` **逐字一致**，否则两个出口会指向不同的策略。
-    裁决 7 保证同期最多一条 live，所以不需要排序也不会有歧义；
+    ⚠️ 筛选条件必须与 `evaluate_arena` **逐字一致**（含 `market` 这一条），
+    否则两个出口会指向不同的策略。裁决 7 的新读法保证**每个市场**同期最多一条 live，
+    所以不需要排序也不会有歧义；
     `_LIVE_STATUSES` 含 `paused_by_guardrail` 的理由见 `evaluate_arena` 的坑 1。
     有门禁 `test_current_champion_agrees_with_evaluate_arena` 钉住这件事。
     """
@@ -434,12 +518,14 @@ def current_champion() -> dict[str, Any] | None:
             (CryptoStrategy.enabled == 1)
             | (CryptoStrategy.status == "paused_by_guardrail")).all()
         for r in rows:
-            if r.mode == "live" and r.status in _LIVE_STATUSES:
+            if (r.mode == "live" and r.status in _LIVE_STATUSES
+                    and market_of(r.market) == market):
                 return {
                     "strategy_id": str(r.strategy_id),
                     "name": r.name,
                     "version": r.version or 1,
                     "family_id": r.family_id or r.strategy_id,
+                    "market": market,
                     "mode": r.mode,
                     "status": r.status,
                     "is_benchmark": bool(r.is_benchmark),
@@ -451,10 +537,17 @@ def current_champion() -> dict[str, Any] | None:
         session.close()
 
 
-def evaluate_arena(*, days: int = 90, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
-    """全场判定：谁是卫冕者、谁在挑战、该不该换。
+def evaluate_arena(*, market: str = CRYPTO, days: int = 90,
+                   cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    """**一个市场**的全场判定：谁是卫冕者、谁在挑战、该不该换。
 
-    卫冕者 = 当前跑实盘的那条（裁决 7：同期只有一条 live）。
+    卫冕者 = 这个市场当前跑实盘的那条（裁决 7 的新读法：**每个市场**同期只有一条 live，
+    Jason 2026-08-03 拍板，见 `DECISIONS.md`）。
+
+    ⚠️ **`market` 默认 crypto 是刻意的**：改成「一次返回所有市场」会把返回形状
+    从「一个竞技场」变成「一堆竞技场」，而前端 `arenaService.ts` 和交易终端吃的是
+    前者 —— 那是**另一件事**（UI 加市场切换器），不该混在判定层的改动里一起上。
+    返回值带 `market` 和 `markets_with_strategies`，调用方看得见还有别的市场。
 
     🔴 **两个「谁是卫冕者」的坑，都踩过**：
     1. 只查 `enabled=1` → 卫冕者一被护栏熔断（`_halt` 会把 `enabled` 置 0）就变成
@@ -472,9 +565,16 @@ def evaluate_arena(*, days: int = 90, cfg: dict[str, Any] | None = None) -> dict
         rows = session.query(CryptoStrategy).filter(
             (CryptoStrategy.enabled == 1)
             | (CryptoStrategy.status == "paused_by_guardrail")).all()
-        snaps = [_snapshot(r, days=days) for r in rows]
+        # ⚠️ 市场在 **Python 里筛**（`market_of` 是「NULL = crypto」的唯一实现）——
+        # 在 SQL 里手写 `market == 'crypto' OR market IS NULL` 就是第二份实现。
+        # 在跑的策略只有个位数，多读几行远比口径分裂便宜。
+        mine = [r for r in rows if market_of(r.market) == market]
+        snaps = [_snapshot(r, days=days) for r in mine]
     finally:
         session.close()
+    # ⛔ 别拿上面那批 `rows` 现算 —— 它按 `enabled==1` 筛，与 `/champion` 那边
+    # 用的口径不同，同一个字段会给出两个答案（口径只准有一处）。
+    markets = markets_with_strategies()
 
     champion = next((s for s in snaps
                      if s["mode"] == "live" and s["status"] in _LIVE_STATUSES), None)
@@ -484,14 +584,19 @@ def evaluate_arena(*, days: int = 90, cfg: dict[str, Any] | None = None) -> dict
     challengers = [s for s in others if not s["is_benchmark"]]
 
     if champion is None:
-        return {"champion": None, "challengers": 0,
+        return {"market": market, "markets_with_strategies": markets,
+                "champion": None, "challengers": 0,
                 "challenger_details": [_brief(s) for s in challengers],
                 "benchmarks": [_brief(b) for b in benchmarks], "results": [],
-                "verdict": ("现在没有在跑实盘的策略（没有卫冕者）——"
-                            "「该不该换」这个问题还不成立。先 arm 一条上 live。")}
+                # ⚠️ 话要说成「**这个市场**没有卫冕者」：分族之后「没有卫冕者」不再等于
+                # 「整个系统没在自动交易」，说笼统了会让人以为别的市场也停了。
+                "verdict": (f"{market} 这个市场现在没有在跑实盘的策略（没有卫冕者）——"
+                            f"「该不该换」这个问题还不成立。先 arm 一条上 live。"
+                            + (f"（其它有策略的市场：{'、'.join(m for m in markets if m != market)}）"
+                               if [m for m in markets if m != market] else ""))}
 
     n = len(challengers)
-    cooldown = _days_since_last_switch()
+    cooldown = _days_since_last_switch(market)
     results = []
     for ch in challengers:
         r = evaluate_challenger(ch, champion, challenger_count=n,
@@ -501,6 +606,8 @@ def evaluate_arena(*, days: int = 90, cfg: dict[str, Any] | None = None) -> dict
     winners = [r for r in results if r["should_switch"]]
     weak = champion_weakening(champion["returns"])
     return {
+        "market": market,
+        "markets_with_strategies": markets,
         "champion": _brief(champion),
         "champion_halted": champion["status"] == "paused_by_guardrail",
         "champion_is_benchmark": champion["is_benchmark"],

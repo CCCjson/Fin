@@ -22,10 +22,26 @@
       要点：这是四道门槛门槛②的输入，序列口径错了整个竞技场就是错的；
       ⚠️ 已知缺陷「序列只含已实现盈亏 → 偏袒亏了死扛」**本轮不修**（见任务 04）。
 
-- [ ] 03 `arena.py` 按市场分族评比：股票策略不该和 crypto 抢同一个卫冕位 —
+- [x] 03 `arena.py` 按市场分族评比：股票策略不该和 crypto 抢同一个卫冕位 —
       验收：`cd backend && conda run -n quant python -m pytest tests/crypto_strategy/test_arena.py tests/test_arena_routes.py -q`
       要点：裁决 7「同一时期只有一条 live」应理解为**每个市场族内**一条；
       ⚠️ 若这与裁决 7 原文冲突不可自行拍板 → 写 BLOCKED.md 停机问 Jason。
+
+- [ ] 03b 交易终端加市场切换器（03 的刻意延后） —
+      验收：`cd backend && conda run -n quant python -m pytest tests/test_arena_routes.py -q`
+      并跑 `bash restart.sh` 在 App 里肉眼确认
+      要点：后端已就绪（`/arena/champion`、`/arena/verdict` 收 `market` 参数，
+      返回带 `markets_with_strategies`）。03 刻意没改 `evaluate_arena` 的返回形状
+      （「一个竞技场」→「一堆竞技场」会掀翻 `arenaService.ts` 和终端页）——
+      🔴 现在前端不传 market，**只看得见 crypto**，而 `/standings` 是全市场混列的，
+      两块屏会对不上。
+
+- [ ] 03c 总资金 = 各市场资金之和（Jason 2026-08-03 拍板，见 DECISIONS） —
+      验收：`cd backend && conda run -n quant python -m pytest tests/ -q -k "risk or capital or position"`
+      要点：🔴 **动仓位上限前必读 memory `risk-total-position-floor`**（`max(总仓位上限,
+      单股上限)` 会静默撤销 20% 现金保护，那个坑被复制过三份）。
+      `get_total_capital()` 被风控规则/仓位换算/crypto 引擎/`_capital_basis` 多处消费，
+      涉及文件远超 5 个 → **开工前先停机拆分**。
 
 - [ ] 04 日收益序列纳入浮动盈亏，修掉「偏袒亏了死扛」的系统性偏差 —
       验收：`cd backend && conda run -n quant python -m pytest tests/crypto_strategy/test_performance.py tests/crypto_strategy/test_arena.py -q`

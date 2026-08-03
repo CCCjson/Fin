@@ -202,6 +202,14 @@ def test_current_champion_agrees_with_evaluate_arena(clean):
     assert a["champion"]["strategy_id"] == sid
     assert a["champion_halted"] is True
 
+    # 🔀 `market` 也是筛选条件之一（裁决 7 新读法：每个市场一条 live）——
+    # 两个出口在**这一维**上分叉同样看不出来，所以一起钉在这条门禁里。
+    stock = _mk("A股卫冕者", enabled=1, mode="live", status="armed", market="a_share")
+    assert current_champion("a_share")["strategy_id"] == stock
+    assert evaluate_arena(market="a_share")["champion"]["strategy_id"] == stock
+    assert current_champion("crypto")["strategy_id"] == sid
+    assert evaluate_arena(market="crypto")["champion"]["strategy_id"] == sid
+
 
 def test_champion_does_not_replay_every_strategy(client, clean):
     """⭐ 卫冕者面板的成本必须是 O(1)，不是 O(策略数)。
