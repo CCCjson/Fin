@@ -27,7 +27,7 @@
       要点：裁决 7「同一时期只有一条 live」应理解为**每个市场族内**一条；
       ⚠️ 若这与裁决 7 原文冲突不可自行拍板 → 写 BLOCKED.md 停机问 Jason。
 
-- [ ] 03b 交易终端加市场切换器（03 的刻意延后） —
+- [x] 03b 交易终端加市场切换器（03 的刻意延后） —
       验收：`cd backend && conda run -n quant python -m pytest tests/test_arena_routes.py -q`
       并跑 `bash restart.sh` 在 App 里肉眼确认
       要点：后端已就绪（`/arena/champion`、`/arena/verdict` 收 `market` 参数，

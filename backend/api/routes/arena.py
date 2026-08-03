@@ -63,6 +63,7 @@ async def champion(days: int = Query(30, ge=1, le=365),
     裁决 7 的新读法是「每个市场同期一条 live」，别的市场要传 `?market=a_share`。
     """
     def _work() -> dict[str, Any]:
+        from common.market import MARKET_LABELS, label_of
         from crypto_strategy.arena import (
             UnknownMarketError,
             current_champion,
@@ -78,6 +79,7 @@ async def champion(days: int = Query(30, ge=1, le=365),
         except UnknownMarketError as e:
             return {"ok": False, "strategy": None, "market": None,
                     "markets_with_strategies": markets_with_strategies(),
+                    "market_labels": MARKET_LABELS,
                     "reason": str(e)}
         champ = current_champion(m)
         # ⭐ 「还有别的市场」这件事要穿过接口边界：不带的话，一旦股票也 arm 上 live，
@@ -86,14 +88,18 @@ async def champion(days: int = Query(30, ge=1, le=365),
         if not champ:
             return {"ok": False, "strategy": None, "market": m,
                     "markets_with_strategies": others,
-                    "reason": (f"{m} 这个市场现在没有在跑实盘的策略（没有卫冕者）——"
-                               f"「该不该换」这个问题还不成立。先 arm 一条上 live。")}
+                    "market_labels": MARKET_LABELS,
+                    # 人话一律用中文市场名，与终端切换器上的字一致。
+                    "reason": (f"{label_of(m)}这个市场现在没有在跑实盘的策略"
+                               f"（没有卫冕者）——「该不该换」这个问题还不成立。"
+                               f"先 arm 一条上 live。")}
         h = strategy_health(champ["strategy_id"], days=days)
         return {
             "ok": bool(h.get("ok")),
             "strategy": champ,
             "market": m,
             "markets_with_strategies": others,
+            "market_labels": MARKET_LABELS,
             "halted": champ["halted"],
             "is_benchmark": champ["is_benchmark"],
             "health": h,
@@ -105,21 +111,41 @@ async def champion(days: int = Query(30, ge=1, le=365),
 
 @router.get("/standings")
 async def standings(days: int = Query(30, ge=1, le=365),
-                    include_archived: bool = Query(False)) -> dict[str, Any]:
+                    include_archived: bool = Query(False),
+                    market: str | None = Query(None)) -> dict[str, Any]:
     """挑战者排行榜。
 
     ⛔ **刻意不排序**（`00-PLAN §3` 裁决 9 坑 3）：paper 与 live 不可比、样本量差异
     巨大，按收益排序等于诱导追涨杀跌。⭐ 但**基准线置顶**（裁决 8）——
     没有基准线的胜率是自说自话。
+
+    ⚠️ `market` 不传 = **全市场混列**（老行为）。竞技场判定是按市场分族的，
+    终端切到某个市场时要一起传 —— 否则「卫冕者」说的是 A 股、下面一列全是币策略。
     """
     def _work() -> dict[str, Any]:
+        from common.market import label_of
+        from crypto_strategy.arena import UnknownMarketError, resolve_market
         from crypto_strategy.performance import standings as _standings
-        rows = _standings(days=days, include_archived=include_archived)
+
+        m: str | None = None
+        if market:
+            # ⛔ 认不出的市场不回落（与 /champion、/verdict 同一个口径）：
+            #    静默回落会让 Jason 以为看的是 A 股，其实是币。
+            try:
+                m = resolve_market(market)
+            except UnknownMarketError as e:
+                return {"count": 0, "days": days, "strategies": [], "market": None,
+                        "ranking_note": str(e)}
+        rows = _standings(days=days, include_archived=include_archived, market=m)
         # 只有这一处排序：基准线永久置顶，其余保持引擎给的顺序（创建时间）。
         # ⚠️ `is_benchmark` 由 `standings()` 一次带出，别在这儿逐条回查（N+1）。
         rows.sort(key=lambda r: (not r.get("is_benchmark"),))
-        return {"count": len(rows), "days": days, "strategies": rows,
-                "ranking_note": "未排名——比较规则见 /arena/verdict 的四道门槛。"}
+        # ⚠️ 空列表时这句话是面板上**唯一**的内容，所以不能还是「未排名——…」：
+        #    那是在解释「为什么不排名」，而屏上一条策略都没有 —— 答非所问。
+        note = ("未排名——比较规则见 /arena/verdict 的四道门槛。" if rows else
+                (f"{label_of(m)}这个市场还没有策略。" if m else "还没有策略。"))
+        return {"count": len(rows), "days": days, "strategies": rows, "market": m,
+                "ranking_note": note}
 
     return await asyncio.to_thread(_work)
 
@@ -192,7 +218,7 @@ async def market_status() -> dict[str, Any]:
     ⭐ crypto 恒「交易中」—— 它 7×24，别让它跟着 A 股一起显示休市。
     """
     def _work() -> dict[str, Any]:
-        from common.market import A_SHARE, CRYPTO, HK_STOCK, US_STOCK
+        from common.market import A_SHARE, CRYPTO, HK_STOCK, US_STOCK, label_of
         from common.market_session import describe, is_open, session_phase
         from common.market_time import market_now
 
@@ -201,6 +227,9 @@ async def market_status() -> dict[str, Any]:
             now = market_now(m)   # 交易所**本地时区**的 aware datetime
             out.append({
                 "market": m,
+                # ⭐ 中文名由后端给：前端再存一份的话，「加密」改成「加密货币」
+                #    只改一边，同一个市场就会在两处显示成两个名字。
+                "market_label": label_of(m),
                 "phase": session_phase(m),
                 "label": describe(m),
                 "is_open": is_open(m),

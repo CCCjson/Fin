@@ -397,3 +397,97 @@ def test_proposals_scorecard_never_leaks_a_percentage(client, clean):
     card = client.get("/arena/proposals").json()["scorecard"]
     assert "win_rate" not in card and "hit_rate" not in card
     assert "样本不足以下任何结论" in card["note"]
+
+
+# ── 按市场分族的路由层（S5 任务 03b）──────────────────────────────────────
+
+def test_routes_scope_to_the_requested_market(clean):
+    """三个端点都要真的把范围收窄 —— 光在 `resolve_market` 层测不算数。"""
+    crypto = _mk("币策略", enabled=1, mode="live", status="armed")
+    stock = _mk("A股策略", enabled=1, mode="live", status="armed", market="a_share")
+
+    c = asyncio.run(arena.champion(days=30, market="a_share"))
+    assert c["strategy"]["strategy_id"] == stock
+    assert c["market"] == "a_share"
+    # ⭐ 「还有别的市场」要穿过接口边界，否则终端上没有可切的入口
+    assert set(c["markets_with_strategies"]) == {"a_share", "crypto"}
+
+    v = asyncio.run(arena.verdict(days=90, market="crypto"))
+    assert v["champion"]["strategy_id"] == crypto
+
+    s = asyncio.run(arena.standings(days=30, include_archived=False, market="a_share"))
+    assert [r["strategy_id"] for r in s["strategies"]] == [stock]
+    assert s["market"] == "a_share"
+    # 不传 = 全市场混列（老行为），每行带 market 供前端区分
+    s_all = asyncio.run(arena.standings(days=30, include_archived=False, market=None))
+    assert len(s_all["strategies"]) == 2
+    assert {r["market"] for r in s_all["strategies"]} == {"a_share", "crypto"}
+
+
+def test_routes_reject_an_unknown_market(clean):
+    """⛔ 拼错的市场不许静默回落 —— 那会让 Jason 以为看的是 A 股，其实是币。"""
+    _mk("币策略", enabled=1, mode="live", status="armed")
+
+    c = asyncio.run(arena.champion(days=30, market="a_shre"))
+    assert c["ok"] is False and c["market"] is None and "认不出市场" in c["reason"]
+
+    v = asyncio.run(arena.verdict(days=90, market="a_shre"))
+    assert v["market"] is None and "认不出市场" in v["verdict"]
+    # 🔴 错误分支必须是完整骨架：前端把这几个键写成必填，少一个就渲染出 undefined
+    for k in ("challengers", "days_since_last_switch", "note", "results"):
+        assert k in v, f"错误分支少了 {k}，前端会渲染出 undefined"
+
+    s = asyncio.run(arena.standings(days=30, include_archived=False, market="a_shre"))
+    assert s["strategies"] == [] and s["market"] is None
+    # ⚠️ fail-closed 的理由要落在**前端会渲染**的字段上（空列表时显示的就是它）
+    assert "认不出市场" in s["ranking_note"]
+
+
+def test_empty_market_string_falls_back_to_crypto(clean):
+    """⚠️ 显式传空串是两种语义的缝：`/champion` 回落 crypto，`/standings` 是全市场。
+    两边都不该报错，钉住现状免得哪天悄悄变。"""
+    _mk("币策略", enabled=1, mode="live", status="armed")
+    assert asyncio.run(arena.champion(days=30, market=""))["market"] == "crypto"
+    assert asyncio.run(
+        arena.standings(days=30, include_archived=False, market=""))["market"] is None
+
+
+def test_empty_standings_says_no_strategies_not_why_unranked(clean):
+    """⚠️ 空列表时 `ranking_note` 是面板上**唯一**的内容。
+
+    它恒为「未排名——比较规则见…」的话，一个没有任何策略的市场，屏上会显示一句
+    在解释「为什么不排名」的话 —— 答非所问。可达路径：全新库、或停在某市场时
+    它最后一条策略被退役。
+    """
+    import asyncio
+
+    _mk("币策略", enabled=1, mode="paper")
+    empty = asyncio.run(arena.standings(days=30, include_archived=False,
+                                        market="a_share"))
+    assert empty["strategies"] == []
+    assert "还没有策略" in empty["ranking_note"]
+    assert "未排名" not in empty["ranking_note"]
+    # 人话里不许出现 canonical 英文名
+    assert "A股" in empty["ranking_note"] and "a_share" not in empty["ranking_note"]
+
+    filled = asyncio.run(arena.standings(days=30, include_archived=False,
+                                         market="crypto"))
+    assert "未排名" in filled["ranking_note"], "有策略时该解释为什么不排名"
+
+
+def test_market_labels_come_from_the_backend(clean):
+    """⛔ 中文名只有一处（后端）。前端再存一份的话，改名时两处会分叉 ——
+    同一个市场在状态条和切换器上显示成两个名字。"""
+    import asyncio
+
+    from common.market import MARKET_LABELS
+
+    _mk("币策略", enabled=1, mode="live", status="armed")
+    c = asyncio.run(arena.champion(days=30, market="crypto"))
+    assert c["market_labels"] == MARKET_LABELS
+
+    ms = asyncio.run(arena.market_status())
+    for row in ms["markets"]:
+        assert row["market_label"] == MARKET_LABELS[row["market"]]
+        # ⚠️ 别跟交易时段的 label 搞混：那是「交易中/已收盘」，不是市场名
+        assert row["market_label"] != row["label"]

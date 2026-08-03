@@ -11,10 +11,6 @@ import { arenaService, type MarketStatus } from '../../services/arenaService';
  * 那需要一份时区表 + DST 规则，算错了还看不出来。
  */
 
-const NAMES: Record<string, string> = {
-  a_share: 'A股', hk_stock: '港股', us_stock: '美股', crypto: '加密',
-};
-
 export const MarketStatusBar: React.FC = () => {
   const [markets, setMarkets] = useState<MarketStatus[]>([]);
 
@@ -36,7 +32,7 @@ export const MarketStatusBar: React.FC = () => {
         <span key={m.market} className="flex items-center gap-1.5">
           <span className={`w-1.5 h-1.5 rounded-full ${
             m.is_open ? 'bg-primary animate-pulse' : 'bg-gray-600'}`} />
-          <span className="text-gray-400">{NAMES[m.market] || m.market}</span>
+          <span className="text-gray-400">{m.market_label || m.market}</span>
           <span className={m.is_open ? 'text-primary' : 'text-gray-600'}>{m.label}</span>
           {/* ⚠️ 当地墙上时间由**后端算好**直接显示。
               ⛔ 别拿 `local_clock.iso` 丢进 `new Date()` 再格式化 —— 那会转成浏览器

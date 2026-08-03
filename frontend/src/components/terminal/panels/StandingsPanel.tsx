@@ -15,9 +15,17 @@ import { PnlValue } from '../PnlValue';
 export const StandingsPanel: React.FC<{
   rows: StandingRow[] | null;
   verdict: ArenaVerdict | null;
-}> = ({ rows, verdict }) => {
+  /**
+   * 后端给的一句话（`ranking_note`）。⚠️ 空列表时**必须显示它** ——
+   * fail-closed 的理由（比如「认不出市场 xxx」）就挂在这个字段上，
+   * 不渲染的话那道 fail-closed 又退回成了静默：屏幕上只会写「还没有策略」。
+   */
+  note?: string;
+}> = ({ rows, verdict, note }) => {
   if (!rows) return <div className="text-sm text-gray-500">加载中…</div>;
-  if (!rows.length) return <div className="text-sm text-gray-400">还没有策略。</div>;
+  if (!rows.length) {
+    return <div className="text-sm text-gray-400">{note || '还没有策略。'}</div>;
+  }
 
   const byId = new Map((verdict?.results || []).map((r) => [r.challenger.strategy_id, r]));
 

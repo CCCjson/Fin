@@ -19,6 +19,17 @@ CRYPTO = "crypto"
 
 CANONICAL_MARKETS = (A_SHARE, HK_STOCK, US_STOCK, CRYPTO)
 
+# canonical → **给人看的中文名**。凡是要念给 Jason 听的句子都走它，
+# ⛔ 别把 canonical 英文名直接拼进人话 —— 屏幕上会同时出现「加密」和「crypto」
+# 指同一个东西（前端切换器写中文、后端 reason 写英文，实测踩过）。
+MARKET_LABELS = {A_SHARE: "A股", HK_STOCK: "港股", US_STOCK: "美股", CRYPTO: "加密"}
+
+
+def label_of(raw: str | None) -> str:
+    """市场 → 中文名（认不出就原样返回，⛔ 不静默换成别的市场）。"""
+    return MARKET_LABELS.get(raw or "", raw or "")
+
+
 # 股票三市场（工作日交易 + 固定收盘）。crypto 是 7×24 独立链，不属此列 ——
 # 凡是「按交易日历/全局新鲜度聚合」的口径都该用这个，而非含 crypto 的 CANONICAL_MARKETS
 # （否则空/滞后的 crypto 表会永久拉红全局 is_stale）。data_engine.market_refresh /

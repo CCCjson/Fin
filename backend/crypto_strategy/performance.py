@@ -1024,12 +1024,19 @@ def _pnl_sentence(pnl: dict) -> str:
 ARCHIVED_STATUSES = ("retired", "superseded")
 
 
-def standings(*, days: int = 30, include_archived: bool = False) -> list[dict[str, Any]]:
-    """所有策略的战绩排行（S3 的竞技场会扩它）。
+def standings(*, days: int = 30, include_archived: bool = False,
+              market: str | None = None) -> list[dict[str, Any]]:
+    """策略的战绩排行（S3 的竞技场会扩它）。
 
     ⛔ **这里刻意不排序、不评优劣**：paper 和 live 不可比、样本量差异巨大，
     现在就按某个数排序等于诱导「追逐近期最优」（`00-PLAN §3` 裁决 9 的坑 3）。
     排名规则是 S3 的四道门槛，不是一个 `sorted()`。
+
+    Args:
+        market: 只看某个市场；None = 全部（默认，兼容老调用方）。
+            ⭐ 交易终端切到某个市场时**必须传** —— 竞技场判定是按市场分族的
+            （裁决 7 新读法），排行榜却全市场混列的话，同一块屏上「卫冕者」说的是
+            A 股、下面一列全是币策略，Jason 没法把两块对起来。
     """
     from data_engine.storage.database import get_session
     from data_engine.storage.models import CryptoStrategy
@@ -1043,18 +1050,25 @@ def standings(*, days: int = 30, include_archived: bool = False) -> list[dict[st
         # ⭐ `is_benchmark` 一起带出来：调用方（交易终端要把基准线置顶、并给它挂个
         # 徽章）否则只能逐条再查一次库 —— 那是 N+1，而且「哪条是尺子」这件事
         # 不标出来，裁决 8 的价值（一眼看到 AI 有没有输给你手写那条）就没了。
+        # ⚠️ market 在 Python 里筛（`market_of` 是「NULL = crypto」的实现）。
         meta = [(r.strategy_id, r.name, r.mode, r.status, bool(r.enabled),
-                 r.family_id or r.strategy_id, r.version or 1, bool(r.is_benchmark))
-                for r in q.order_by(CryptoStrategy.created_at.asc()).all()]
+                 r.family_id or r.strategy_id, r.version or 1, bool(r.is_benchmark),
+                 market_of(r.market))
+                for r in q.order_by(CryptoStrategy.created_at.asc()).all()
+                if market is None or market_of(r.market) == market]
     finally:
         session.close()
 
     out = []
-    for sid, name, mode, status, enabled, family, version, is_benchmark in meta:
+    for (sid, name, mode, status, enabled, family, version,
+         is_benchmark, row_market) in meta:
         h = strategy_health(sid, days=days)
         out.append({
             "strategy_id": sid, "name": name, "version": version, "family_id": family,
             "mode": mode, "status": status, "enabled": enabled,
+            # ⭐ 每行带市场：不带的话前端只能靠「我请求的是哪个市场」倒推，
+            # 而全市场模式（market=None）下那个倒推就没有答案了。
+            "market": row_market,
             "is_benchmark": is_benchmark,
             "runs": h.get("runs", {}).get("total", 0) if h.get("ok") else 0,
             "orders_staged": h.get("orders_staged", 0) if h.get("ok") else 0,

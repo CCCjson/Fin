@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from common.market import CRYPTO
+from common.market import CRYPTO, label_of
 from crypto_strategy.performance import (
     ARCHIVED_STATUSES,
     market_of,
@@ -69,7 +69,8 @@ def resolve_market(raw: str | None) -> str:
     m = normalize_market(raw, default="")
     if m not in CANONICAL_MARKETS:
         raise UnknownMarketError(
-            f"认不出市场「{raw}」。可选：{'、'.join(CANONICAL_MARKETS)}")
+            f"认不出市场「{raw}」。可选："
+            f"{'、'.join(f'{label_of(x)}({x})' for x in CANONICAL_MARKETS)}")
     return m
 
 
@@ -212,9 +213,10 @@ def evaluate_challenger(challenger: dict[str, Any], champion: dict[str, Any], *,
              if not same_mode else
              f"本金口径不同（{ccb} vs {mcb}）：一条按真实账户值定仓位、一条按配置本金，"
              f"收益率量级会整体偏一个倍数，跟策略好坏无关。" if not same_denom else
-             f"市场不同（{cm} vs {mm}）：分母是同一个总资金设置，分子却是不同币种，"
+             f"市场不同（{label_of(cm)} vs {label_of(mm)}）：分母是同一个总资金设置，"
+             f"分子却是不同币种，"
              f"比大小没有意义。同市场内才排名。" if not same_market else
-             f"两边都是 {cb}、本金口径都是 {ccb}、都在 {cm}"),
+             f"两边都是 {cb}、本金口径都是 {ccb}、都在{label_of(cm)}"),
     }
 
     # 门槛 ①：观察期。
@@ -590,9 +592,13 @@ def evaluate_arena(*, market: str = CRYPTO, days: int = 90,
                 "benchmarks": [_brief(b) for b in benchmarks], "results": [],
                 # ⚠️ 话要说成「**这个市场**没有卫冕者」：分族之后「没有卫冕者」不再等于
                 # 「整个系统没在自动交易」，说笼统了会让人以为别的市场也停了。
-                "verdict": (f"{market} 这个市场现在没有在跑实盘的策略（没有卫冕者）——"
-                            f"「该不该换」这个问题还不成立。先 arm 一条上 live。"
-                            + (f"（其它有策略的市场：{'、'.join(m for m in markets if m != market)}）"
+                # ⚠️ 念给 Jason 听的句子一律用中文市场名（`label_of`）——
+                #    屏幕上同时出现「加密」和「crypto」指同一个东西，是实测踩过的。
+                "verdict": (f"{label_of(market)}这个市场现在没有在跑实盘的策略"
+                            f"（没有卫冕者）——「该不该换」这个问题还不成立。"
+                            f"先 arm 一条上 live。"
+                            + (f"（其它有策略的市场："
+                               f"{'、'.join(label_of(m) for m in markets if m != market)}）"
                                if [m for m in markets if m != market] else ""))}
 
     n = len(challengers)

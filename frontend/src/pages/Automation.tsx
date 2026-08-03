@@ -23,6 +23,7 @@ import { CryptoStrategyTab } from '../components/trading-center/CryptoStrategyTa
 import { CryptoPendingTab } from '../components/trading-center/CryptoPendingTab';
 import { PanelHost, type PanelDef } from '../components/terminal/PanelHost';
 import { MarketStatusBar } from '../components/terminal/MarketStatusBar';
+import { MarketSwitcher } from '../components/terminal/MarketSwitcher';
 import { ChampionPanel } from '../components/terminal/panels/ChampionPanel';
 import { StandingsPanel } from '../components/terminal/panels/StandingsPanel';
 import { ProposalsPanel } from '../components/terminal/panels/ProposalsPanel';
@@ -41,15 +42,55 @@ export const Automation: React.FC = () => {
 
   const [champion, setChampion] = useState<ChampionView | null>(null);
   const [standings, setStandings] = useState<StandingRow[] | null>(null);
+  const [standingsNote, setStandingsNote] = useState<string | undefined>();
   const [verdict, setVerdict] = useState<ArenaVerdict | null>(null);
   const [proposals, setProposals] = useState<ProposalRow[] | null>(null);
   const [scorecard, setScorecard] = useState<ProposalScorecard | null>(null);
+  /**
+   * 竞技场看哪个市场（S5 任务 03b）。裁决 7 新读法：每个市场同期一条 live，
+   * 所以卫冕者/判定/排行榜三块都是**按市场**的。
+   * ⚠️ 默认 crypto —— 与后端默认一致，也是唯一在跑真钱的市场。
+   */
+  const [market, setMarket] = useState('crypto');
+  /**
+   * 🔴 **当前市场的「真值」，给在途响应做判据。**
+   *
+   * 只把 `market` 加进依赖数组是**不够的**：那只修掉「定时器读到旧值」，
+   * 修不掉**已经发出去的请求**。`/verdict` 走 `evaluate_arena`，要给每条策略跑
+   * `daily_returns` + `cost_basis.replay`，是 O(策略数) 的重活 ——
+   * 60 秒那次轮询以 crypto 发出、Jason 紧接着切到 A 股、A 股数据先回、
+   * 两秒后 crypto 的响应落地把它整个盖掉。表现就是「切了，过一会儿又跳回去」，
+   * 而面板上一个字段都不显示市场，屏幕上会是**顶着 A 股名字的 crypto 卫冕者**。
+   * 来回切两下是很自然的操作，不是极端路径。
+   */
+  const marketRef = React.useRef(market);
+  marketRef.current = market;
 
-  const loadArena = useCallback(() => {
+  const loadArena = useCallback((m: string) => {
+    // ⚠️ 每个回调（含 catch）都要先验一次：旧市场的**失败**同样会把新市场的数据清掉。
+    const fresh = () => m === marketRef.current;
     // 各自独立 catch：一块拿不到不该让整个终端空白
-    arenaService.champion().then(setChampion).catch(() => setChampion(null));
-    arenaService.standings().then((r) => setStandings(r.strategies)).catch(() => setStandings([]));
-    arenaService.verdict().then(setVerdict).catch(() => setVerdict(null));
+    arenaService.champion(30, m)
+      .then((r) => { if (fresh()) setChampion(r); })
+      .catch(() => { if (fresh()) setChampion(null); });
+    // 🔴 排行榜**必须跟着一起切**：不传的话它是全市场混列的，
+    //    于是「卫冕者」说的是 A 股、下面一列全是币策略，两块对不起来。
+    arenaService.standings(30, false, m)
+      .then((r) => {
+        if (!fresh()) return;
+        setStandings(r.strategies);
+        // 空列表时这句话就是唯一的解释（含 fail-closed 的理由）
+        setStandingsNote(r.ranking_note);
+      })
+      .catch(() => { if (fresh()) { setStandings([]); setStandingsNote(undefined); } });
+    arenaService.verdict(90, m)
+      .then((r) => { if (fresh()) setVerdict(r); })
+      .catch(() => { if (fresh()) setVerdict(null); });
+  }, []);
+
+  // ⚠️ 提案**不分市场**（它挂在具体策略上），所以不进 `loadArena` ——
+  //    跟着市场切会白算一遍 scorecard。
+  const loadProposals = useCallback(() => {
     arenaService.proposals().then((r) => {
       setProposals(r.proposals);
       setScorecard(r.scorecard);
@@ -59,17 +100,28 @@ export const Automation: React.FC = () => {
   useEffect(() => {
     store.refreshAll();
     store.connectWebSocket();
-    loadArena();
+    loadProposals();
     return () => store.disconnectWebSocket();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 切市场要立刻重取（不然屏幕上是上一个市场的数字，而标题已经变了）
+  useEffect(() => { loadArena(market); }, [market, loadArena]);
+
+  // ⚠️ 待确认单/引擎状态的轮询**单独一个 effect**：跟市场绑在一起的话，
+  //    每切一次市场这个计时器就被重置一次，而它盯的是「有真钱等着确认」。
   useEffect(() => {
     const t = setInterval(() => { store.fetchPending(); store.fetchEngine(); }, 20000);
+    const tp = setInterval(loadProposals, 60000);
+    return () => { clearInterval(t); clearInterval(tp); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     // 战绩/判定是**慢变量**（按 tick 和成交推进），60 秒足够；
     // 跟待确认单一个频率纯属白打五个端点。
-    const t2 = setInterval(loadArena, 60000);
-    return () => { clearInterval(t); clearInterval(t2); };
+    const t2 = setInterval(() => loadArena(marketRef.current), 60000);
+    return () => clearInterval(t2);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -82,9 +134,13 @@ export const Automation: React.FC = () => {
     {
       key: 'champion',
       title: '卫冕者',
+      // ⚠️ ⛔ 别在这儿拼「没有卫冕者」那句结论：同一块面板的正文渲染的是后端
+      //    `champion.reason`，两处措辞一分叉，屏上就会同时出现两种说法
+      //    （实测：副标题「加密」、正文「crypto」指同一个市场）。
+      //    市场是哪个由切换器回答，结论由后端那一句回答。
       subtitle: champion?.strategy
         ? `${champion.strategy.name} v${champion.strategy.version}`
-        : '暂无在跑的实盘策略',
+        : undefined,
       // ⚠️ 「正在变弱」只认 `/verdict` 那一份 —— 它的判定依赖窗口长度，
       // 让 `/champion` 再算一份，同一块屏上就会对同一件事给出相反结论。
       badge: champion?.halted
@@ -98,7 +154,7 @@ export const Automation: React.FC = () => {
       key: 'standings',
       title: '挑战者排行榜',
       subtitle: verdict ? `${verdict.challengers} 个挑战者` : undefined,
-      render: () => <StandingsPanel rows={standings} verdict={verdict} />,
+      render: () => <StandingsPanel rows={standings} verdict={verdict} note={standingsNote} />,
     },
     {
       key: 'proposals',
@@ -125,7 +181,7 @@ export const Automation: React.FC = () => {
       subtitle: '参数、回测、生命周期',
       render: () => <CryptoStrategyTab />,
     },
-  ], [champion, standings, verdict, proposals, scorecard, pendingCount]);
+  ], [champion, standings, standingsNote, verdict, proposals, scorecard, pendingCount]);
 
   return (
     <div className="h-screen flex flex-col bg-dark">
@@ -136,6 +192,11 @@ export const Automation: React.FC = () => {
             <span onClick={() => nav('/')} title="返回 MoneyBill"
               className="text-xl cursor-pointer hover:scale-110 transition-transform">💰</span>
             <h1 className="text-xl font-bold text-white">交易终端</h1>
+            <MarketSwitcher
+              value={market}
+              options={champion?.markets_with_strategies ?? verdict?.markets_with_strategies}
+              labels={champion?.market_labels}
+              onChange={setMarket} />
             <MarketStatusBar />
           </div>
 

@@ -527,8 +527,10 @@ def test_missing_champion_message_names_the_market(db):
     _mk("币卫冕者", enabled=1, mode="live", status="armed")
     r = arena.evaluate_arena(market="a_share")
     assert r["champion"] is None
-    assert "a_share" in r["verdict"]
-    assert "crypto" in r["verdict"], "别的市场还在跑，这件事得说出来"
+    # ⚠️ 念给 Jason 听的句子用**中文市场名**，与终端切换器上的字一致 ——
+    #    屏上同时出现「加密」和「crypto」指同一个东西是踩过的。
+    assert "A股" in r["verdict"]
+    assert "加密" in r["verdict"], "别的市场还在跑，这件事得说出来"
 
 
 def test_legacy_null_market_is_crypto(db):
@@ -679,3 +681,23 @@ def test_both_outputs_agree_on_markets_with_strategies(db):
     assert arena.markets_with_strategies() == ["a_share", "crypto"]
     assert arena.evaluate_arena(market="crypto")["markets_with_strategies"] == \
         arena.markets_with_strategies(), "两个出口对同一个问题给了不同答案"
+
+
+def test_standings_can_be_scoped_to_one_market(db):
+    """🔴 排行榜必须能跟着市场切（03b）。
+
+    竞技场判定是按市场分族的，排行榜却全市场混列的话，同一块屏上「卫冕者」说的是
+    A 股、下面一列全是币策略 —— 两块对不起来，而这正是加市场切换器的动因。
+    """
+    from crypto_strategy.performance import standings
+
+    _mk("币策略", enabled=1, mode="paper")
+    _mk("A股策略", enabled=1, mode="paper", market="a_share")
+    _mk("存量策略", enabled=1, mode="paper", market=None)      # NULL = crypto
+
+    assert {r["name"] for r in standings(market="crypto")} == {"币策略", "存量策略"}
+    assert {r["name"] for r in standings(market="a_share")} == {"A股策略"}
+    # 不传 = 全市场混列（老行为，别改）
+    assert len(standings()) == 3
+    # ⭐ 每行带 market：全市场模式下前端没法从请求参数倒推
+    assert {r["market"] for r in standings()} == {"crypto", "a_share"}

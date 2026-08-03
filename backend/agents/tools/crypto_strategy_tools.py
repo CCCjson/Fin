@@ -205,6 +205,10 @@ def _health_widget(h: dict) -> Any:
 
 
 class StrategyStandingsArgs(BaseModel):
+    market: str | None = Field(None, description=(
+        "只看某个市场：crypto / a_share / us_stock。不传 = **全市场混列**。"
+        "⚠️ 竞技场是按市场分族的（每个市场各有一条卫冕者），"
+        "要比较优劣必须先收窄到同一个市场"))
     days: int = Field(30, ge=1, le=365, description="回看多少天，默认 30")
     include_archived: bool = Field(
         False, description="是否带上已退役/被新版本取代的历史版本，默认不带")
@@ -219,17 +223,30 @@ class StrategyStandingsArgs(BaseModel):
     args_model=StrategyStandingsArgs,
     category="crypto", group="crypto",
 )
-def list_strategy_standings(days: int = 30, include_archived: bool = False) -> ToolEnvelope:
+def list_strategy_standings(days: int = 30, include_archived: bool = False,
+                            market: str | None = None) -> ToolEnvelope:
+    from common.market import label_of
+    from crypto_strategy.arena import UnknownMarketError, resolve_market
     from crypto_strategy.performance import standings
 
-    rows = standings(days=days, include_archived=include_archived)
+    # ⛔ 认不出的市场不回落（与竞技场那几个出口同一个口径）。
+    m: str | None = None
+    if market:
+        try:
+            m = resolve_market(market)
+        except UnknownMarketError as e:
+            return ToolEnvelope(business_result="negative", message=str(e))
+
+    rows = standings(days=days, include_archived=include_archived, market=m)
     if not rows:
-        msg = ("一条 crypto 策略都还没建。用 compile_crypto_strategy 编一条。"
+        # ⛔ 人话里不许出现 canonical 英文名（见 `common/market.py::MARKET_LABELS`）
+        where = f"{label_of(m)}这个市场" if m else "所有市场里"
+        msg = (f"{where}一条策略都还没建。用 compile_crypto_strategy 编一条。"
                if include_archived else
-               "没有在用的 crypto 策略（历史版本没算进来，要看传 include_archived=true）。")
+               f"{where}没有在用的策略（历史版本没算进来，要看传 include_archived=true）。")
         return ToolEnvelope(business_result="negative", message=msg)
     return ToolEnvelope(data={"count": len(rows), "days": days, "strategies": rows,
-                              "include_archived": include_archived,
+                              "include_archived": include_archived, "market": m,
                               "ranking_note": "未排名——比较规则见工具说明。"})
 
 

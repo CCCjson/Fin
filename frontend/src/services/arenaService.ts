@@ -13,8 +13,18 @@ import api from './api';
 
 export type MarketPhase = 'intraday' | 'pre_market' | 'after_close' | 'closed_day';
 
+export type Market = 'a_share' | 'hk_stock' | 'us_stock' | 'crypto';
+
+/**
+ * ⛔ **前端不存市场中文名。** 名字由后端给：
+ * `/arena/market-status` 每行带 `market_label`，`/arena/champion` 带 `market_labels`。
+ * 前端再存一份的话，「加密」改成「加密货币」只改一边，同一个市场就会在
+ * 状态条和切换器上显示成两个名字 —— 而那正是把它收成一处要防的事。
+ */
+
 export interface MarketStatus {
-  market: 'a_share' | 'hk_stock' | 'us_stock' | 'crypto';
+  market: Market;
+  market_label: string;   // ⭐ 中文名由后端给（见文件头）
   phase: MarketPhase;
   label: string;          // 「交易中 / 尚未开盘 / 已收盘 / 休市」
   is_open: boolean;
@@ -75,6 +85,15 @@ export interface StrategyHealth {
 export interface ChampionView {
   ok: boolean;
   reason?: string;
+  /** 这份数据是哪个市场的。⚠️ 认不出的市场参数时后端回 null（不回落）。 */
+  market?: string | null;
+  /** canonical → 中文名。⛔ 前端不自己存一份（见文件头）。 */
+  market_labels?: Record<string, string>;
+  /**
+   * ⭐ 哪些市场有策略 —— 切换器的数据源。
+   * 不带这个字段的话，这块屏只显示当前市场，而 Jason 无从知道还有别的可切。
+   */
+  markets_with_strategies?: string[];
   strategy: { strategy_id: string; name: string; version: number; family_id: string;
               mode: string; status: string; is_benchmark: boolean; halted: boolean } | null;
   halted?: boolean;
@@ -85,6 +104,7 @@ export interface ChampionView {
 export interface StandingRow {
   strategy_id: string;
   name: string;
+  market: string;         // ⭐ 全市场混列时（不传 market）靠它区分哪条是哪个市场的
   version: number;
   family_id: string;
   mode: string;
@@ -119,6 +139,8 @@ export interface ArenaVerdict {
   champion_halted?: boolean;
   champion_is_benchmark?: boolean;
   champion_weakening?: { weakening: boolean; reason: string };
+  market?: string | null; // 这份判定是哪个市场的
+  markets_with_strategies?: string[];
   challengers: number;    // ⚠️ 恒为 number（后端保证），别写 `.length`
   challenger_details?: unknown[];
   days_since_last_switch: number | null;
@@ -160,16 +182,26 @@ export const arenaService = {
   marketStatus: (): Promise<{ markets: MarketStatus[] }> =>
     api.get('/arena/market-status'),
 
-  champion: (days = 30): Promise<ChampionView> =>
-    api.get('/arena/champion', { params: { days } }),
+  /**
+   * ⚠️ `market` 不传 = crypto（后端默认，唯一在跑真钱的市场）。
+   * 裁决 7 的新读法是「每个市场同期一条 live」，所以这三个端点都是**按市场**的。
+   */
+  champion: (days = 30, market?: string): Promise<ChampionView> =>
+    api.get('/arena/champion', { params: { days, market } }),
 
-  standings: (days = 30, includeArchived = false):
+  /**
+   * ⚠️ 与上面两个不同：`market` 不传 = **全市场混列**（老行为）。
+   * 终端切到某个市场时**必须一起传** —— 否则「卫冕者」说的是 A 股、
+   * 下面一列全是币策略，两块对不起来。
+   */
+  standings: (days = 30, includeArchived = false, market?: string):
     Promise<{ count: number; days: number; strategies: StandingRow[];
-              ranking_note: string }> =>
-    api.get('/arena/standings', { params: { days, include_archived: includeArchived } }),
+              market: string | null; ranking_note: string }> =>
+    api.get('/arena/standings',
+            { params: { days, include_archived: includeArchived, market } }),
 
-  verdict: (days = 90): Promise<ArenaVerdict> =>
-    api.get('/arena/verdict', { params: { days } }),
+  verdict: (days = 90, market?: string): Promise<ArenaVerdict> =>
+    api.get('/arena/verdict', { params: { days, market } }),
 
   proposals: (limit = 10, status?: string):
     Promise<{ count: number; proposals: ProposalRow[];
