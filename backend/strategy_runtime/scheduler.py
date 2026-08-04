@@ -102,13 +102,33 @@ class StockStrategyScheduler:
         if not self._is_due(row, spec):
             return {"strategy_id": row.strategy_id, "skipped": "未到 tick 间隔"}
 
+        # 🔒 **没配本金就不跑**（Jason 2026-08-04：未配置的市场 fail-closed）。
+        #    ⛔ 别回落到 `get_total_capital()` —— 那是**A 股口径的人民币**，
+        #    拿它给美股算仓位是错的口径，而且不会有任何报错。
+        #    ⚠️ 这条要在**日切之前**判：日切会解冻 T+1 持仓，是有副作用的动作，
+        #    不该为一个根本不会跑的 tick 做。
+        from common.market import label_of
+        from trading_engine.risk.adapter import get_market_capital
+
+        capital = get_market_capital(market)
+        if capital is None:
+            # ⚠️ 必须 log：`tick_one` 的返回值只流到 `sweep()`，而 `sweep()` 是
+            #    APScheduler 的 job，**返回值被丢弃** —— 不 log 的话股票这边
+            #    就是彻底安静地不交易（crypto 那边至少有 warning + run 行）。
+            #    频率不高：这道闸在 `_is_due` 之后，最多每 interval_minutes 一条。
+            logger.warning(f"[stock-sched] {row.strategy_id} 跳过："
+                           f"{label_of(market)}还没配置本金")
+            return {"strategy_id": row.strategy_id,
+                    "skipped": (f"{label_of(market)}还没配置本金 —— 去设置页填"
+                                f"「{label_of(market)}本金」。在那之前这个市场"
+                                f"一单都不会下。")}
+
         adapter = self._adapter_for(spec)
         self._settle_if_new_day(market, adapter)
 
         from strategy_runtime.executor import run_tick
-        from trading_engine.risk.adapter import get_total_capital
 
-        res = run_tick(spec, adapter, capital=get_total_capital(),
+        res = run_tick(spec, adapter, capital=capital,
                        strategy_id=row.strategy_id, mode=row.mode or "paper")
         self._touch(row.strategy_id)
         return {"strategy_id": row.strategy_id, **res}

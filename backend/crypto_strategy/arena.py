@@ -189,8 +189,8 @@ def evaluate_challenger(challenger: dict[str, Any], champion: dict[str, Any], *,
     # 门槛 0：口径可比。paper 是理想撮合，跟 live 比大小是自欺（坑 1）。
     # ⚠️ 还要卡**分母同源**：一条按真实账户值定仓位、一条按配置本金，收益率量级会整体
     # 偏一个倍数，而那跟策略好坏毫无关系。
-    # 🔀 还要卡**同一个市场**（S5）：分母是全局的「总资金」设置、不分市场，而分子的
-    # 币种各不相同 —— 拿 A 股的 CNY 收益率和币的 USDT 收益率比大小是没有意义的。
+    # 🔀 还要卡**同一个市场**（S5）：各市场的本金和收益都是不同币种 ——
+    # 拿 A 股的 CNY 收益率和币的 USDT 收益率比大小是没有意义的。
     # ⚠️ 这只是**止血**：真正的「每个市场族内一个卫冕者」是 S5 任务 03 的事，
     #    它涉及改裁决 7 的读法，要 Jason 拍板。这里先保证**不会给出跨市场的错结论**。
     cb, mb = challenger.get("basis"), champion.get("basis")
@@ -213,8 +213,8 @@ def evaluate_challenger(challenger: dict[str, Any], champion: dict[str, Any], *,
              if not same_mode else
              f"本金口径不同（{ccb} vs {mcb}）：一条按真实账户值定仓位、一条按配置本金，"
              f"收益率量级会整体偏一个倍数，跟策略好坏无关。" if not same_denom else
-             f"市场不同（{label_of(cm)} vs {label_of(mm)}）：分母是同一个总资金设置，"
-             f"分子却是不同币种，"
+             f"市场不同（{label_of(cm)} vs {label_of(mm)}）：两边的本金和收益"
+             f"都是不同币种，"
              f"比大小没有意义。同市场内才排名。" if not same_market else
              f"两边都是 {cb}、本金口径都是 {ccb}、都在{label_of(cm)}"),
     }

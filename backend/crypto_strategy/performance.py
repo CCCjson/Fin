@@ -50,7 +50,14 @@ from typing import Any
 
 from loguru import logger
 
-from common.market import A_SHARE, CRYPTO, HK_STOCK, US_STOCK, normalize_market
+from common.market import (
+    A_SHARE,
+    CRYPTO,
+    HK_STOCK,
+    US_STOCK,
+    label_of,
+    normalize_market,
+)
 from common.market_time import market_day_bounds, market_day_of, utc_iso, utc_now
 from common.trade_source import STRATEGY as TRADE_STRATEGY
 from common.trade_source import UNKNOWN as TRADE_UNKNOWN
@@ -586,7 +593,7 @@ def _stock_daily_returns(row: Any, strategy_id: str, market: str, *,
         "heuristic_days": heuristic,
         "note": (f"日收益 = 当日已实现盈亏 / 本金（近似，不是真权益曲线）；"
                  f"序列按 {market} 的**交易日**补齐，没交易的交易日记 0；"
-                 f"分母是全局总资金设置，**跨市场不可比大小**；"
+                 f"分母是 {label_of(market)}的本金设置，**跨市场不可比大小**（币种都不同）；"
                  f"⚠️ **浮亏不在这个序列里** —— 看 open_positions。"),
     }
     if no_fee:
@@ -725,15 +732,21 @@ def daily_returns(strategy_id: str, *, days: int = 90,
     until = until or utc_now()
     since = since or (until - timedelta(days=max(1, int(days))))
     window = max(1, (until - since).days)
-    capital = _capital_basis(row)
+    market = strategy_market(row)
+    capital = _capital_basis(row, market)
+    if capital is None:
+        # 🔒 **未配置 ≠ 0**（Jason 2026-08-04）：没填本金就算不出收益率，
+        #    而这与「本金填了 0」要说不同的话 —— 前者去设置页填，后者是策略没钱可用。
+        return {"basis": "none", "market": market,
+                "reason": (f"{label_of(market)}还没配置本金 —— 收益率没有分母可算。"
+                           f"去设置页填「{label_of(market)}本金」。")}
     if capital <= 0:
         # ⛔ 分母兜底成 1.0 会让「日收益率」变成**美元金额**（一天赚 500 → r=500），
         # 门槛②④ 和最大回撤全线失真。宁可诚实说算不出来。
-        return {"basis": "none",
-                "reason": "总资金设置为 0 或读不到，收益率没有分母可算"}
+        return {"basis": "none", "market": market,
+                "reason": f"{label_of(market)}本金设置为 0，收益率没有分母可算"}
 
     # 🔀 股票读另一张台账、按交易日补齐（S5）。⛔ 下面 crypto 那段一行别动。
-    market = strategy_market(row)
     if market != CRYPTO:
         return _stock_daily_returns(row, strategy_id, market, since=since,
                                     until=until, window=window, capital=capital)
@@ -824,8 +837,18 @@ def _active_days(row: Any, window: int) -> int:
     return max(0, min(window, int(alive)))
 
 
-def _capital_basis(row: Any) -> float:
-    """算收益率的分母 —— **统一用配置本金，对所有策略一把尺子**。
+def _capital_basis(row: Any, market: str) -> float | None:
+    """算收益率的分母 —— **同一个市场内，所有策略一把尺子**。
+
+    🔀 **2026-08-04 起按市场取**（Jason 拍板：「总资金」概念退役）。
+    ⚠️ 变的只是「哪把尺子」，**没变的是「同市场内共用一把」** —— 下面第 2 条
+    那个理由原样成立，⛔ 别顺手改成「每条策略各取各的」。
+    ⛔ 跨市场的收益率**本来就不可比**（分子币种都不同），所以「一把尺子」这件事
+    只在市场内部有意义，竞技场也正是按市场分族的。
+
+    Returns:
+        本金；**未配置返回 `None`**（≠ 0）—— 调用方要说不同的话：
+        没填去设置页填，填了 0 是这个市场没钱可用。
 
     两个刻意的取舍：
 
@@ -841,12 +864,12 @@ def _capital_basis(row: Any) -> float:
     （它按真实账户值定仓位，却按配置本金算收益率）。所以 `capital_basis` 一起返回，
     由「口径可比」那道门槛去卡两边是否同源。
     """
-    from trading_engine.risk.adapter import get_total_capital
+    from trading_engine.risk.adapter import get_market_capital
     try:
-        return float(get_total_capital() or 0)
-    except Exception as e:  # noqa: BLE001 — 读不到就返 0，由调用方判「算不出来」
-        logger.warning(f"策略 {row.strategy_id} 取本金失败: {e}")
-        return 0.0
+        return get_market_capital(market)
+    except Exception as e:  # noqa: BLE001 — 读不到就当未配置，由调用方说人话
+        logger.warning(f"策略 {row.strategy_id} 取 {market} 本金失败: {e}")
+        return None
 
 
 def _paper_daily_pnl(legs: list[dict], fee_pct: float, *,
@@ -894,11 +917,15 @@ def strategy_health(strategy_id: str, *, days: int = 30) -> dict[str, Any]:
     runs = _runs(strategy_id, since, until)
     if not runs:
         # 「没跑过」≠「跑了但没赚」——这两件事给出的下一步动作完全不同。
+        # 🔴 **先交叉一次本金**：股票 tick 从来不写 run 行（既有欠债），所以本金没填时
+        #    这条早返回是**唯一**的出口，而它原本会说「先确认是不是没被武装」——
+        #    真因是本金没配，**给出的下一步动作正好指反方向**。
         return {"ok": False, "strategy_id": strategy_id, "name": row.name,
                 "window_days": days,
-                "reason": (f"{row.name} 在最近 {days} 天里一条运行记录都没有。"
-                           f"当前 enabled={row.enabled}、status={row.status} —— "
-                           f"先确认它是不是压根没被武装/已退役，而不是「跑了但没成绩」。")}
+                "reason": (_no_capital_hint(row) or
+                           (f"{row.name} 在最近 {days} 天里一条运行记录都没有。"
+                            f"当前 enabled={row.enabled}、status={row.status} —— "
+                            f"先确认它是不是压根没被武装/已退役，而不是「跑了但没成绩」。"))}
 
     by_status: dict[str, int] = {}
     reasons: dict[str, int] = {}
@@ -950,8 +977,13 @@ def _verdict(row: Any, runs: list[dict], reasons: dict[str, int],
         parts.append(f"⛔ 这条策略已被护栏熔断停机（{row.halted_reason or '原因未记录'}），"
                      f"下面的数字是停机前的。")
     if not total_dec:
-        parts.append(f"{len(runs)} 次运行里没有任何逐币决策明细——大概率每次都在"
-                     f"入口就被拦下了（看 runs.by_status）。")
+        # ⭐ 入口就被拦下时，原因**就写在 run 的顶层 detail 里**（`capital` /
+        #    `daily_loss` / `counts`）。不读出来的话，这里只会说一句
+        #    「没有任何逐币决策明细，看 runs.by_status」—— 而那句话让人去翻日志，
+        #    理由其实一直躺在手边（裁决 16：说不出「所以我该干嘛」就不配摆出来）。
+        gate = _entry_gate_reason(runs)
+        parts.append(f"{len(runs)} 次运行里没有任何逐币决策明细——每次都在入口就被拦下了。"
+                     + (f"最近一次的原因：{gate}" if gate else "看 runs.by_status。"))
         return " ".join(parts)
 
     # 🔴 **「开了几单」不能只看 `staged`**：paper 模式下 `_stage_or_log` 直接 return None，
@@ -986,6 +1018,37 @@ def _verdict(row: Any, runs: list[dict], reasons: dict[str, int],
 
     parts.append(_pnl_sentence(pnl))
     return " ".join(parts)
+
+
+# run 顶层 detail 里可能出现的「入口闸」原因键 → 它们都是**整条 run 被拦下**的理由，
+# 与逐币的 `decisions` 不同层。⚠️ 加新闸门时这里要一起加，否则新原因会哑掉。
+_ENTRY_GATE_KEYS = ("capital", "daily_loss", "counts")
+
+
+def _entry_gate_reason(runs: list[dict]) -> str | None:
+    """最近一条 run 在**入口**被拦下的理由（人话）。没有就 None。"""
+    for r in reversed(runs):
+        detail = r.get("detail") or {}
+        for k in _ENTRY_GATE_KEYS:
+            if detail.get(k):
+                return str(detail[k])
+    return None
+
+
+def _no_capital_hint(row: Any) -> str | None:
+    """这条策略所在市场还没配本金的话，给一句直说的话；否则 None。
+
+    ⛔ 别把它写成「可能是本金没配」—— 这里是能确定的：读一次配置就知道。
+    """
+    from trading_engine.risk.adapter import get_market_capital
+    market = strategy_market(row)
+    try:
+        if get_market_capital(market) is not None:
+            return None
+    except Exception:  # noqa: BLE001 — 读不到就别乱下结论，退回原来那句
+        return None
+    return (f"{row.name} 一条运行记录都没有 —— **{label_of(market)}还没配置本金**，"
+            f"这个市场的策略一单都不会下。去设置页填「{label_of(market)}本金」。")
 
 
 def _pnl_sentence(pnl: dict) -> str:

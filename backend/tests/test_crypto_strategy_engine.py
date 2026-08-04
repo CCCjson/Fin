@@ -23,6 +23,47 @@ from crypto_strategy.engine import CryptoStrategyEngine
 from crypto_strategy.service import _spec_to_columns
 
 
+@pytest.fixture(autouse=True)
+def _crypto_capital_configured():
+    """🔒 2026-08-04 起「未配置本金 = fail-closed」，本文件测的是 `_run_one`，
+    所以「加密本金已配置」成了它的前提 —— 不播种的话这里每条用例都在测
+    fail-closed 那一条路径（实测打红 4 条）。
+
+    ⚠️ **必须用 `adapter.get_session`**（不是 `database.get_session`）：
+    `adapter.py` 顶部是 `from ...database import get_session`（**模块级绑定**），
+    它拿的是**原始函数对象**；而 `mem_db` 的 `monkeypatch.setattr(db, "get_session", …)`
+    只换掉模块属性。所以：
+      - adapter 读的是**根 conftest 那个文件库**；
+      - 而 `from ...database import get_session` 在 fixture 里**call 时解析**，
+        若 `mem_db` 先跑就会拿到**内存库** —— 种子播进内存库、adapter 读文件库，
+        看起来就是「播了种还是 fail-closed」（实测踩到）。
+    直接借 adapter 自己那个绑定，就一定是同一个库。
+    """
+    from data_engine.storage.models import UserSettings
+    from trading_engine.risk.adapter import get_session
+    s = get_session()
+    try:
+        row = s.query(UserSettings).filter(
+            UserSettings.key == "capital_crypto").first()
+        if row is None:
+            s.add(UserSettings(key="capital_crypto", value="5000"))
+        else:
+            row.value = "5000"
+        s.commit()
+    finally:
+        s.close()
+    yield
+    s = get_session()
+    try:
+        row = s.query(UserSettings).filter(
+            UserSettings.key == "capital_crypto").first()
+        if row is not None:
+            row.value = ""          # 回到未配置，别污染别的文件
+        s.commit()
+    finally:
+        s.close()
+
+
 @pytest.fixture
 def mem_db(monkeypatch):
     from sqlalchemy import create_engine

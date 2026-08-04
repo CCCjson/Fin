@@ -99,6 +99,23 @@ class CryptoStrategyEngine:
         spec = spec_from_row(row)
         broker, broker_info = self._broker_and_info(has_key_required=(row.mode == "live"))
         capital = self._capital(spec, broker_info)
+        if capital is None:
+            # 🔒 **算不出资金就不跑**（Jason 2026-08-04：未配置的市场 fail-closed）。
+            #    ⛔ 别回落到 `get_total_capital()` —— 那是 A 股口径的人民币，本文件
+            #    下面那段血泪注释记着：口径混用会让 live 每笔 BUY 恒被 blocked_risk。
+            #    ⚠️ 必须**在熔断判定之前** return：`check_daily_loss` 拿 capital 当分母，
+            #    0/None 进去会返回「资金口径未知，当日熔断跳过」，然后每个币回一句
+            #    「仓位换算为 0」—— **停摆了，但屏幕上一个字都没提本金**。
+            #    ⭐ 两种原因要说不同的话：没填 vs 账户取不到值。
+            reason = ("币安账户总值取不到或为 0（这条策略按 real_total_value 定仓位）"
+                      "—— 先确认账户和 API key。"
+                      if spec.capital_basis == "real_total_value" else
+                      "加密还没配置本金 —— 去设置页填「加密本金」。在那之前这条策略不下单。")
+            logger.warning(f"[crypto-engine] {row.strategy_id} 跳过：{reason}")
+            self._log_run(row.strategy_id, "skipped", mode=row.mode,
+                          detail={"capital": reason})
+            self._touch(row.strategy_id)
+            return
 
         # 当日亏损熔断（引擎级，权威）
         realized = self._realized_today()
@@ -266,17 +283,32 @@ class CryptoStrategyEngine:
         if has_key_required:
             raise RuntimeError("live 策略需要币安 key 且连接成功")
         # 无 key：paper 退化为「假设空仓 + 配置资金」
-        from trading_engine.risk.adapter import get_total_capital
-        cap = get_total_capital()
+        # ⚠️ 未配置本金时给 0：`_run_one` 会在 `_capital()` 那一步 fail-closed 返回，
+        #    这里的 0 只是让 broker_info 形状完整，不会被拿去下单。
+        from common.market import CRYPTO
+        from trading_engine.risk.adapter import get_market_capital
+        cap = float(get_market_capital(CRYPTO) or 0.0)
         return None, {"cash": cap, "market_value": 0.0, "total_value": cap,
                       "unrealized_pnl": 0.0, "positions": {},
                       "recent_closed_pnls": [], "last_loss_date": None}
 
-    def _capital(self, spec, broker_info) -> float:
+    def _capital(self, spec, broker_info) -> float | None:
+        """这条策略能动多少钱。**未配置本金返回 None**（调用方 fail-closed）。
+
+        🔀 2026-08-04 起 `config` 口径取的是**加密本金**（`capital_crypto`），
+        不再是那个全局「总资金」——后者是 A 股口径的人民币，见下面 `_plan` 里
+        那段注释记的实锤事故。
+        ⚠️ `real_total_value` 这条腿不变：它取的是币安账户真实总值，本来就没问题。
+        """
         if spec.capital_basis == "real_total_value":
-            return float((broker_info or {}).get("total_value") or 0.0)
-        from trading_engine.risk.adapter import get_total_capital
-        return get_total_capital()
+            # 🔴 取不到就回 None，⛔ 别回 0.0：0 会越过 `is None` 那道闸，然后
+            #    `check_daily_loss` 判「资金口径未知」放行、每个币回「仓位换算为 0」——
+            #    **停摆了，而 run 行里一个字都没提资金**。这是最难查的那种停摆。
+            real = float((broker_info or {}).get("total_value") or 0.0)
+            return real if real > 0 else None
+        from common.market import CRYPTO
+        from trading_engine.risk.adapter import get_market_capital
+        return get_market_capital(CRYPTO)
 
     def _current_pct(self, symbol, broker_info) -> float:
         total = float((broker_info or {}).get("total_value") or 0.0)

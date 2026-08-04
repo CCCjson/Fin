@@ -47,7 +47,7 @@
       要点：**一个消费方都不迁**，`get_total_capital()` 行为必须一行不变。
       未配置 = `None` ≠ 0，⛔ 不回落到任何全局值。
 
-- [ ] 03c-2 迁策略侧三个消费方：股票调度器 / crypto 引擎 `_capital` / `_capital_basis` —
+- [x] 03c-2 迁策略侧三个消费方：股票调度器 / crypto 引擎 `_capital` / `_capital_basis` —
       验收：`cd backend && conda run -n quant python -m pytest tests/test_market_capital.py tests/crypto_strategy/ tests/test_strategy_runtime.py tests/test_stock_scheduler_and_ledger.py -q`
       要点：🔴 **未配置的市场 fail-closed**（策略不跑），⛔ 不许回落。
       ⚠️ `_capital_basis` 的 docstring 明写「所有策略共用同一个分母」是刻意的 ——
@@ -58,6 +58,10 @@
       要点：🔴 **必读 memory `risk-total-position-floor`**（`max(总仓位上限, 单股上限)`
       会静默撤销 20% 现金保护，那个坑被复制过三份 + 有 AST 门禁抓第四份）。
       ⚠️ 迁完才能删 `get_total_capital()`，删之前它必须一个消费方都不剩。
+      🔴 **03c-2 留下的接缝，这一轮必须收**：`trading_engine/brokers/paper_broker.py`
+      的初始现金还是 `get_total_capital()`（全局 5000），而仓位换算已经按分市场本金算了 ——
+      Jason 一填 `capital_a_share=100000`（fail-closed 逼他必须填），股票 BUY 就会成片
+      「预算不足 / blocked_risk」。**别把它当策略 bug 查**，是这道口径缝。
 
 - [ ] 04 日收益序列纳入浮动盈亏，修掉「偏袒亏了死扛」的系统性偏差 —
       验收：`cd backend && conda run -n quant python -m pytest tests/crypto_strategy/test_performance.py tests/crypto_strategy/test_arena.py -q`
