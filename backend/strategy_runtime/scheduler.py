@@ -108,7 +108,21 @@ class StockStrategyScheduler:
         #    ⚠️ 这条要在**日切之前**判：日切会解冻 T+1 持仓，是有副作用的动作，
         #    不该为一个根本不会跑的 tick 做。
         from common.market import label_of
+        from strategy_runtime.stock_adapter import live_broker_for
         from trading_engine.risk.adapter import get_market_capital
+
+        # 🔒 **没接真券商的股票市场不跑 live**（与 `service.arm` 同一判据）。
+        #    arm 那道闸只管**新的**上线动作，管不到已经是 `mode="live"` 的存量行
+        #    （本轮之前 arm 的、或直接改库改出来的）—— 它们每 tick 都会往
+        #    `strategy_trades` 写 `mode="live"` 的成交，而成交其实是纸面的，
+        #    S4 的提案打分会拿它当**真钱证据**。⛔ 假真钱战绩比没有战绩糟得多。
+        if (row.mode or "paper") == "live" and live_broker_for(market) is None:
+            logger.warning(f"[stock-sched] {row.strategy_id} 跳过："
+                           f"{label_of(market)}还没接真券商，不跑 live")
+            return {"strategy_id": row.strategy_id,
+                    "skipped": (f"{label_of(market)}还没接真券商，这条 live 策略不跑 —— "
+                                f"跑了也只是纸面成交，却会记成真钱战绩。"
+                                f"要观察请改成纸面模式。")}
 
         capital = get_market_capital(market)
         if capital is None:
@@ -185,11 +199,21 @@ class StockStrategyScheduler:
 
     @staticmethod
     def _adapter_for(spec):
-        from strategy_runtime.stock_adapter import StockAdapter
+        from strategy_runtime.stock_adapter import StockAdapter, live_broker_for
         from trading_engine.brokers.paper_broker import get_paper_broker
 
-        # ⚠️ 目前只有 PaperBroker。真券商是可插拔后端（Jason 2026-08-02：
-        #    先建地基、券商后接）——到时只改这一处，执行器一行不用动。
+        # ⚠️ 真券商是可插拔后端（Jason 2026-08-02：先建地基、券商后接）。
+        #    开关点在 `live_broker_for`（**唯一判据**，`service.arm` 那道闸读的是
+        #    同一个函数）——它一旦返回实例，这里自动改用它，执行器一行不用动。
+        #
+        # 🔴 **`mode` 这一条不能少**：`paper` 和 `live` 的区别**全在 broker**
+        #    （`executor.run_tick` 的原话），这一层不判的话，真券商上线那天
+        #    所有纸面策略会立刻拿真钱下单 —— 纸面策略正是那些**还没验证过**的。
+        #    ⛔ 别为了「只改一个函数」的干净把这个判据省掉。
+        if spec.mode == "live":
+            live = live_broker_for(spec.market)
+            if live is not None:
+                return StockAdapter(live).for_spec(spec)
         # 🔒 **按市场取**：一个市场一个现金池。发同一个全局实例的话，A 股和美股
         #    共用一笔钱 —— 先跑的那个市场把现金买光，另一个市场就静默下不出单。
         #    ⚠️ 本金未配置时 `get_paper_broker` 会抛，但 `tick_one` 上面那道闸

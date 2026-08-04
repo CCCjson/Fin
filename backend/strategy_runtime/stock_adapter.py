@@ -117,3 +117,26 @@ class StockAdapter:
 def market_of(symbol: str) -> str:
     """按标的推断市场（全项目唯一的后缀推断实现）。"""
     return infer_market_from_symbol(symbol)
+
+
+def live_broker_for(market: str) -> Any | None:
+    """这个**股票**市场的真券商；还没接就返回 `None`。
+
+    🔒 **唯一开关点**：真券商到位时只改这一个函数 —— 返回那个 broker 实例，
+    `scheduler._adapter_for` 会自动改用它、`service.arm` 那道闸也自动放行。
+    两个消费方共用同一个判据，是为了让「能不能上 live」和「实际用哪个 broker」
+    **不可能各说各话**。
+
+    🔴 **但「只改这一个函数」不等于「改完就全自动了」**：`_adapter_for` 还会判
+    `spec.mode == "live"`，`mode="paper"` 的策略**永远走 PaperBroker**。
+    ⛔ 别把那个 mode 判据当成冗余删掉 —— 纸面策略正是那些还没验证过的，
+    删了它真券商上线当天它们会一起拿真钱下单。
+
+    🔴 为什么需要这道闸：`_adapter_for` 现在永远发 `PaperBroker`，所以把一条股票
+    策略 arm 到 live，成交是**纸面的**、却会以 `mode="live"` 落进台账 ——
+    S4 的提案打分会拿它当**真钱证据**，竞技场也会拿它当卫冕者的战绩。
+    ⛔ 这不是「保守起见先别上线」，是**堵住假数据**。
+
+    ⚠️ 只管股票。crypto 有币安真券商，不走这里。
+    """
+    return None

@@ -540,12 +540,20 @@ def test_legacy_null_market_is_crypto(db):
     assert arena.evaluate_arena(market="a_share")["champion"] is None
 
 
-def test_arming_in_one_market_does_not_demote_another(db):
-    """🔴 **这条是分族的地基**：arm 一条 A 股策略，不许把正在跑真钱的币策略停掉。"""
+def test_arming_in_one_market_does_not_demote_another(db, monkeypatch):
+    """🔴 **这条是分族的地基**：arm 一条 A 股策略，不许把正在跑真钱的币策略停掉。
+
+    ⚠️ 任务 10 之后股票没接真券商就 arm 不到 live 了，所以这里**注入一个假券商**
+    把场景还原出来 —— 要测的不变式（跨市场不互相退位）没变，变的只是前置条件。
+    ⛔ 别改成 `enable_paper` 绕过去：`_supersede_siblings` 只有 `target_mode="live"`
+    那条分支才有跨家族的 `or_`，换成 paper 就测不到真正危险的那条路径了。
+    """
+    import strategy_runtime.stock_adapter as sa
     from crypto_strategy.service import crypto_strategy_service as svc
     from data_engine.storage.database import get_session
     from data_engine.storage.models import CryptoStrategy
 
+    monkeypatch.setattr(sa, "live_broker_for", lambda market: object())
     crypto_live = _mk("币卫冕者", enabled=1, mode="live", status="armed")
     stock = _mk("A股新秀", market="a_share", backtest_passed=1)
     svc.arm(stock)

@@ -516,8 +516,13 @@ def test_scheduler_hands_each_strategy_its_own_market_broker(clean, fresh_broker
     _set("capital_a_share", "100000")
     _set("capital_us_stock", "20000")
 
-    a_spec = type("S", (), {"market": "a_share", "interval_minutes": 30})()
-    u_spec = type("S", (), {"market": "us_stock", "interval_minutes": 30})()
+    # ⚠️ `mode` 不可省：`_adapter_for` 按它决定走真券商还是纸面。
+    #    真实 spec 一定带（`CryptoStrategySpec.mode` 是有默认值的 Literal），
+    #    所以源码**刻意不用 `getattr` 兜底** —— 没有 mode 的 spec 是 bug。
+    a_spec = type("S", (), {"market": "a_share", "mode": "paper",
+                            "interval_minutes": 30})()
+    u_spec = type("S", (), {"market": "us_stock", "mode": "paper",
+                            "interval_minutes": 30})()
 
     a_adapter = StockStrategyScheduler._adapter_for(a_spec)
     u_adapter = StockStrategyScheduler._adapter_for(u_spec)
@@ -560,3 +565,81 @@ def test_verdict_reads_the_entry_gate_reason(clean):
     row = type("R", (), {"status": "armed", "halted_reason": None})()
     v = perf._verdict(row, runs, {}, 0, {"basis": "none", "reason": "x"})
     assert "还没配置本金" in v
+
+
+# ── 任务 10：没接真券商时不许跑 live ──────────────────────────────────────
+
+
+def test_paper_strategy_never_touches_a_real_broker(clean, fresh_brokers,
+                                                    monkeypatch):
+    """🔴 真券商到位那天，`mode="paper"` 的策略**必须还是走纸面**。
+
+    `paper` 和 `live` 的区别**全在 broker**（`executor.run_tick` 的原话），
+    这一层不判 mode 的话，接上券商当天所有纸面策略会一起拿真钱下单 ——
+    而纸面策略正是那些**还没验证过**的。
+    """
+    import strategy_runtime.stock_adapter as sa
+    from strategy_runtime.scheduler import StockStrategyScheduler
+    from trading_engine.brokers.paper_broker import get_paper_broker
+
+    _set("capital_a_share", "100000")
+    real = object()
+    monkeypatch.setattr(sa, "live_broker_for", lambda market: real)
+
+    paper_spec = type("S", (), {"market": "a_share", "mode": "paper",
+                                "interval_minutes": 30})()
+    live_spec = type("S", (), {"market": "a_share", "mode": "live",
+                               "interval_minutes": 30})()
+
+    assert StockStrategyScheduler._adapter_for(paper_spec).broker is \
+        get_paper_broker("a_share"), "纸面策略被塞了真券商"
+    assert StockStrategyScheduler._adapter_for(live_spec).broker is real
+
+
+def test_existing_live_stock_row_is_skipped_at_runtime(clean):
+    """🔴 arm 那道闸管不到**存量** `mode="live"` 的行，运行时这道才管得到。
+
+    存量行每 tick 都会往 `strategy_trades` 写 `mode="live"` 的成交，而成交其实是
+    纸面的 —— S4 的提案打分会拿它当真钱证据。
+    """
+    from unittest.mock import patch
+
+    from strategy_runtime.scheduler import StockStrategyScheduler
+
+    _set("capital_a_share", "100000")
+    row = type("R", (), {"strategy_id": "CS-L", "market": "a_share",
+                         "mode": "live", "interval_minutes": 30,
+                         "last_run_at": None})()
+    sch = StockStrategyScheduler()
+    with patch("strategy_runtime.scheduler.is_open", return_value=True), \
+         patch("crypto_strategy.service.spec_from_row") as spec_from_row, \
+         patch("strategy_runtime.executor.run_tick") as run_tick:
+        spec_from_row.return_value = type("S", (), {"market": "a_share",
+                                                    "mode": "live",
+                                                    "interval_minutes": 30})()
+        out = sch.tick_one(row)
+    assert not run_tick.called, "没接券商却把 live 策略跑起来了"
+    assert "真券商" in out["skipped"]
+
+
+def test_the_runtime_gate_lets_paper_through(clean):
+    """⛔ 这道闸只挡 live —— 挡了 paper 股票策略就彻底不跑了。"""
+    from unittest.mock import patch
+
+    from strategy_runtime.scheduler import StockStrategyScheduler
+
+    _set("capital_a_share", "100000")
+    row = type("R", (), {"strategy_id": "CS-P", "market": "a_share",
+                         "mode": "paper", "interval_minutes": 30,
+                         "last_run_at": None})()
+    sch = StockStrategyScheduler()
+    with patch("strategy_runtime.scheduler.is_open", return_value=True), \
+         patch("crypto_strategy.service.spec_from_row") as spec_from_row, \
+         patch.object(StockStrategyScheduler, "_adapter_for"), \
+         patch("strategy_runtime.executor.run_tick",
+               return_value={"decisions": [], "tally": {}}) as run_tick:
+        spec_from_row.return_value = type("S", (), {"market": "a_share",
+                                                    "mode": "paper",
+                                                    "interval_minutes": 30})()
+        sch.tick_one(row)
+    assert run_tick.called, "纸面股票策略被这道闸挡住了"

@@ -95,7 +95,7 @@ gh auth switch --user CCCjson && git push https://github.com/CCCjson/Fin.git fea
 
 ## B. 数据真伪（不做的话战绩是假的）
 
-- [ ] **10 股票没接真券商时，不许 arm 到 live** ｜ 改动 ≤ 3 文件
+- [x] **10 股票没接真券商时，不许 arm 到 live** ｜ 改动 3 源码文件 ✅ 已完成
       验收：`pytest tests/test_stock_scheduler_and_ledger.py tests/crypto_strategy/test_versioning.py -q`
       做什么：`crypto_strategy/service.py::arm` 对**股票市场**加一道 fail-closed 拦截：
       真券商未接入时拒绝 `mode=live`，话术直说「股票还没接真券商」。

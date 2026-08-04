@@ -256,6 +256,38 @@ def _assert_armable(row) -> None:
             f"{row.strategy_id} 已退役，不能直接上线。要重新启用请先基于它 fork 一个新版本。")
 
 
+def _assert_live_broker(row) -> None:
+    """股票市场没接真券商就**不许 arm 到 live**（fail-closed）。
+
+    🔴 守的是**数据真伪，不是资金安全**：`scheduler._adapter_for` 现在永远发
+    `PaperBroker`，所以一条 arm 到 live 的股票策略，成交是纸面的、却会以
+    `mode="live"` 落进台账 —— S4 的提案打分会拿它当**真钱证据**（纸面与真钱
+    是分桶不合并的，混进去就再也分不开），竞技场也会拿它当卫冕者的战绩。
+
+    ⚠️ 判据走 `live_broker_for`（`strategy_runtime/stock_adapter.py`），
+    与调度器挑 broker 用的是**同一个函数** —— 真券商到位时改那一处，这道闸
+    自动放行。⛔ 别在这里写死一个「股票永远拒绝」，那样接上券商也解不开。
+
+    ⚠️ `strategy_market()` 是「`market` 为 NULL = crypto」的唯一实现 ——
+    ⛔ 别直接读 `row.market`：存量 crypto 策略那一列是空的，会被这道闸误伤。
+    """
+    from crypto_strategy.performance import strategy_market
+    from strategy_runtime.stock_adapter import live_broker_for
+
+    market = strategy_market(row)
+    if market == CRYPTO:
+        return                       # crypto 走币安真券商，不归这道闸管
+    if live_broker_for(market) is not None:
+        return
+
+    from common.market import label_of
+    raise StrategyError(
+        f"{label_of(market)}还没接真券商，不能上线到 live。"
+        f"现在下单走的是纸面撮合，成交却会记成 mode=\"live\" 的真钱战绩 —— "
+        f"提案打分和竞技场都会被这批假数据带偏。"
+        f"想让它跑起来请用「纸面启用」（enable_paper）。")
+
+
 def backtest_metrics_json(bt: dict[str, Any]) -> str:
     """回测结果 → `backtest_metrics` 列的 JSON。**只此一处**，别再抄第二份。
 
@@ -482,11 +514,17 @@ class CryptoStrategyService:
         ⭐ **同 family 永远最多一个 armed**（S2）：arm 一个版本时，同族其它在跑的版本
         自动置 `superseded` + `enabled=0`。不这么做的话 v1 和 v2 会同时对同一批币下单
         （`has_open` 的去重是按 strategy_id 的，拦不住跨版本重复）。
+
+        🔒 **股票市场没接真券商时这里会拒绝**（见 `_assert_live_broker`）——
+        守的是数据真伪：纸面成交记成 `mode="live"` 会污染提案打分和竞技场战绩。
         """
         session = self._session()
         try:
             row = self._get_row(session, strategy_id)
             _assert_armable(row)
+            # 🔒 在**任何写动作之前**判：下面 `_supersede_siblings` 会把同族其它版本
+            #    停跑，闸开晚一步就变成「上线失败，但把在跑的那条顺手停了」。
+            _assert_live_broker(row)
             # ⚠️ 顺序不能反：先记下「谁在跑」，再让它退位。
             prev_live = _current_live(session, row)
             challengers = _challenger_count(session, row)

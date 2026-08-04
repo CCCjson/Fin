@@ -505,3 +505,102 @@ def test_market_survives_a_round_trip_through_the_db(clean):
     assert back.market == "a_share"
     # 读回来之后字段表也要跟着对 —— 否则条件会静默取不到值
     assert back.owner_of("600519.SH") is not None
+
+
+# ── 任务 10：股票没接真券商时不许 arm 到 live ────────────────────────────────
+#
+# 🔴 守的是**数据真伪，不是资金安全**：`scheduler._adapter_for` 现在永远发
+#    `PaperBroker`，一条 arm 到 live 的股票策略，成交是纸面的、却会以
+#    `mode="live"` 落进台账 —— S4 的提案打分会拿它当真钱证据。
+
+
+def _stock_spec(**over):
+    from crypto_intel_engine.dsl import CryptoStrategySpec
+
+    kw = dict(
+        name="A股策略", market="a_share",
+        universe={"symbols": ["600519.SH"]},
+        entry_rules={"when": {"all_of": [
+            {"field": "valuation.pe_ttm", "op": "lt", "value": 20}]}},
+        exit_rules={"when": {"all_of": [
+            {"field": "composite", "op": "lt", "value": 40}]}},
+        guardrails=_SPEC["guardrails"])
+    kw.update(over)
+    return CryptoStrategySpec(**kw)
+
+
+def _stock_strategy() -> dict:
+    return svc.compile_and_persist(_stock_spec(), do_backtest=False)
+
+
+def test_stock_cannot_be_armed_to_live_without_a_real_broker(clean):
+    """🔴 拒绝，而且**说得出为什么**和**该怎么办**。"""
+    r = _stock_strategy()
+    with pytest.raises(StrategyError) as ei:
+        svc.arm(r["strategy_id"])
+    msg = str(ei.value)
+    assert "真券商" in msg, "没说清是缺券商"
+    assert "enable_paper" in msg or "纸面启用" in msg, "拒了却没告诉人该走哪条路"
+
+
+def test_the_gate_fires_before_any_write(clean, monkeypatch):
+    """🔴 闸必须在**任何写动作之前**。
+
+    `arm` 里 `_supersede_siblings` 会把同族其它版本停跑 —— 闸开晚一步就变成
+    「上线失败，但把正在跑的那条顺手停了」。
+
+    ⚠️ **不能靠「查库看看有没有被改」来测这件事**：`arm` 的 `finally: session.close()`
+    之前没有 commit，SQLAlchemy 会把未提交的 ORM 变更整个回滚 —— 于是把闸挪到
+    `_supersede_siblings` **之后**（只要还在 commit 之前）那种查库式断言照样是绿的，
+    读起来却像钉死了顺序。所以这里直接让退位动作**一被调用就炸**。
+    """
+    from crypto_strategy import service as svc_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("闸开晚了：退位动作在拒绝之前就跑了")
+
+    monkeypatch.setattr(svc_mod, "_supersede_siblings", _boom)
+    r = _stock_strategy()
+    with pytest.raises(StrategyError):      # ⛔ 不是 AssertionError
+        svc.arm(r["strategy_id"])
+
+
+def test_paper_mode_is_still_allowed_for_stocks(clean):
+    """⛔ 这道闸只挡 live —— 挡了 paper 的话股票策略就彻底没法跑了。"""
+    r = _stock_strategy()
+    out = svc.enable_paper(r["strategy_id"])
+    assert out["mode"] == "paper"
+    assert out["enabled"] == 1
+
+
+def test_crypto_is_untouched_by_this_gate(clean):
+    """crypto 走币安真券商，⛔ 别被这道闸误伤。
+
+    ⚠️ 存量 crypto 策略的 `market` 列是 **NULL**，判据必须走
+    `strategy_market()`（「NULL = crypto」的唯一实现）而不是裸读 `row.market`。
+    """
+    r = _mk()
+    s = get_session()
+    try:
+        row = s.query(CryptoStrategy).filter(
+            CryptoStrategy.strategy_id == r["strategy_id"]).first()
+        row.market = None            # 存量行的样子
+        s.commit()
+    finally:
+        s.close()
+    out = svc.arm(r["strategy_id"])
+    assert out["mode"] == "live"
+
+
+def test_the_gate_opens_when_a_real_broker_shows_up(clean, monkeypatch):
+    """⛔ 判据不许写死成「股票永远拒绝」—— 那样接上券商也解不开。
+
+    ⭐ 同一个 `live_broker_for` 也是调度器挑 broker 的出口，所以这条同时保证了
+    「能不能上 live」和「实际用哪个 broker」不会各说各话。
+    """
+    import strategy_runtime.stock_adapter as sa
+
+    monkeypatch.setattr(sa, "live_broker_for", lambda market: object())
+    r = _stock_strategy()
+    out = svc.arm(r["strategy_id"])
+    assert out["mode"] == "live"
