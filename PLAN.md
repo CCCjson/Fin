@@ -46,23 +46,52 @@ gh auth switch --user CCCjson && git push https://github.com/CCCjson/Fin.git fea
 
 ## A. 先收缝（不做会立刻咬人）
 
-- [ ] **09（原 03c-3）迁风控那批 + 删 `get_total_capital()`** ｜ 改动 ≤ 5 文件
+> 🔄 **原任务 09 已于 2026-08-04 拆成 09a / 09b / 09c**（Jason 批准）。
+> 原因：`get_total_capital()` 实测有 **11 个消费方**（超 5 文件上限），且风控那批
+> 四处里有三处要**改语义**而不是换函数。全部实锤见 `DECISIONS.md` 同日那条。
+
+- [x] **09a 纸面账户按市场分池** ｜ 改动 4 文件 ✅ 已完成
       验收：`pytest tests/test_market_capital.py tests/test_risk_total_position_floor.py -q`
-      做什么：把最后几个消费方从 `get_total_capital()` 换成 `get_market_capital(market)`，
-      然后**删掉 `get_total_capital()`**（删之前它必须一个消费方都不剩）。
-      消费方：`trading_engine/risk/manager.py:62`、`trading_engine/position_sizing.py:74`、
-      `trading_engine/risk/adapter.py:173`、`trading_engine/brokers/paper_broker.py:21`，
-      外加只读展示那批（`recommend_engine` / `screener_engine` / `cockpit_engine` /
-      `agents/tools/trading_tools.py` / `api/routes/screener.py` / `automation/price_alert_monitor.py`）。
+      做了什么：`get_paper_broker(market)` 按市场各开一个 PaperBroker，
+      初始现金 = `get_market_capital(market)`，未配置抛 `MarketCapitalNotConfiguredError`。
+
+- [ ] **09b 风控基数分市场** ｜ 改动 ≤ 4 文件
+      🔴 **开工前必须先拿到 Jason 对下面那个问题的答复，否则停机。**
+      验收：`pytest tests/test_market_capital.py tests/test_risk_total_position_floor.py -q`
+      做什么：`build_broker_info(market)` + 持仓按市场过滤；`manager.py:62` 的
+      `max_daily_loss = capital × 3%` 改用分市场本金；`position_sizing._risk_managers`
+      的缓存键从 `pct` 变成 `(pct, market)`。
+      消费方：`trading_engine/risk/adapter.py`、`trading_engine/risk/manager.py`、
+      `trading_engine/position_sizing.py`（+ 门禁测试）。
+      ⚠️ 要决策的问题：**分市场之后「总持仓 ≤ 80% / 留 20% 现金」是每个市场各留
+      自己本金的 20%，还是仍按某种全局口径判？** 这是硬风控红线的作用域变更。
       要点：
       - 🔴 **必读 memory `risk-total-position-floor`**：`max(总仓位上限, 单股上限)` 会
         **静默撤销 20% 现金保护**，那个坑被复制过三份，有 AST 门禁抓第四份。
-      - 🔴 **03c-2 留下的接缝，这轮必须收**：`paper_broker.py` 的初始现金还是全局 5000，
-        而仓位换算已按分市场本金算 —— Jason 填了 `capital_a_share=100000` 之后
-        股票 BUY 会成片「预算不足 / blocked_risk」。**别把它当策略 bug 查。**
+      - 🔴 **「股票 BUY 成片 blocked_risk」的真凶在这一轮，不在 09a**：
+        `strategy_runtime/stock_adapter.py::broker_info()` 调的是无参
+        `build_broker_info()` → 全局 5000。执行器按分市场本金算出的单，
+        会在风控闸拿 5000 当分母判超限。**别把它当策略 bug 查。**
+      - 🔴 顺带会撞上一个更深的既有裂缝：风控闸读的持仓来自 `ManualTrade`
+        （`PortfolioCalculator`），而策略的纸面持仓在 `PaperBroker` 里 ——
+        **两套持仓**。发现要动这个就停机单列，别在这一轮里顺手改。
+      - `PortfolioCalculator.get_current_positions()` **完全不分市场**，
+        按市场过滤要新写（`common.market.infer_market_from_symbol` 现成）。
+
+- [ ] **09c 展示批迁移 + 删 `get_total_capital()`** ｜ 改动 ≤ 7 文件
+      验收：`pytest tests/test_market_capital.py -q` + 全量
+      做什么：七个只读展示方各自换成本市场本金，最后**删掉 `get_total_capital()`**
+      （删之前它必须一个消费方都不剩）。
+      消费方（行号 2026-08-04 09a 完工后重新核过）：
+      `recommend_engine/engine.py:42`、`screener_engine/service.py:146`、
+      `cockpit_engine/aggregator.py:309`、`agents/tools/trading_tools.py:120`、
+      `api/routes/screener.py:41`、`automation/price_alert_monitor.py:98`、
+      `crypto_intel_engine/cockpit.py:123`。
+      ⚠️ 每处还有一行 `import`（多在文件头），删函数时别只删调用点。
+      要点：
       - 展示类消费方**取不到本金时不许编一个数**，显示「未配置」即可。
-      - ⚠️ 消费方多但每处都只是换个函数 —— 如果发现某处需要**改逻辑**才能换，
-        那处停下来单列，别在这一轮里顺手改。
+      - ⛔ `crypto_intel_engine/cockpit.py` 那条在跑真钱，动它前先确认行为一字不变。
+      - ⚠️ 依赖 09b 定下的 `build_broker_info` 签名，别提前做。
 
 ## B. 数据真伪（不做的话战绩是假的）
 

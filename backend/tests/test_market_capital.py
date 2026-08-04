@@ -425,6 +425,124 @@ def test_health_says_capital_not_arm_status(clean):
             s.close()
 
 
+# ── 09a：纸面账户按市场分池 ────────────────────────────────────────────────
+#
+# 🔴 改之前 `get_paper_broker()` 是**一个全局单例**，初始现金取 `get_total_capital()`，
+#    却同时服务 A 股和美股两条策略线 —— 两个市场共用一笔钱（还是混币种的一笔）。
+
+
+@pytest.fixture
+def fresh_brokers():
+    """清空纸面账户注册表。
+
+    ⚠️ 注册表是**进程级**的，不清的话第一个用例建出来的账户会被后面的用例复用，
+    于是「本金改了、账户没跟着改」这类回归就测不出来了。
+    """
+    from trading_engine.brokers import paper_broker as pb
+    pb._paper_brokers.clear()
+    yield
+    pb._paper_brokers.clear()
+
+
+def test_each_market_gets_its_own_cash_pool(clean, fresh_brokers):
+    """🔴 一个市场一个现金池，初始现金 = 该市场本金。
+
+    共用一个池子的话，先跑的市场把现金买光，另一个市场就**静默**下不出单 ——
+    而且两笔钱币种都不一样，共用本身就是混币种。
+    """
+    from trading_engine.brokers.paper_broker import get_paper_broker
+
+    _set("capital_a_share", "100000")
+    _set("capital_us_stock", "20000")
+
+    a = get_paper_broker("a_share")
+    u = get_paper_broker("us_stock")
+    assert a is not u, "两个市场拿到了同一个账户"
+    assert a.initial_cash == 100000.0
+    assert u.initial_cash == 20000.0
+
+    # 同一个市场必须是同一个账户（否则持仓和现金每次调用都重置）
+    assert get_paper_broker("a_share") is a
+    # 任意写法先归一，⛔ 别因为别名多开一个池子
+    assert get_paper_broker("A股") is a
+
+
+def test_no_paper_account_without_capital(clean, fresh_brokers):
+    """🔒 没配本金就不发账户，且**说得出去哪填**。
+
+    ⛔ 回落到全局 5000 的话，美股会拿着 A 股口径的人民币当初始现金开跑，
+    不报错、不留痕，纸面战绩从第一天起就是错的。
+    """
+    from trading_engine.brokers.paper_broker import (
+        MarketCapitalNotConfiguredError,
+        get_paper_broker,
+    )
+
+    with pytest.raises(MarketCapitalNotConfiguredError) as ei:
+        get_paper_broker("us_stock")
+    assert "还没配置本金" in str(ei.value)
+    assert "设置页" in str(ei.value), "只说不给账户不够，得说去哪填"
+
+
+def test_zero_capital_still_gets_an_account(clean, fresh_brokers):
+    """⚠️ `0` 是**合法本金**（这个市场不投钱），不是「未配置」。
+
+    判据写成 `if not capital` 就会把它当没配置抛出去 —— 那是把 Jason 的一个
+    明确选择报成了配置缺失。
+
+    🔴 **必须测到「拿这个账户干活」为止**：只断言 `initial_cash` 的话，「0 合法」
+    就只在构造函数那半程成立 —— `get_account_info()` 的 `return_pct` 拿
+    `initial_cash` 当分母，实测会 `ZeroDivisionError` 一路炸到 MoneyBill 的下单预览。
+    """
+    from trading_engine.brokers.paper_broker import get_paper_broker
+
+    _set("capital_hk_stock", "0")
+    b = get_paper_broker("hk_stock")
+    assert b.initial_cash == 0.0
+    assert b.cash == 0.0
+
+    acct = b.get_account_info()          # ⛔ 别删这行：除零就在这儿
+    assert acct["cash"] == 0.0
+    # ⚠️ `None` 而不是 `0`：本金 0 的账户没有收益率这个量，
+    #    填 0 等于断言「不赚不亏」。
+    assert acct["return_pct"] is None
+
+
+def test_scheduler_hands_each_strategy_its_own_market_broker(clean, fresh_brokers):
+    """调度器必须按 spec 的市场取账户，⛔ 别再发全局单例。"""
+    from strategy_runtime.scheduler import StockStrategyScheduler
+    from trading_engine.brokers.paper_broker import get_paper_broker
+
+    _set("capital_a_share", "100000")
+    _set("capital_us_stock", "20000")
+
+    a_spec = type("S", (), {"market": "a_share", "interval_minutes": 30})()
+    u_spec = type("S", (), {"market": "us_stock", "interval_minutes": 30})()
+
+    a_adapter = StockStrategyScheduler._adapter_for(a_spec)
+    u_adapter = StockStrategyScheduler._adapter_for(u_spec)
+
+    assert a_adapter.broker is get_paper_broker("a_share")
+    assert u_adapter.broker is get_paper_broker("us_stock")
+    assert a_adapter.broker is not u_adapter.broker
+
+
+def test_chat_order_says_it_plainly_when_capital_is_missing(clean, fresh_brokers):
+    """MoneyBill 下单入口：本金没配要说人话，⛔ 别抛 traceback。
+
+    这个文件整个是 A 股口径（成交日/¥/StockInfo），所以它取的就是 A 股账户。
+    """
+    from agents.tools import trading_tools as tt
+
+    prev = tt.preview_order({"symbol": "600519.SH", "side": "buy",
+                             "quantity": 100, "price": 100.0})
+    assert "还没配置本金" in prev.get("error", "")
+
+    r = tt.place_order(symbol="600519.SH", side="buy", quantity=100, price=100.0)
+    assert r.business_result == "negative"
+    assert "还没配置本金" in (r.message or "")
+
+
 def test_verdict_reads_the_entry_gate_reason(clean):
     """⭐ 入口闸的理由就写在 run 的顶层 detail 里，必须被念出来。
 

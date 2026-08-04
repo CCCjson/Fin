@@ -46,8 +46,18 @@ def _resolve_price(symbol: str, price=None) -> float | None:
 
 
 def _paper_broker_info() -> tuple["PaperBroker", dict[str, Any]]:
+    """本文件的纸面账户。
+
+    ⚠️ 写死 `A_SHARE` 是**如实反映现状**，不是偷懒：这一整个文件都是 A 股口径
+    （成交日走 `market_today(A_SHARE)`、金额用 ¥、名称查 `StockInfo`）。
+    ⛔ 别在这儿按 symbol 推市场 —— 那会让美股的单落进 A 股的账，还带上印花税。
+    要支持别的市场得整文件一起改，不是改这一行。
+
+    🔴 本金没配时会抛 `MarketCapitalNotConfiguredError`（fail-closed），
+    调用方必须接住并说人话，别让它变成一条 traceback。
+    """
     from trading_engine.brokers.paper_broker import get_paper_broker
-    paper = get_paper_broker()
+    paper = get_paper_broker(A_SHARE)
     acct = paper.get_account_info()
     positions_map = {
         sym: {"market_value": pos.market_value, "avg_cost": pos.avg_cost,
@@ -123,7 +133,11 @@ def preview_order(args: dict) -> dict:
         return {"error": "缺少股票代码或数量"}
     if not price:
         return {"error": f"拿不到 {symbol} 的价格"}
-    _, broker_info = _paper_broker_info()
+    from trading_engine.brokers.paper_broker import MarketCapitalNotConfiguredError
+    try:
+        _, broker_info = _paper_broker_info()
+    except MarketCapitalNotConfiguredError as e:
+        return {"error": str(e)}
     passed, msgs, failed = _risk_check(symbol, action, qty, price, broker_info)
     return {
         "symbol": symbol, "action": action, "quantity": qty, "price": round(price, 3),
@@ -158,7 +172,11 @@ def place_order(symbol: str, side: str, quantity: int, price=None) -> ToolEnvelo
         return ToolEnvelope(business_result="negative", message=f"下单失败：拿不到 {symbol_n} 的价格")
 
     # 强制风控（即便已确认也不可绕过）
-    paper, broker_info = _paper_broker_info()
+    from trading_engine.brokers.paper_broker import MarketCapitalNotConfiguredError
+    try:
+        paper, broker_info = _paper_broker_info()
+    except MarketCapitalNotConfiguredError as e:
+        return ToolEnvelope(business_result="negative", message=f"下单失败：{e}")
     passed, msgs, failed = _risk_check(symbol_n, action, qty, p, broker_info)
     if not passed:
         return ToolEnvelope(business_result="negative",

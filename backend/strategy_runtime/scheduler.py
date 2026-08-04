@@ -190,7 +190,11 @@ class StockStrategyScheduler:
 
         # ⚠️ 目前只有 PaperBroker。真券商是可插拔后端（Jason 2026-08-02：
         #    先建地基、券商后接）——到时只改这一处，执行器一行不用动。
-        return StockAdapter(get_paper_broker()).for_spec(spec)
+        # 🔒 **按市场取**：一个市场一个现金池。发同一个全局实例的话，A 股和美股
+        #    共用一笔钱 —— 先跑的那个市场把现金买光，另一个市场就静默下不出单。
+        #    ⚠️ 本金未配置时 `get_paper_broker` 会抛，但 `tick_one` 上面那道闸
+        #    已经先拦下了；真抛到这儿说明有人把闸挪走了，让它响比静默好。
+        return StockAdapter(get_paper_broker(spec.market)).for_spec(spec)
 
     def _settle_if_new_day(self, market: str, adapter) -> None:
         """跨到新的交易日就解冻一次 T+1 持仓。

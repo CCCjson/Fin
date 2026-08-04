@@ -107,6 +107,35 @@
 - **影响范围**：`trading_engine/risk/adapter.py`、`UserSettings`、
   `crypto_strategy/performance._capital_basis`、`strategy_runtime/scheduler`。
 
+### 2026-08-04 — 任务 09 拆成 09a/09b/09c；纸面账户先按市场分池（Jason 批准）
+- **决定**：原任务 09（迁风控那批 + 删 `get_total_capital()`）拆三轮，本轮只做 **09a**：
+  `get_paper_broker(market)` 按市场各开一个 `PaperBroker`，初始现金 = 该市场本金，
+  未配置抛 `MarketCapitalNotConfiguredError`（fail-closed）。
+- **理由**：勘察实测 `get_total_capital()` 有 **11 个消费方**（不是任务卡预估的 5 文件内），
+  且风控那批四处里**三处要改语义而不是换函数**：
+  (a) `build_broker_info()` 的 `cash = 本金 − 全部持仓成本`，而 `PortfolioCalculator`
+  **完全不分市场** —— 分子换成 A 股本金、分母仍含港美股，算出的 `cash` 直接喂硬风控；
+  (b) `get_paper_broker()` 是全局单例、一个现金池，却同时服务 A 股和美股两条策略线；
+  (c) `max_daily_loss = capital × 3%` 是**建 RiskManager 时烤进去的**，而
+  `position_sizing._risk_managers` 只按 pct 缓存 —— 不改键的话第一个市场的限额
+  会被第二个市场静默复用。
+  09a 是三者里唯一**不触碰仓位上限语义**的，所以先做。
+- **否决了**：(a) 一轮做完 11 个文件 —— 单次 diff 同时覆盖硬风控和正在跑真钱的
+  crypto 路径，审核范围失控、出问题只能整轮回滚；(b) 只迁展示批、风控批留着全局值 ——
+  `get_total_capital()` 删不掉，且最咬人的部分被推到以后。
+- **⚠️ 诚实记一笔**：09a **并不能**让「股票 BUY 成片 blocked_risk」消失。
+  真凶是 `stock_adapter.broker_info()` → 无参 `build_broker_info()` → 全局 5000，
+  那是 09b。09a 修的是「broker 自己的现金池是混币种共用的」这个独立问题 ——
+  必要但不充分。
+- **🔴 09b 开工前必须先拿到的答复**：分市场之后「总持仓 ≤ 80% / 留 20% 现金」
+  是**每个市场各留自己本金的 20%**，还是仍按某种全局口径判？倾向前者
+  （与「每市场独立本金、不折算汇率」一致，且后者需要一个已被退役的跨币种总量），
+  但这是硬风控红线的作用域，得 Jason 点头。
+- **⭐ 顺带修掉的**：日切 `settle_new_day()` 以前打在共享 broker 上 ——
+  任一市场跨日会把**所有市场**的 T+1 持仓一起解冻。分池后自然按市场隔离。
+- **影响范围**：`trading_engine/brokers/paper_broker.py`、`strategy_runtime/scheduler.py`、
+  `agents/tools/trading_tools.py`、`tests/test_market_capital.py`。
+
 ### 2026-08-04 — 「总资金」这个概念**整个退役**，只留分市场本金（Jason 拍板）
 - **决定**：三条一起拍的：
   1. **不要全局「总资金」**。`get_total_capital()` 逐步退役，代码一律用**分市场本金**。

@@ -9,18 +9,57 @@ from loguru import logger
 from .base import BaseBroker, BrokerOrder, BrokerPosition, OrderStatus
 
 
-# 全局 PaperBroker 单例（进程内共享）——从已删除的 automation/pending_order_manager.py 迁来，
-# PaperBroker 的天然归宿。仍被 agents/tools/trading_tools.py（A 股纸面手动下单聊天工具）复用。
-_paper_broker: Optional["PaperBroker"] = None
+# 进程内的纸面账户注册表：**一个市场一个**（key 是 canonical 市场名）。
+# 从已删除的 automation/pending_order_manager.py 迁来，PaperBroker 的天然归宿。
+# 消费方：agents/tools/trading_tools.py（A 股纸面手动下单聊天工具）、
+# strategy_runtime/scheduler.py（股票策略调度器）。
+_paper_brokers: Dict[str, "PaperBroker"] = {}
 
 
-def get_paper_broker() -> "PaperBroker":
-    """获取全局 PaperBroker 实例。"""
-    global _paper_broker
-    if _paper_broker is None:
-        from trading_engine.risk.adapter import get_total_capital
-        _paper_broker = PaperBroker(initial_cash=get_total_capital())
-    return _paper_broker
+class MarketCapitalNotConfiguredError(RuntimeError):
+    """这个市场还没在设置页填本金 —— 不发纸面账户（fail-closed）。
+
+    ⛔ **别把它改成「回落到全局总资金」**：那样「没配置」和「配置成 5000」就再也
+    分不出来了，而那个 5000 是 **A 股口径的人民币** —— 拿它给美股当初始现金，
+    算出来的每一笔仓位都是错的口径，且不会有任何报错。
+    （Jason 2026-08-04 拍板：强制手填、未配置的市场 fail-closed。）
+    """
+
+    def __init__(self, market: str) -> None:
+        from common.market import label_of
+        self.market = market
+        name = label_of(market)
+        super().__init__(f"{name}还没配置本金 —— 去设置页填「{name}本金」。"
+                         f"在那之前这个市场一单都不会下。")
+
+
+def get_paper_broker(market: str) -> "PaperBroker":
+    """取这个市场的纸面账户 —— **一个市场一个现金池，各算各的**。
+
+    🔴 2026-08-04 之前这里是**一个全局单例**，初始现金取 `get_total_capital()`，
+    却同时服务 A 股和美股两条策略线（`scheduler._adapter_for` 给所有股票策略发
+    同一个实例）—— 等于两个市场共用一笔钱：先跑的那个市场把现金买光，另一个
+    市场的单子就静默下不出去，而账面上完全看不出是这个原因。
+    各市场是 CNY/HKD/USD/USDT，共用一个现金池本身就是混币种。
+
+    初始现金 = 该市场本金（`get_market_capital`）。未配置就抛
+    `MarketCapitalNotConfiguredError`，⛔ 不回落到任何全局值。
+
+    ⚠️ 判据是 `is None` 而**不是 falsy**：`0` 是合法本金（「这个市场不投钱」），
+    写成 `if not capital` 会把它误判成未配置。
+    """
+    from common.market import normalize_market
+    from trading_engine.risk.adapter import get_market_capital
+
+    key = normalize_market(market, default=market)
+    broker = _paper_brokers.get(key)
+    if broker is None:
+        capital = get_market_capital(key)
+        if capital is None:
+            raise MarketCapitalNotConfiguredError(key)
+        broker = PaperBroker(initial_cash=capital)
+        _paper_brokers[key] = broker
+    return broker
 
 
 class PaperBroker(BaseBroker):
@@ -75,10 +114,22 @@ class PaperBroker(BaseBroker):
             pos.unrealized_pnl = pos.market_value - (pos.quantity * pos.avg_cost)
 
     def get_account_info(self) -> dict:
-        """获取账户信息"""
+        """获取账户信息。
+
+        🔴 `return_pct` 在本金为 0 时是 **None，不是 0**：
+        `0` 会被读成「不赚不亏」，那是一句关于业绩的**断言**；而本金 0 的账户
+        压根没有收益率这个量。⛔ 别为了「类型干净」拿 0 顶替（S6 教训：
+        取不到的值留 None，别静默当成一个真实数字）。
+
+        ⚠️ 本金 0 是**合法状态**（Jason 在设置页把某个市场填 0 = 这个市场不投钱），
+        所以这条分支是常规路径，不是异常兜底 —— 除零会一路炸到 MoneyBill 的
+        下单预览上（`agents/tools/trading_tools.py::_paper_broker_info`）。
+        """
         total_market_value = sum(pos.market_value for pos in self.positions.values())
         total_value = self.cash + total_market_value
         total_pnl = sum(pos.unrealized_pnl for pos in self.positions.values())
+        return_pct = (((total_value - self.initial_cash) / self.initial_cash) * 100
+                      if self.initial_cash > 0 else None)
 
         return {
             "cash": self.cash,
@@ -88,7 +139,7 @@ class PaperBroker(BaseBroker):
             "total_commission": self.total_commission,
             "total_trades": self.total_trades,
             "initial_cash": self.initial_cash,
-            "return_pct": ((total_value - self.initial_cash) / self.initial_cash) * 100,
+            "return_pct": return_pct,
             "positions": self.positions,
         }
 
