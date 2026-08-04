@@ -347,6 +347,15 @@ _DEFAULT_SETTINGS = {
     # ⚠️ 别写「1.0 = all-in」：总仓位 ≤ 80%（留 20% 现金）是抬不动的硬底线，
     # 设 1.0 只等于「取消单股约束」，实际上界仍是 80%（见 trading_engine/risk/adapter.py）。
     "max_position_pct": {"value": "0.2", "description": "单股最大仓位占比（集中度）：0.2 分散 / 0.5 集中 / 1.0 取消单股约束（上界仍受总仓位 80% 硬底线约束，20% 现金必留）"},
+    # ── 分市场本金（S5 03c，Jason 2026-08-04 拍板）──────────────────────────
+    # 🔴 **值刻意留空 = 未配置**。这不是「自动迁移」：不往任何市场摊那个全局 5000，
+    #    也不回落到它 —— 未配置的市场 fail-closed（策略不跑），这样「谁还没填」
+    #    一眼看得见。建行只是为了让设置页能写（PUT 不存在的 key 会 404）。
+    # ⚠️ 各市场币种不同（CNY/HKD/USD/USDT），**不可相加**，所以没有「总资金」那一行。
+    "capital_a_share": {"value": "", "description": "A股本金（CNY）。留空=未配置，该市场策略不跑"},
+    "capital_hk_stock": {"value": "", "description": "港股本金（HKD）。留空=未配置，该市场策略不跑"},
+    "capital_us_stock": {"value": "", "description": "美股本金（USD）。留空=未配置，该市场策略不跑"},
+    "capital_crypto": {"value": "", "description": "加密本金（USDT）。留空=未配置，该市场策略不跑"},
 }
 
 
@@ -369,6 +378,27 @@ def _init_default_settings():
 
 # 模块导入时自动初始化
 _init_default_settings()
+
+
+@router.get("/market-capitals", summary="分市场本金现状")
+async def market_capitals():
+    """四个市场的本金（S5 03c）。**未配置的 `value` 是 `null`，不是 0。**
+
+    ⛔ **没有「合计」字段，是刻意的**：四个市场是 CNY/HKD/USD/USDT，
+    求和就是混币种（「每市场独立本金、不折算汇率」是投资组合模块已拍的板）。
+    这个数一旦出现在接口里，早晚会有人拿它当分母。
+
+    ⭐ 键名/币种/中文名都由后端给 —— 前端再抄一份的话，加市场或改名时会分叉。
+    """
+    from common.market import CANONICAL_MARKETS, currency_of, label_of
+    from trading_engine.risk.adapter import capital_key, get_market_capital
+
+    # ⛔ 币种/中文名都走 `common/market.py` 的真源，别在这儿拼第二张表。
+    return {"markets": [
+        {"market": m, "label": label_of(m), "currency": currency_of(m),
+         "key": capital_key(m), "value": get_market_capital(m)}
+        for m in CANONICAL_MARKETS
+    ]}
 
 
 @router.get("/settings", summary="获取所有用户设置")

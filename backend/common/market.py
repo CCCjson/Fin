@@ -25,9 +25,20 @@ CANONICAL_MARKETS = (A_SHARE, HK_STOCK, US_STOCK, CRYPTO)
 MARKET_LABELS = {A_SHARE: "A股", HK_STOCK: "港股", US_STOCK: "美股", CRYPTO: "加密"}
 
 
+# canonical → 计价币种。⚠️ 各市场币种不同，所以各市场的钱**不可相加也不可比大小**
+# （「每市场独立本金、不折算汇率」是投资组合模块已拍的板）。
+MARKET_CURRENCIES = {A_SHARE: "CNY", HK_STOCK: "HKD", US_STOCK: "USD", CRYPTO: "USDT"}
+
+
 def label_of(raw: str | None) -> str:
     """市场 → 中文名（认不出就原样返回，⛔ 不静默换成别的市场）。"""
     return MARKET_LABELS.get(raw or "", raw or "")
+
+
+def currency_of(raw: str | None) -> str:
+    """市场 → 计价币种。**只此一处**，⛔ 别在 route/前端各抄一张表 ——
+    加第五个市场时漏了会静默显示成「某某本金（）」，而且没有测试会红。"""
+    return MARKET_CURRENCIES.get(raw or "", "")
 
 
 # 股票三市场（工作日交易 + 固定收盘）。crypto 是 7×24 独立链，不属此列 ——

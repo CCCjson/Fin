@@ -36,12 +36,28 @@
       🔴 现在前端不传 market，**只看得见 crypto**，而 `/standings` 是全市场混列的，
       两块屏会对不上。
 
-- [ ] 03c 总资金 = 各市场资金之和（Jason 2026-08-03 拍板，见 DECISIONS） —
+### A2. 分市场本金（03c，**已拆成三轮**）
+
+> 🔄 原 03c「总资金 = 各市场资金之和」**已被推翻**（Jason 2026-08-04）：
+> 各市场是 CNY/HKD/USD/USDT，求和是混币种。⛔ 别再做那个求和值。
+> 新口径 = **「总资金」这个概念整个退役，只留分市场本金**，见 `DECISIONS.md` 最后一条。
+
+- [x] 03c-1 地基：分市场本金配置键 + 读取 API + 设置页 + AI 只读黑名单 —
+      验收：`cd backend && conda run -n quant python -m pytest tests/test_market_capital.py -q`
+      要点：**一个消费方都不迁**，`get_total_capital()` 行为必须一行不变。
+      未配置 = `None` ≠ 0，⛔ 不回落到任何全局值。
+
+- [ ] 03c-2 迁策略侧三个消费方：股票调度器 / crypto 引擎 `_capital` / `_capital_basis` —
+      验收：`cd backend && conda run -n quant python -m pytest tests/test_market_capital.py tests/crypto_strategy/ tests/test_strategy_runtime.py tests/test_stock_scheduler_and_ledger.py -q`
+      要点：🔴 **未配置的市场 fail-closed**（策略不跑），⛔ 不许回落。
+      ⚠️ `_capital_basis` 的 docstring 明写「所有策略共用同一个分母」是刻意的 ——
+      改成分市场后，**同市场内仍必须同分母**，那条别一起改掉。
+
+- [ ] 03c-3 迁风控那批：风控规则 / 仓位换算 / PaperBroker 初始资金 —
       验收：`cd backend && conda run -n quant python -m pytest tests/ -q -k "risk or capital or position"`
-      要点：🔴 **动仓位上限前必读 memory `risk-total-position-floor`**（`max(总仓位上限,
-      单股上限)` 会静默撤销 20% 现金保护，那个坑被复制过三份）。
-      `get_total_capital()` 被风控规则/仓位换算/crypto 引擎/`_capital_basis` 多处消费，
-      涉及文件远超 5 个 → **开工前先停机拆分**。
+      要点：🔴 **必读 memory `risk-total-position-floor`**（`max(总仓位上限, 单股上限)`
+      会静默撤销 20% 现金保护，那个坑被复制过三份 + 有 AST 门禁抓第四份）。
+      ⚠️ 迁完才能删 `get_total_capital()`，删之前它必须一个消费方都不剩。
 
 - [ ] 04 日收益序列纳入浮动盈亏，修掉「偏袒亏了死扛」的系统性偏差 —
       验收：`cd backend && conda run -n quant python -m pytest tests/crypto_strategy/test_performance.py tests/crypto_strategy/test_arena.py -q`

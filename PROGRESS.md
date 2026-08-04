@@ -5,79 +5,82 @@
 
 ## 当前
 
-下一步：**03c 总资金 = 各市场资金之和** —— ⚠️ **开工前先停机拆分**（见 PLAN 要点）
+下一步：**03c-2 迁策略侧三个消费方**（股票调度器 / crypto 引擎 `_capital` / `_capital_basis`）
 
 ## 上一步做了什么
 
-任务 03b 完工：交易终端加市场切换器。改了 12 个文件（后端 5 / 前端 5 / 测试 2）：
+任务 **03c-1（分市场本金地基）** 完工。⚠️ 本轮开头**按 PLAN 要求停机问了 Jason**，
+他把原方案整个推翻了，三条新决策已记进 `DECISIONS.md` 最后一条：
 
-- 后端：`standings(market=)` + `/arena/standings?market=`（认不出的市场 fail-closed）；
-  每行带 `market`；新增 `common/market.py::MARKET_LABELS` + `label_of()`。
-- 前端：新组件 `MarketSwitcher.tsx`；`Automation.tsx` 加 market state 并按市场重取；
-  `StandingsPanel` 加 `note`；**删掉了前端的市场中文名表**（改用后端给的）。
-- agent 工具 `list_strategy_standings` 也加了 `market`。
+1. 🔴 **「总资金」这个概念整个退役** —— ⛔ **不做**「总资金 = 各市场之和」的求和值
+   （各市场是 CNY/HKD/USD/USDT，求和是混币种）。原 03c 那句话**已作废**。
+2. **不自动迁移、强制手填** —— 现有全局 5000 不往任何市场摊、也不回落到它；
+   未配置的市场 **fail-closed**（策略不跑）。
+3. **分三轮**：本轮只做地基，**一个消费方都不迁**。
 
-审核两轮 PASS。这轮唯一的 BLOCKING 很值得记住：
+本轮改了 8 个文件：`adapter.py`（`get_market_capital` / `market_capitals` / `capital_key`）、
+`common/market.py`（`MARKET_CURRENCIES` + `currency_of`）、`data.py`（四个空槽位 +
+只读端点 `/data/market-capitals`）、`settings_tools.py`（四键进 AI 只读黑名单）、
+前端 `CapitalCard.tsx` + `settingsService.ts` + `Settings.tsx`、
+`tests/test_market_capital.py`（15 条）。
 
-🔴 **我只堵了闭包，没堵在途响应**。把 `market` 加进 effect 依赖只修掉「定时器读到旧值」，
-修不掉**已经发出去的请求**：60 秒轮询以 crypto 发出 → Jason 切到 A 股 → A 股数据先回
-→ 两秒后 crypto 的响应落地把它盖掉。表现是「切了，过一会儿又跳回去」，而面板上
-一个字段都不显示市场 —— 屏幕上会是**顶着 A 股名字的 crypto 卫冕者**。
-修法是 `marketRef` + 每个 `.then`/`.catch` 都先验 `m === marketRef.current`
-（⚠️ catch 也要验：旧市场的**失败**同样会清掉新市场的数据）。
+审核两轮 PASS。**两条 BLOCKING 都在文档上**，很值得记：
+`PLAN.md` 里 03c 的标题还写着被否掉的「总资金 = 各市场之和」，`DECISIONS.md` 08-03
+那条也没标已被推翻 —— 下一轮从 PLAN 选卡读到的就是被推翻的方案。
+**这就是「悄悄推翻决策」的传送带**。已改：PLAN 拆成 03c-1/2/3，DECISIONS 加 🔄 标记。
 
-验收：`pytest tests/test_arena_routes.py tests/crypto_strategy/ -q` → 187 passed；
-全量（**从 `backend/` 跑**）→ **2108 passed**；`npx tsc -b` 干净；
-App 已重建，交易终端正常渲染；真环境实测三个端点的市场收窄/拒绝/中文名都对。
+验收：`pytest tests/test_market_capital.py -q` → **15 passed**；全量 → **2131 passed**；
+`npx tsc -b` 干净。
 
 ## 下一步需要知道的
 
-**03c（总资金 = 各市场之和）开工前必读：**
+**03c-2 的地基已经铺好，直接用：**
 
-- 🔴 **必读 memory `risk-total-position-floor`**：`max(总仓位上限, 单股上限)` 会**静默
-  撤销 20% 现金保护**，那个坑被复制过三份，还加了 AST 结构性门禁抓第四份。
-- `get_total_capital()`（`trading_engine/risk/adapter.py`）的消费方至少四处：风控规则、
-  股票调度器的 `capital=`、crypto 引擎的 `_capital`、`performance._capital_basis`。
-  涉及文件远超 5 个 → **先停机拆分**，别一轮闷头做完。
+- `adapter.get_market_capital(market) -> float | None`。
+  🔴 **`None` = 未配置，`0` = 明确不投钱**，两件事必须分辨。
+  ⛔ **不许回落**到 `get_total_capital()` —— 那个 5000 是**A 股口径的人民币**，
+  拿去给美股/币算仓位是错的口径且不会报错（`crypto_strategy/engine.py` 里有实锤：
+  口径混用曾让 **live 每笔 BUY 恒被 blocked_risk，一单也下不出来**）。
+- `nan` / `inf` / 负数都已在读取层被判为**未配置**（`float()` 一个都不抛，
+  而 `nan` 会让所有 `>` 比较恒 False = **风控静默放行**）。
+- 三个待迁消费方：`strategy_runtime/scheduler.py:111`（`capital=`）、
+  `crypto_strategy/engine.py:_capital`、`crypto_strategy/performance.py::_capital_basis`。
 - ⚠️ `_capital_basis` 的 docstring 明写「所有策略共用同一个分母」是**刻意的**
-  （否则跨策略的收益率量级会差一个倍数）。改成分市场时，**同市场内仍必须同分母**，
-  这条别一起改掉。
+  （否则跨策略收益率量级差一个倍数）。改成分市场后，**同市场内仍必须同分母**。
+- 🔒 **有 AST 门禁盯着**：`tests/test_market_capital.py::test_nobody_sums_the_market_capitals`
+  会扫全仓，「同一个函数体内既取了本金、又有 `sum(`/`+=`」就报。
+  实测三种写法（内联 sum / 先赋值再 sum / `+=` 累加）全部会红。
+  确属误报就在那行加 `# noqa: capital-sum`。
 
-**03b 定下的口径：**
+**03c-1 定下的口径：**
 
-- **市场中文名只有一处：后端 `common/market.py::MARKET_LABELS`**。
-  `/arena/market-status` 每行带 `market_label`（⚠️ 与交易时段的 `label`「交易中/已收盘」
-  是两回事），`/champion` 带 `market_labels`。前端那份表**已删**，⛔ 别加回来。
-- 人话里不许出现 canonical 英文名（`a_share` / `crypto`）—— 全走 `label_of()`。
-- `standings` 的 `market` 语义与 `/champion`、`/verdict` **不同**：前者不传 = 全市场混列
-  （老行为 + agent 工具要的），后两者不传 = crypto。三处 docstring 都写明了，
-  空串那条缝有测试钉着。
-- 切换器**少于两个市场不渲染**。所以在只有 crypto 的库里它**看不见**是正常的；
-  想肉眼验，在测试库建一条 `market="a_share"` 的 draft 就够（口径是「未归档都算」）。
+- 四个键 `capital_<market>` 存在 `UserSettings`（**不是 .env**）。三处必须同时有：
+  `_DEFAULT_SETTINGS` 槽位（值留空）、`_RISK_READONLY_KEYS`、`currency_of` 有币种 ——
+  有一条从 `CANONICAL_MARKETS` 推导的测试钉着，加第五个市场时会红。
+- 市场元数据（中文名 / 币种）**只在 `common/market.py`**，⛔ route 和前端都别抄。
+- 前端本金卡的**失败态与「未配置」必须分开**：都渲染成「未配置」的话，接口挂了
+  会显示成四个市场都没配 —— 而分开这两类状态正是这张卡存在的全部意义。
 
-**流程上的坑（新增两条）：**
+**流程上的坑（仍然有效）：**
 
-- 🔴 **全量测试必须 `cd backend` 再跑**。我这轮从仓库根跑 `pytest backend/tests/`，
-  报了 10 条失败，全是环境问题（`test_crypto_portfolio_backtest` 要连 :8002，而
-  restart.sh 正在重启它）—— 从 `backend/` 重跑立刻 2108 全绿。⛔ 别被这种失败带偏。
-- ⚠️ **跑 `restart.sh` 期间别跑全量测试**：C++ 订单簿/回测服务会短暂不可用。
-- 全量耗时波动很大（45s ~ 271s），慢的是 `test_strategy_engine.py` 三条老
-  `SignalGenerator` 全市场扫描，与本轮无关。
+- 🔴 全量测试**必须 `cd backend` 再跑**；⚠️ 跑 `restart.sh` 期间别跑全量（C++ 服务会短暂不可用）。
+- `pytest` 不认 `--timeout=`；`conda run` 吞 stdout（加 `--no-capture-output`）；
+  全量 ~1-5 分钟，会撞 600s 前台上限 → 用 `run_in_background` 重定向到文件再 tail。
+- ⚠️ 测试里改 `UserSettings` 要**快照/还原**，不是一删了事（隔壁
+  `test_risk_total_position_floor.py` 的 fixture 恢复的是「原值」，会把你留下的脏值
+  当原值恢复 → 顺序依赖的偶发红灯）。
+- 🔴 push 走 HTTPS：`gh auth switch --user CCCjson && git push https://github.com/CCCjson/Fin.git feat/s5-stock-arena`
 
 ## 未解决
 
-- 🔴 **股票策略不写 `crypto_strategy_runs` 行**（01 发现，02/03/03b 都没解决）。
-  `strategy_health` 在 `if not runs:` 提前返回 → **不会调 `strategy_pnl`** →
-  `standings` 给股票策略 `pnl: None`。⚠️ 动它的返回形状要当心前端必填键。
+- 🔴 **股票策略不写 `crypto_strategy_runs` 行**（01 发现，02/03/03b/03c-1 都没解决）。
+  `strategy_health` 提前返回 → 不调 `strategy_pnl` → 排行榜给股票 `pnl: None`。
+  ⚠️ 动它的返回形状要当心前端必填键。
 - 🔴 **股票 mode="live" 目前是假的**：`scheduler._adapter_for` 永远给 PaperBroker，
-  arm 一条股票策略到 live 会把 PaperBroker 的成交记成 `mode="live"` 真钱战绩，
-  S4 的提案打分会把它当真钱证据。真券商到位前这是个雷。
-- ⚠️ **「没有卫冕者」那句话有两份**（`api/routes/arena.py` 与 `crypto_strategy/arena.py`
-  各一份，措辞目前一致）。按 route 模块自己的头注「人话结论由引擎层产出」，
-  它该由引擎给（比如 `current_champion` 返回 None 时配一个 reason）。既有欠债。
-- ⚠️ `fork_version` 不校验 `market`，同族理论上造得出跨市场版本（03 已确认
-  `_supersede_siblings` 在那种情形下行为正确）。要拦的话得先定「换市场该报错还是
-  开新 family」，是个口径题。
-- 🔴 接真券商时必须补「成交回报回填台账」（挂单后来成交不会补记）。
+  arm 一条股票策略到 live 会把纸面成交记成真钱战绩。真券商到位前这是个雷。
+- ⚠️ 「没有卫冕者」那句话在 route 和引擎各有一份（措辞目前一致）。按 route 模块自己的
+  头注，它该由引擎给。既有欠债。
+- ⚠️ `fork_version` 不校验 `market`，同族理论上造得出跨市场版本。
+- 🔴 接真券商时必须补「成交回报回填台账」。
 - ⚠️ 命名不一致（留给 04）：crypto live 块叫 `book_positions`，其余叫 `open_positions`。
 - **任务 04 是 S3 的已知缺陷**（序列只含已实现盈亏 → 偏袒「亏了死扛」）。

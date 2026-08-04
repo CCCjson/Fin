@@ -4,6 +4,7 @@ import { Button } from '../components/common/Button';
 import { SkeletonCard } from '../components/common/Skeleton';
 import { toast } from '../components/common/Toast';
 import { settingsService } from '../services/settingsService';
+import { CapitalCard } from '../components/settings/CapitalCard';
 import type { SettingField, SettingGroup } from '../services/settingsService';
 
 const GROUP_ICON: Record<string, string> = {
@@ -145,6 +146,11 @@ export const Settings: React.FC = () => {
             <button onClick={load} className="ml-3 text-primary text-sm underline">重试</button>
           </Card>
         )}
+
+        {/* ⚠️ 本金写的是**数据库**（UserSettings），下面那些卡片写的是 .env ——
+            两套存储，所以它自己加载自己的数据，不吃 groups/error。
+            置顶是因为它是 fail-closed 的前提：没填就没有策略会跑。 */}
+        <CapitalCard />
 
         {!groups && !error ? (
           <>

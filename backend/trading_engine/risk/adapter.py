@@ -3,6 +3,7 @@
 
 用于在交易录入时构建 RiskManager 所需的 broker_info 字典。
 """
+import math
 from typing import List, Dict, Any, Optional
 from datetime import date
 
@@ -15,7 +16,19 @@ from trading_engine.config import RISK_CONFIG
 
 
 def get_total_capital() -> float:
-    """从 UserSettings 表读取总资金，默认 5000"""
+    """从 UserSettings 表读取总资金，默认 5000。
+
+    ⚠️ **退役中**（Jason 2026-08-04 拍板，见 `DECISIONS.md`）。两件事要知道：
+
+    1. 🔴 **它语义上是「A 股口径的人民币」**，不是「整个系统的钱」。
+       `crypto_strategy/engine.py` 里那段血泪注释记着：把它当 crypto 的资金基数用，
+       会让 **live 策略每笔 BUY 恒被 blocked_risk，一单也下不出来**。
+    2. 🔀 取代它的是 `get_market_capital(market)` —— **分市场本金，各算各的，
+       不求和**（各市场是 CNY/HKD/USD/USDT，求和就是混币种）。
+
+    ⛔ **新代码别再调它**，一律用 `get_market_capital()`。存量 14 个消费方分两轮迁：
+    先策略侧（调度器/引擎/收益率分母），风控那批单开一轮。迁完这个函数就删。
+    """
     session = get_session()
     try:
         row = session.query(UserSettings).filter(UserSettings.key == "total_capital").first()
@@ -27,6 +40,68 @@ def get_total_capital() -> float:
         return 5000.0
     finally:
         session.close()
+
+
+# 分市场本金的 UserSettings 键。⚠️ 加新市场时这里和 `_DEFAULT_SETTINGS`
+# （`api/routes/data.py`）、`_RISK_READONLY_KEYS`（`agents/tools/settings_tools.py`）
+# 三处要一起加 —— 漏掉最后一处，AI 就能改本金了。
+CAPITAL_KEY_PREFIX = "capital_"
+
+
+def capital_key(market: str) -> str:
+    """市场 → 本金配置键（`capital_a_share` …）。**只此一处拼**。"""
+    from common.market import normalize_market
+    return f"{CAPITAL_KEY_PREFIX}{normalize_market(market, default=market)}"
+
+
+def get_market_capital(market: str) -> Optional[float]:
+    """这个市场的本金。**没配置返回 None，⛔ 不回落到任何全局值。**
+
+    🔴 `None` 和 `0` 是两件事，调用方必须分辨：
+      - `None` = **还没填**（Jason 2026-08-04 拍板：强制手填、未配置的市场
+        fail-closed 不跑策略）。回落到全局总资金的话，「没配置」和「配置成 5000」
+        就再也分不出来了，而那个 5000 是**A 股口径的人民币**——拿去给美股或币
+        算仓位是错的口径，且不会有任何报错。
+      - `0` = 明确填了 0（这个市场不投钱）。
+
+    ⚠️ 各市场币种不同（CNY/HKD/USD/USDT），**它们之间不可相加也不可比大小**。
+    ⛔ 别写一个「总资金 = 各市场之和」的函数出来 —— 那是被明确否掉的
+    （投资组合模块已拍板「每市场独立本金、不折算汇率」）。
+    """
+    key = capital_key(market)
+    session = get_session()
+    try:
+        row = session.query(UserSettings).filter(UserSettings.key == key).first()
+        raw = (row.value or "").strip() if row else ""
+        if not raw:
+            return None
+        value = float(raw)
+        # 🔴 `float()` 对 `nan` / `inf` / 负数**一个都不抛**，而下一轮这个值就是
+        # 仓位上限的基数和收益率的分母：`nan` 会让所有 `>` 比较恒为 False ——
+        # **风控检查静默放行**，正是「静默永不触发」那个失败模式的反向版本。
+        if not math.isfinite(value) or value < 0:
+            logger.warning(f"{key} = {raw!r} 不是一个合法本金（非有限数或为负），按未配置处理")
+            return None
+        return value
+    except (TypeError, ValueError):
+        # ⚠️ 填了个非数字 → 当作**没配置**，⛔ 不当 0：0 意味着「这个市场不投钱」，
+        # 而填错字的人想表达的显然不是那个。
+        logger.warning(f"{key} 不是数字，按未配置处理")
+        return None
+    except Exception as e:  # noqa: BLE001 — 读不到就是未配置，交给上层 fail-closed
+        logger.warning(f"读取 {key} 失败: {e}")
+        return None
+    finally:
+        session.close()
+
+
+def market_capitals() -> Dict[str, Optional[float]]:
+    """四个市场的本金现状（未配置的是 None）—— 设置页和体检用。
+
+    ⛔ 返回 dict 而不是求和值，是刻意的：见 `get_market_capital` 的第二条。
+    """
+    from common.market import CANONICAL_MARKETS
+    return {m: get_market_capital(m) for m in CANONICAL_MARKETS}
 
 
 def get_max_total_position_pct() -> float:

@@ -19,6 +19,9 @@ from agents.tool_envelope import ToolEnvelope
 _RISK_READONLY_KEYS = frozenset({
     "max_position_pct", "max_total_position_pct", "max_daily_loss_pct",
     "stop_loss_pct", "take_profit_pct", "total_capital",
+    # 🔒 分市场本金（S5 03c）：**本金就是风控参数** —— 它决定每笔下多大、
+    #    日亏 3% 的基数是多少。漏了这四个，AI 就能自己改本金了。
+    "capital_a_share", "capital_hk_stock", "capital_us_stock", "capital_crypto",
 })
 
 
